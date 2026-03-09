@@ -38,9 +38,15 @@ It is **not possible** to use `audit2allow -M` with AVCs where the source contex
 [source,bash,role=execute]
 ----
 sudo mkdir -p /opt/tomcat-app/{data,logs,config}
+sudo chown -R $(id -u):$(id -g) /opt/tomcat-app
 sudo semanage fcontext -a -t container_file_t "/opt/tomcat-app(/.*)?"
 sudo restorecon -Rv /opt/tomcat-app
 ----
+
+[NOTE]
+====
+The `chown` is required because rootless Podman needs the current user to own the bind-mount directories. Without it, the `:Z` mount option will fail with `lsetxattr: operation not permitted` when Podman tries to apply SELinux MCS category labels.
+====
 
 === Step 2: First Run with Device Flag
 
@@ -69,18 +75,23 @@ podman ps -a --filter name=device-policy-run
 
 === Step 3: Generate Policy with --append-rules
 
-Generate the policy using both `podman inspect` and the audit log:
+Generate the policy using both `podman inspect` and the audit log. Because `udica` needs root access to query SELinux policy internals and the audit log is only readable by root, save the inspect output first and then run `udica` via `sudo`:
 
 [source,bash,role=execute]
 ----
-podman inspect device-policy-run \
-  | udica --append-rules /var/log/audit/audit.log \
-          device_hummingbird
+podman inspect device-policy-run > /tmp/device-inspect.json
+sudo udica --append-rules /var/log/audit/audit.log \
+     device_hummingbird < /tmp/device-inspect.json
 ----
+
+[NOTE]
+====
+Running `udica` directly as an unprivileged user will fail with `Permission denied` because it needs to read `/var/log/audit/audit.log` and access `/var/lib/selinux/`. The two-step approach (rootless `podman inspect`, then `sudo udica`) solves this.
+====
 
 .*Expected output:*
 ----
-Policy device_hummingbird with container id <id> created!
+Policy device_hummingbird created!
 
 Please load these modules using:
   semodule -i device_hummingbird.cil \
@@ -128,6 +139,8 @@ sudo semodule -i device_hummingbird.cil \
 
 podman stop device-policy-run && podman rm device-policy-run
 
+sudo restorecon -FRv /opt/tomcat-app
+
 podman run -d \
   --name demo-device \
   --env container=podman \
@@ -139,6 +152,11 @@ podman run -d \
   -p 8080:8080 \
   hummingbird-demo:v1
 ----
+
+[IMPORTANT]
+====
+The `restorecon -FRv` between container runs is critical. The `:Z` mount option stamps MCS category labels (e.g. `:s0:c87,c128`) onto the bind-mount directories. When the container is removed and a new one starts, the new container receives _different_ MCS categories and cannot overwrite the old ones. Force-restoring the labels strips the stale MCS categories so the new container can apply its own.
+====
 
 Verify the custom policy is active:
 
@@ -377,6 +395,22 @@ Learn how to restructure Hummingbird image layers for optimal pull deduplication
 
 === Troubleshooting
 
+**Issue: `lsetxattr: operation not permitted` on bind mounts**
+
+This occurs when re-running a container with `:Z` mounts after a previous container stamped MCS category labels on the directories. Force-reset the labels:
+
+[source,bash]
+----
+sudo restorecon -FRv /opt/tomcat-app
+----
+
+Also ensure the directories are owned by your user (not root) for rootless Podman:
+
+[source,bash]
+----
+sudo chown -R $(id -u):$(id -g) /opt/tomcat-app
+----
+
 **Issue: `--append-rules` produces empty policy**
 [source,bash]
 ----
@@ -385,13 +419,23 @@ ausearch -m AVC -ts recent | head -20
 sudo systemctl restart auditd
 ----
 
+**Issue: `udica` fails with `Permission denied`**
+
+`udica` needs root access to query SELinux policy and read the audit log. Save inspect output first, then use `sudo`:
+
+[source,bash]
+----
+podman inspect <container> > /tmp/inspect.json
+sudo udica --append-rules /var/log/audit/audit.log policy_name < /tmp/inspect.json
+----
+
 **Issue: Device access still denied after policy load**
 [source,bash]
 ----
 ausearch -m AVC -ts recent | grep denied | grep urandom
 
-podman inspect container \
-  | udica --append-rules /var/log/audit/audit.log policy_v2
+podman inspect container > /tmp/inspect.json
+sudo udica --append-rules /var/log/audit/audit.log policy_v2 < /tmp/inspect.json
 ----
 
 **Issue: `semodule -r` fails (policy not found)**
