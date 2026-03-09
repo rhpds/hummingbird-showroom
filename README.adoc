@@ -1,8 +1,8 @@
-= Project Hummingbird Environment Workshop
+= Zero CVE Hummingbird Workshop
 
 == Introduction
 
-This repository hosts the lab guide for the **Project Hummingbird Environment Workshop**, built with https://antora.org[Antora] and designed for the https://github.com/rhpds/showroom_template_nookbag[Red Hat Showroom] lab platform on the Red Hat Demo Platform (RHDP).
+This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, built with https://antora.org[Antora] and designed for the https://github.com/rhpds/showroom_template_nookbag[Red Hat Showroom] lab platform on the Red Hat Demo Platform (RHDP).
 
 **Project Hummingbird** represents Red Hat's strategic approach to delivering "zero-CVE" container base images built from Fedora components. This workshop provides hands-on experience building, securing, and deploying minimal, hardened container environments using Hummingbird runtimes, SELinux policy generation with udica, and platform-level builds with Shipwright on OpenShift.
 

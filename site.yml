@@ -1,6 +1,6 @@
 ---
 site:
-  title: Project Hummingbird Environment Workshop
+  title: Zero CVE Hummingbird Workshop
   url: https://github.com/rhpds/zero-cve-hummingbird-showroom
   start_page: hummingbird-workshop::index.adoc
 

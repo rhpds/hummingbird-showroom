@@ -1,6 +1,6 @@
 ---
 name: hummingbird-workshop
-title: Project Hummingbird Environment Workshop
+title: Zero CVE Hummingbird Workshop
 version: '1.0'
 nav:
   - modules/ROOT/nav.adoc
@@ -8,7 +8,7 @@ nav:
 asciidoc:
   attributes:
     page-pagination: true
-    workshop-title: 'Project Hummingbird Environment Workshop'
+    workshop-title: 'Zero CVE Hummingbird Workshop'
     workshop-duration: '90 minutes'
 
     # Module 1 - Developer Environment

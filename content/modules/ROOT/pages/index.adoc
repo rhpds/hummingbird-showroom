@@ -2,7 +2,7 @@
 
 == Welcome to Project Hummingbird
 
-Welcome to the **Project Hummingbird Environment Workshop**! This comprehensive two-module workshop is designed to help you master the skills needed to build, deploy, and manage minimal, hardened container environments using Red Hat's innovative Project Hummingbird initiative.
+Welcome to the **Zero CVE Hummingbird Workshop**! This comprehensive two-module workshop is designed to help you master the skills needed to build, deploy, and manage minimal, hardened container environments using Red Hat's innovative Project Hummingbird initiative.
 
 **Project Hummingbird** represents Red Hat's strategic approach to delivering "zero-CVE" container base images built from Fedora components. Launched in November 2025, Hummingbird addresses critical challenges in modern software supply chains by providing micro-sized, hardened runtime images with complete transparency through SBOMs (Software Bill of Materials).
 

@@ -435,7 +435,7 @@ Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
 
 === Workshop Complete!
 
-You've finished both modules of the Project Hummingbird Environment Workshop!
+You've finished both modules of the Zero CVE Hummingbird Workshop!
 
 **What You've Mastered:**
 
@@ -525,7 +525,7 @@ oc get nodes -o wide
 
 === Thank You!
 
-Thank you for completing the **Project Hummingbird Environment Workshop**!
+Thank you for completing the **Zero CVE Hummingbird Workshop**!
 
 You now have the skills to build, secure, harden, and deploy container applications using Project Hummingbird at both local and platform scales.
 
