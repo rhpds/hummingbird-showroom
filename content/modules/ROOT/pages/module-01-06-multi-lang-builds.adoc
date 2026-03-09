@@ -71,6 +71,8 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/nodejs-express
+
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
@@ -106,6 +108,7 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/nodejs-express
 podman build -t hummingbird-node-demo:v1 .
 
 podman run -d --name node-demo -p 8081:8080 hummingbird-node-demo:v1
@@ -200,6 +203,7 @@ Native compilation takes ~2-4 minutes and requires 4GB+ of memory. The Mandrel b
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/quarkus-native
 podman build -t hummingbird-quarkus-native:v1 .
 ----
 
@@ -311,6 +315,8 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/python-gunicorn
+
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
@@ -349,6 +355,7 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/python-gunicorn
 podman build -t hummingbird-python-gunicorn:v1 .
 
 podman run -d --name python-gunicorn-demo -p 8083:8000 hummingbird-python-gunicorn:v1
@@ -429,6 +436,8 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/python-fastapi
+
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
@@ -467,6 +476,7 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/python-fastapi
 podman build -t hummingbird-python-fastapi:v1 .
 
 podman run -d --name fastapi-demo -p 8084:8000 hummingbird-python-fastapi:v1
