@@ -62,7 +62,7 @@ You can either download the script and run it, or copy-paste the inline version 
 
 [source,bash,role=execute]
 ----
-curl -LO https://raw.githubusercontent.com/Red-Hat-SE-RTO/hummingbird-labs/main/content/modules/ROOT/assets/attachments/setup-rhel-developer.sh
+curl -LO https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/main/content/modules/ROOT/assets/attachments/setup-rhel-developer.sh
 chmod +x setup-rhel-developer.sh
 ./setup-rhel-developer.sh
 ----

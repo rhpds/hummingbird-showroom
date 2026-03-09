@@ -1,8 +1,8 @@
 ---
 site:
-  title: Showroom Template Demo
-  url: https://github.com/rhpds/showroom_template_nookbag
-  start_page: modules::index.adoc
+  title: Project Hummingbird Environment Workshop
+  url: https://github.com/rhpds/zero-cve-hummingbird-showroom
+  start_page: hummingbird-workshop::index.adoc
 
 content:
   sources:
@@ -24,14 +24,13 @@ asciidoc:
   attributes:
     experimental: true
     page-pagination: true
-    showroom-collection-version: v1.5.6
-    guid: abc123
-    bastion_public_hostname: bastion.abc123.ocpv00.rhdp.net
+    guid: PROVIDE-GUID
+    bastion_public_hostname: bastion.PROVIDE-GUID.ocpv00.rhdp.net
     bastion_ssh_user_name: lab-user
     bastion_ssh_password: password
     ssh_user: lab-user
-    openshift_console_url: https://console-openshift-console.apps.cluster-abc123.ocpv00.rhdp.net
-    openshift_cluster_ingress_domain: apps.cluster-abc123.ocpv00.rhdp.net
+    openshift_console_url: https://console-openshift-console.apps.cluster-PROVIDE-GUID.ocpv00.rhdp.net
+    openshift_cluster_ingress_domain: apps.cluster-PROVIDE-GUID.ocpv00.rhdp.net
 
 output:
   dir: ./www
