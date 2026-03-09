@@ -125,10 +125,12 @@ podman inspect hummingbird-demo:v1 \
   --format '{{len .RootFS.Layers}} layers'
 ----
 
-.*Expected output:*
+.*Expected output (layer count depends on base image):*
 ----
-3 layers
+37 layers
 ----
+
+NOTE: Hummingbird base images are already built with fine-grained layers. The exact count depends on the base image version.
 
 === Step 2: Run chunkah
 
@@ -137,7 +139,7 @@ podman inspect hummingbird-demo:v1 \
 export CHUNKAH_CONFIG_STR="$(podman inspect hummingbird-demo:v1)"
 
 podman run --rm \
-  --mount=type=image,src=hummingbird-demo:v1,dest=/chunkah \
+  --mount=type=image,src=hummingbird-demo:v1,dst=/chunkah \
   -e CHUNKAH_CONFIG_STR \
   quay.io/jlebon/chunkah build \
   | podman load
@@ -189,7 +191,11 @@ mkdir -p ~/hummingbird-lab/chunkah-demo/src/main/resources
 cat > ~/hummingbird-lab/chunkah-demo/Containerfile << 'CFILE'
 # Stage 1: Build the Quarkus application
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+
+USER root
+RUN microdnf install -y unzip && microdnf clean all
 
 WORKDIR /build
 COPY mvnw pom.xml ./
@@ -198,17 +204,14 @@ RUN ./mvnw dependency:go-offline -B
 COPY src ./src
 RUN ./mvnw package -DskipTests -B
 
-# Stage 2: Apply content-based layer splitting
-FROM quay.io/jlebon/chunkah AS chunkah
+# Stage 2: Runtime stage using Hummingbird
+FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
 
-RUN --mount=from=builder,src=/,target=/chunkah,ro \
-    --mount=type=bind,target=/run/src,rw \
-        chunkah build \
-          --max-layers 32 \
-        > /run/src/out.ociarchive
-
-# Stage 3: Final image sourced from chunkah's OCI archive
-FROM oci-archive:out.ociarchive
+WORKDIR /app
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 LABEL org.opencontainers.image.title="chunkah-demo"
 USER 1001
@@ -251,20 +254,44 @@ quarkus.http.port=8080
 PROPS
 ----
 
-=== Step 5: Build with chunkah Splitting
+=== Step 5: Build and Apply chunkah Splitting
+
+First, build the image normally:
 
 [source,bash,role=execute]
 ----
 buildah build \
-  --skip-unused-stages=false \
   --format oci \
-  --tag chunkah-demo:v1 \
+  --tag chunkah-demo:pre-split \
   ~/hummingbird-lab/chunkah-demo/
+----
+
+Then apply chunkah content-based layer splitting:
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect chunkah-demo:pre-split)"
+
+podman run --rm \
+  --mount=type=image,src=chunkah-demo:pre-split,dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah build \
+    --max-layers 32 \
+  | podman load
+----
+
+Tag the loaded image:
+
+[source,bash,role=execute]
+----
+# Get the image ID from the last loaded image and tag it
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" chunkah-demo:v1
 ----
 
 [NOTE]
 ====
-`--skip-unused-stages=false` is **required**. Without it, Buildah skips the chunkah stage because it is not directly referenced by name in a `FROM` instruction -- only its output file is consumed.
+The two-step approach (build, then chunkah) works reliably across all Buildah versions. The `--mount=type=image` option uses `dst` (not `dest`) for the mount destination.
 ====
 
 === Step 6: Verify the Result
@@ -285,25 +312,28 @@ podman image history chunkah-demo:v1
 
 chunkah ships a ready-made `Containerfile.splitter` for splitting **any** existing image without writing your own Containerfile.
 
-=== Step 7: Split a Hummingbird Python Image
+=== Step 7: Split an Image with chunkah (Splitter Equivalent)
+
+Use the same chunkah post-processing technique to split any existing image. Here we split the `chunkah-demo:pre-split` image built in the previous exercise:
 
 [source,bash,role=execute]
 ----
-IMG="quay.io/hummingbird-hatchling/python-311:latest"
-TAG="python-311-chunked"
-
-podman pull "$IMG"
+IMG="chunkah-demo:pre-split"
+TAG="chunkah-demo-splitter"
 
 echo "=== Original ==="
 podman inspect "$IMG" --format '{{len .RootFS.Layers}} layers'
 
-buildah build \
-  --skip-unused-stages=false \
-  --from "$IMG" \
-  --build-arg CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")" \
-  --build-arg CHUNKAH_ARGS="--max-layers 48" \
-  --tag "$TAG" \
-  https://github.com/jlebon/chunkah/releases/download/v0.2.0/Containerfile.splitter
+export CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")"
+podman run --rm \
+  --mount=type=image,src="$IMG",dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah build \
+    --max-layers 48 \
+  | podman load
+
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" "$TAG"
 
 echo ""
 echo "=== After chunkah ==="
@@ -312,7 +342,7 @@ podman inspect "$TAG" --format '{{len .RootFS.Layers}} layers'
 
 [TIP]
 ====
-The `Containerfile.splitter` is fetched directly from the chunkah GitHub release. This makes it easy to split any image in a single command without maintaining a local Containerfile.
+This technique works for splitting **any** existing image. Simply replace the `IMG` variable with the image you want to split. For authenticated registries, run `podman pull` and `podman login` first.
 ====
 
 [[exercise-4-custom-xattr]]
@@ -326,7 +356,11 @@ By default chunkah groups files by RPM package. For application code that isn't 
 ----
 cat > ~/hummingbird-lab/chunkah-demo/Containerfile.xattr << 'CFILE'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+
+USER root
+RUN microdnf install -y unzip attr && microdnf clean all
 
 WORKDIR /build
 
@@ -338,24 +372,18 @@ RUN ./mvnw package -DskipTests -B
 
 # Tag files with custom component names.
 # chunkah will group these into separate layers.
-USER root
-RUN dnf install -y attr && dnf clean all \
- && setfattr -n user.component -v "app-code"   /build/target/quarkus-app/app \
+RUN setfattr -n user.component -v "app-code"   /build/target/quarkus-app/app \
  && setfattr -n user.component -v "app-deps"   /build/target/quarkus-app/lib \
  && setfattr -n user.component -v "app-runtime" /build/target/quarkus-app/quarkus
-USER 1001
 
-# chunkah splitting stage
-FROM quay.io/jlebon/chunkah AS chunkah
+# Runtime stage using Hummingbird
+FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
 
-RUN --mount=from=builder,src=/,target=/chunkah,ro \
-    --mount=type=bind,target=/run/src,rw \
-        chunkah build \
-          --max-layers 32 \
-        > /run/src/out.ociarchive
-
-# Final image
-FROM oci-archive:out.ociarchive
+WORKDIR /app
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 USER 1001
 EXPOSE 8080
@@ -364,11 +392,21 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 CFILE
 
 buildah build \
-  --skip-unused-stages=false \
   --format oci \
-  --tag chunkah-xattr-demo:v1 \
+  --tag chunkah-xattr-demo:pre-split \
   -f ~/hummingbird-lab/chunkah-demo/Containerfile.xattr \
   ~/hummingbird-lab/chunkah-demo/
+
+export CHUNKAH_CONFIG_STR="$(podman inspect chunkah-xattr-demo:pre-split)"
+podman run --rm \
+  --mount=type=image,src=chunkah-xattr-demo:pre-split,dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah build \
+    --max-layers 32 \
+  | podman load
+
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" chunkah-xattr-demo:v1
 ----
 
 === Step 9: Inspect Layer Structure
@@ -410,7 +448,7 @@ hb-chunk() {
 
   export CHUNKAH_CONFIG_STR="$(podman inspect "$img")"
   podman run --rm \
-    --mount=type=image,src="$img",dest=/chunkah \
+    --mount=type=image,src="$img",dst=/chunkah \
     -e CHUNKAH_CONFIG_STR \
     quay.io/jlebon/chunkah build \
       --max-layers "$max_layers" \
@@ -568,7 +606,7 @@ podman run --rm quay.io/jlebon/chunkah:latest build ...
 
 [source,bash,role=execute]
 ----
-podman rmi chunkah-demo:v1 chunkah-xattr-demo:v1 python-311-chunked 2>/dev/null || true
+podman rmi chunkah-demo:v1 chunkah-demo:pre-split chunkah-xattr-demo:v1 chunkah-xattr-demo:pre-split chunkah-demo-splitter 2>/dev/null || true
 rm -rf ~/hummingbird-lab/chunkah-demo/
 ----
 
