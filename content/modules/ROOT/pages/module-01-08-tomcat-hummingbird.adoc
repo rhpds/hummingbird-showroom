@@ -1,0 +1,578 @@
+= Sub-Module 1.8: Layering Tomcat on Hummingbird (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~15 minutes +
+*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Status:* Optional exercise -- not required for Module 1 completion +
+*Learning Objectives:*
+
+* Understand the challenge of running Tomcat on a shell-less, package-manager-less Hummingbird runtime
+* Build a Tomcat application using the RPM-based multi-stage pattern (best SBOM coverage)
+* Build a Tomcat application by extracting binaries from the official upstream image (version flexibility)
+* Harden the default `server.xml` for container production use
+* Tag logical components with `xattr` for chunkah layer isolation
+* Push with `zstd:chunked` and understand the pull savings on code-only deploys
+--
+
+[[introduction]]
+== Introduction
+
+Hummingbird's runtime images have no shell and no package manager. You cannot `RUN dnf install tomcat` in the final stage. Everything Tomcat needs -- the JVM, the Tomcat binaries, your WAR, config -- must arrive via `COPY --from=` in a multi-stage build.
+
+There are two viable approaches, each with different trade-offs:
+
+[cols="1,2,2",options="header"]
+|===
+| Approach
+| Pros
+| Cons
+
+| *RPM in builder* (Approach 1)
+| Clean SBOM with proper RPM metadata; chunkah gets component boundaries; managed by `dnf update`
+| Tomcat version tied to the RPM repo
+
+| *Official image extract* (Approach 2)
+| Any Tomcat version; simple extraction
+| Mixed provenance (Hummingbird OS + upstream Tomcat); SBOM shows file-level, not package-level
+|===
+
+Both approaches produce a final image that is dramatically smaller than a full UBI-based Tomcat deployment, with zero CVEs from the base image.
+
+[[tomcat-rpm]]
+== Exercise 1: Tomcat from RPM (Recommended)
+
+This is the best fit for the Hummingbird workflow because Tomcat ends up installed by RPM in the builder stage, giving chunkah clean component boundaries, and your SBOM has proper package metadata.
+
+=== Step 1: Create the Project Structure
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/tomcat-rpm/config
+cd ~/hummingbird-lab/tomcat-rpm
+----
+
+=== Step 2: Create a Minimal WAR Application
+
+For this exercise, create a simple health-check servlet. In production you would use your real WAR from a Maven or Gradle build:
+
+[source,bash,role=execute]
+----
+mkdir -p src/main/java/com/example src/main/webapp/WEB-INF
+
+cat > pom.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>hummingbird-tomcat-demo</artifactId>
+  <version>1.0.0</version>
+  <packaging>war</packaging>
+  <properties>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <version>6.0.0</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>
+EOF
+
+cat > src/main/java/com/example/HealthServlet.java << 'EOF'
+package com.example;
+
+import jakarta.servlet.http.*;
+import jakarta.servlet.annotation.WebServlet;
+import java.io.IOException;
+
+@WebServlet("/health")
+public class HealthServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException {
+        resp.setContentType("application/json");
+        resp.getWriter().printf(
+            "{\"status\":\"UP\",\"runtime\":\"Hummingbird + Tomcat\",\"java\":\"%s\"}%n",
+            System.getProperty("java.version"));
+    }
+}
+EOF
+
+cat > src/main/webapp/WEB-INF/web.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
+                             https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
+         version="6.0">
+  <display-name>Hummingbird Tomcat Demo</display-name>
+</web-app>
+EOF
+----
+
+=== Step 3: Create the Production server.xml
+
+The default Tomcat `server.xml` has several things you should remove or disable in a container context:
+
+[source,bash,role=execute]
+----
+cat > config/server.xml << 'XMLEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<Server port="-1" shutdown="SHUTDOWN">
+
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
+  <Listener className="org.apache.catalina.core.AprLifecycleListener" SSLEngine="on" />
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener" />
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener" />
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener" />
+
+  <Service name="Catalina">
+
+    <!-- HTTP/1.1 only. No AJP connector (not needed in containers). -->
+    <Connector
+      port="8080"
+      protocol="HTTP/1.1"
+      connectionTimeout="20000"
+      maxThreads="150"
+      minSpareThreads="10"
+      acceptCount="100"
+      enableLookups="false"
+      disableUploadTimeout="true"
+      compression="on"
+      compressionMinSize="2048"
+      redirectPort="8443"
+      server=" "
+      />
+    <!-- server=" " suppresses the Server header, avoiding version disclosure -->
+
+    <Engine name="Catalina" defaultHost="localhost">
+
+      <Host name="localhost"
+            appBase="webapps"
+            unpackWARs="true"
+            autoDeploy="false">
+        <!-- autoDeploy="false" — deploys controlled via image builds, not hotdrop -->
+
+        <Valve className="org.apache.catalina.valves.AccessLogValve"
+               directory="logs"
+               prefix="access_log"
+               suffix=".txt"
+               pattern="%h %l %u %t &quot;%r&quot; %s %b %D"
+               resolveHosts="false" />
+
+        <Valve className="org.apache.catalina.valves.RemoteIpValve"
+               remoteIpHeader="x-forwarded-for"
+               protocolHeader="x-forwarded-proto" />
+
+      </Host>
+    </Engine>
+  </Service>
+</Server>
+XMLEOF
+----
+
+.*Hardening changes from the default:*
+
+* **`port="-1"`** on Server -- disables the shutdown port (container lifecycle is managed by the orchestrator)
+* **No AJP connector** -- removed entirely; not needed when running behind an ingress controller
+* **`server=" "`** -- suppresses Tomcat version in the `Server` HTTP header
+* **`autoDeploy="false"`** -- deploys are controlled by image builds, not filesystem watches
+* **`RemoteIpValve`** -- makes `X-Forwarded-For` trustworthy when behind a reverse proxy
+
+=== Step 4: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cat > Containerfile.tomcat-rpm << 'EOF'
+ARG BUILDER=registry.access.redhat.com/ubi9/openjdk-21:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/openjdk-21:latest
+ARG CHUNKAH=quay.io/jlebon/chunkah:v0.2.0
+
+# ── Stage 1: Build the application WAR ────────────────────────────────────────
+FROM $BUILDER AS app-builder
+
+WORKDIR /build
+USER root
+RUN dnf install -y maven && dnf clean all
+
+COPY --chown=1001:1001 pom.xml ./
+RUN mvn dependency:go-offline -B
+COPY --chown=1001:1001 src/ ./src/
+RUN mvn package -DskipTests -B \
+    && mv target/*.war target/app.war
+
+# ── Stage 2: Assemble runtime filesystem ──────────────────────────────────────
+FROM $BUILDER AS assembler
+
+USER root
+RUN dnf install -y attr tomcat tomcat-lib && dnf clean all
+
+COPY --from=app-builder /build/target/app.war /usr/share/tomcat/webapps/app.war
+
+# Remove default webapps (docs, examples, manager, host-manager)
+RUN rm -rf \
+      /usr/share/tomcat/webapps/ROOT \
+      /usr/share/tomcat/webapps/docs \
+      /usr/share/tomcat/webapps/examples \
+      /usr/share/tomcat/webapps/host-manager \
+      /usr/share/tomcat/webapps/manager
+
+# Production config
+COPY --chown=53:53 config/server.xml /etc/tomcat/server.xml
+
+# Tag each logical group for chunkah layer isolation
+RUN setfattr -n user.component -v "tomcat-webapps" /usr/share/tomcat/webapps \
+    && setfattr -n user.component -v "tomcat-conf"  /etc/tomcat \
+    && setfattr -n user.component -v "app-war"      /usr/share/tomcat/webapps/app.war
+
+# Tomcat user is uid 53 on RHEL/UBI
+RUN chown -R 53:53 \
+      /var/log/tomcat \
+      /var/cache/tomcat \
+      /var/lib/tomcat \
+      /usr/share/tomcat/work
+
+# ── Stage 3: chunkah splits into content-based layers ─────────────────────────
+FROM $CHUNKAH AS chunkah
+
+RUN --mount=from=assembler,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build \
+          --max-layers 48 \
+        > /run/src/out.ociarchive
+
+# ── Stage 4: Final Hummingbird image ─────────────────────────────────────────
+FROM oci-archive:out.ociarchive
+
+LABEL org.opencontainers.image.title="my-tomcat-app"
+LABEL org.opencontainers.image.base.name="quay.io/hummingbird-hatchling/openjdk-21"
+
+USER 53:53
+EXPOSE 8080
+
+ENV CATALINA_HOME=/usr/share/tomcat
+ENV CATALINA_BASE=/var/lib/tomcat
+ENV JAVA_OPTS="-server \
+  -Djava.security.egd=file:/dev/./urandom \
+  -Djava.awt.headless=true \
+  -XX:+UseContainerSupport \
+  -XX:MaxRAMPercentage=75.0"
+
+CMD ["/usr/libexec/tomcat/server", "start"]
+EOF
+----
+
+[NOTE]
+====
+**Why `--skip-unused-stages=false`?** Buildah normally prunes stages that the final `FROM` does not reference. Because the chunkah stage produces an OCI archive consumed by `FROM oci-archive:`, Buildah cannot trace the dependency chain. You must pass `--skip-unused-stages=false` to keep all stages.
+====
+
+=== Step 5: Build the Image
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag localhost/my-tomcat-app:v1 \
+  --file Containerfile.tomcat-rpm \
+  .
+----
+
+.*Expected output (final lines):*
+----
+STEP 17/17: CMD ["/usr/libexec/tomcat/server", "start"]
+COMMIT localhost/my-tomcat-app:v1
+...
+Successfully tagged localhost/my-tomcat-app:v1
+----
+
+=== Step 6: Inspect Layers
+
+[source,bash,role=execute]
+----
+podman history localhost/my-tomcat-app:v1
+----
+
+You should see distinct layers for the Tomcat webapps, Tomcat config, the application WAR, and the JVM RPMs. This is the result of the `xattr` tagging -- chunkah places each tagged component group into its own layer.
+
+=== Step 7: Run and Verify
+
+[source,bash,role=execute]
+----
+podman run -d --rm -p 8080:8080 --name tomcat-test \
+  localhost/my-tomcat-app:v1
+
+sleep 5
+
+curl -s http://localhost:8080/app/health | jq .
+----
+
+.*Expected output:*
+----
+{
+  "status": "UP",
+  "runtime": "Hummingbird + Tomcat",
+  "java": "21.0.x"
+}
+----
+
+=== Step 8: Verify Hardening
+
+[source,bash,role=execute]
+----
+# Confirm Tomcat version is not disclosed in headers
+curl -sI http://localhost:8080/ 2>&1 | grep -i server
+
+# Confirm no shell in the final image
+podman run --rm localhost/my-tomcat-app:v1 /bin/sh 2>&1 || echo "Good — no shell"
+
+podman stop tomcat-test
+----
+
+.*Expected output:*
+----
+Server:
+Good — no shell
+----
+
+The `Server` header is a single space (no version disclosure), and the image has no shell -- exactly what you want in production.
+
+[[tomcat-upstream]]
+== Exercise 2: Tomcat from Official Image (Alternative)
+
+When you need a Tomcat version newer than what the RPM provides, or you do not have an RPM package available, you can extract the Tomcat installation from the official Docker image. This gives you mixed provenance -- Hummingbird OS layers plus upstream Tomcat binaries -- but is still dramatically cleaner than a full non-Hummingbird base.
+
+=== Step 9: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/tomcat-rpm
+
+cat > Containerfile.tomcat-upstream << 'EOF'
+ARG TOMCAT_VERSION=10.1
+ARG TOMCAT_IMAGE=docker.io/library/tomcat:${TOMCAT_VERSION}-jre21
+ARG BUILDER=registry.access.redhat.com/ubi9/openjdk-21:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/openjdk-21:latest
+ARG CHUNKAH=quay.io/jlebon/chunkah:v0.2.0
+
+# ── Stage 1: Extract Tomcat from official image ──────────────────────────────
+FROM $TOMCAT_IMAGE AS tomcat-source
+
+# ── Stage 2: Build the application WAR ───────────────────────────────────────
+FROM $BUILDER AS app-builder
+
+WORKDIR /build
+USER root
+RUN dnf install -y maven && dnf clean all
+
+COPY pom.xml ./
+RUN mvn dependency:go-offline -B
+COPY src/ ./src/
+RUN mvn package -DskipTests -B && mv target/*.war target/app.war
+
+# ── Stage 3: Assemble on Hummingbird base ────────────────────────────────────
+FROM $RUNTIME AS assembler
+
+USER root
+
+COPY --from=tomcat-source --chown=1001:1001 /usr/local/tomcat /opt/tomcat
+
+# Remove default webapps
+RUN rm -rf \
+      /opt/tomcat/webapps/ROOT \
+      /opt/tomcat/webapps/docs \
+      /opt/tomcat/webapps/examples \
+      /opt/tomcat/webapps/host-manager \
+      /opt/tomcat/webapps/manager
+
+COPY --from=app-builder --chown=1001:1001 /build/target/app.war \
+     /opt/tomcat/webapps/app.war
+
+COPY --chown=1001:1001 config/server.xml /opt/tomcat/conf/server.xml
+
+RUN chown -R 1001:1001 \
+      /opt/tomcat/logs \
+      /opt/tomcat/temp \
+      /opt/tomcat/work
+
+# ── Stage 4: chunkah ─────────────────────────────────────────────────────────
+FROM $CHUNKAH AS chunkah
+
+RUN --mount=from=assembler,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build --max-layers 48 > /run/src/out.ociarchive
+
+# ── Stage 5: Final ───────────────────────────────────────────────────────────
+FROM oci-archive:out.ociarchive
+
+LABEL org.opencontainers.image.title="my-tomcat-app-upstream"
+
+USER 1001:1001
+EXPOSE 8080
+
+ENV CATALINA_HOME=/opt/tomcat
+ENV CATALINA_BASE=/opt/tomcat
+ENV JAVA_OPTS="-server \
+  -Djava.security.egd=file:/dev/./urandom \
+  -Djava.awt.headless=true \
+  -XX:+UseContainerSupport \
+  -XX:MaxRAMPercentage=75.0"
+
+CMD ["/opt/tomcat/bin/catalina.sh", "run"]
+EOF
+----
+
+.*Key differences from Approach 1:*
+
+* Tomcat lives at `/opt/tomcat` instead of `/usr/share/tomcat`
+* The runtime user is `1001` (Hummingbird default) instead of `53` (RHEL tomcat user)
+* Startup command uses `catalina.sh run` instead of the RPM-provided server launcher
+* You can pin any Tomcat minor version via the `TOMCAT_VERSION` build arg
+
+=== Step 10: Build the Upstream Variant
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag localhost/my-tomcat-app-upstream:v1 \
+  --file Containerfile.tomcat-upstream \
+  .
+----
+
+=== Step 11: Compare Image Sizes
+
+[source,bash,role=execute]
+----
+echo "=== RPM approach ==="
+podman image inspect localhost/my-tomcat-app:v1 --format '{{.Size}}' \
+  | numfmt --to=iec
+
+echo ""
+echo "=== Upstream approach ==="
+podman image inspect localhost/my-tomcat-app-upstream:v1 --format '{{.Size}}' \
+  | numfmt --to=iec
+----
+
+.*Expected results:*
+Both images should be in the 200-250 MB range (JRE + Tomcat + your WAR). Compare this with a full `ubi9/openjdk-21` image at 400+ MB or the official `tomcat:10.1-jre21` at ~450 MB.
+
+[[push-zstd]]
+== Push with zstd:chunked
+
+=== Step 12: Push the Image
+
+[source,bash,role=execute,subs="attributes"]
+----
+IMAGE=quay.io/{registry-user}/my-tomcat-app:v1
+
+buildah push \
+  --compression-format zstd:chunked \
+  --compression-level 3 \
+  localhost/my-tomcat-app:v1 \
+  docker://$IMAGE
+----
+
+Because of the `xattr` tagging in the Containerfile, what you get on a subsequent code-only push:
+
+[cols="2,1",options="header"]
+|===
+| Layer
+| Status on code-only deploy
+
+| `app-war` (your WAR)
+| Re-pulled (the WAR changed)
+
+| `tomcat-conf` (server.xml etc.)
+| Re-pulled only if config changed
+
+| `tomcat-webapps` / `tomcat-install`
+| Cached (Tomcat version unchanged)
+
+| Hummingbird JVM/OS RPM layers
+| Cached
+|===
+
+A code-only deploy on a 50-node cluster transfers only the WAR layer, not the full image.
+
+[[tomcat-version-note]]
+== Tomcat 9 vs Tomcat 10
+
+[IMPORTANT]
+====
+**Servlet API namespace change.** Tomcat 10.x migrated the servlet API from `javax.servlet` to `jakarta.servlet`. If your application was built against the old `javax.*` namespace (most legacy enterprise apps), it needs **Tomcat 9**. If you are building fresh or targeting Jakarta EE 9+, use **Tomcat 10**.
+
+The Containerfiles above work for both -- change the `TOMCAT_VERSION` arg (Approach 2) or the RPM package name (`tomcat9` if available in your repo). Make sure your WAR's `web.xml` namespace matches.
+====
+
+[[summary]]
+== Summary
+
+.*What You've Accomplished*
+✅ Built a Tomcat application on Hummingbird using the RPM multi-stage pattern +
+✅ Built the same application using the official Tomcat image extraction pattern +
+✅ Created a production-hardened `server.xml` for container use +
+✅ Tagged logical components with `xattr` for chunkah layer isolation +
+✅ Verified no shell and no version disclosure in the final image +
+✅ Pushed with `zstd:chunked` for minimal pull traffic on code-only deploys +
+✅ Understood the Tomcat 9 vs 10 servlet API namespace decision
+
+.*Key Takeaways*
+
+**The RPM approach is preferred** because:
+* SBOM has proper RPM package metadata (not just file-level)
+* chunkah gets clean RPM component boundaries for layer splitting
+* Security updates arrive via `dnf update` in the builder stage
+* Single provenance chain (everything from Red Hat repos)
+
+**The upstream approach is useful** when:
+* You need a Tomcat version not yet in the RPM repos
+* You need to match an exact upstream Tomcat release
+* You are migrating from an existing `tomcat:*` Docker image
+
+**Both approaches share** the core Hummingbird advantage: zero CVEs from the base image, no shell, no package manager in the final runtime.
+
+=== Additional Resources
+
+* https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/hummingbird[Project Hummingbird^]
+* https://tomcat.apache.org/migration-10.html[Tomcat 10 Migration Guide^]
+* https://github.com/coreos/chunkah[chunkah GitHub Repository^]
+
+=== Troubleshooting
+
+**Issue: `dnf install tomcat` fails in the builder**
+[source,bash]
+----
+# Check available Tomcat packages
+podman run --rm registry.access.redhat.com/ubi9/openjdk-21:latest \
+  dnf search tomcat
+----
+
+**Issue: Tomcat fails to start with permission errors**
+[source,bash]
+----
+# Check the user and directory ownership
+podman run --rm localhost/my-tomcat-app:v1 ls -la /var/log/tomcat
+podman run --rm localhost/my-tomcat-app:v1 id
+----
+
+**Issue: WAR not deploying (404 on `/app/`)**
+[source,bash]
+----
+# Check the webapps directory
+podman run --rm localhost/my-tomcat-app:v1 ls /usr/share/tomcat/webapps/
+
+# Check Tomcat logs
+podman logs tomcat-test
+----

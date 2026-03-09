@@ -1,0 +1,533 @@
+= Sub-Module 2.4: SELinux Policy CI/CD with Tekton
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~8 minutes +
+*Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline) and familiarity with Module 1 SELinux concepts +
+*Learning Objectives:*
+
+* Create a Tekton Task that generates udica SELinux policies from container images
+* Integrate the policy-generation Task into a Shipwright/Tekton pipeline
+* Configure `seLinuxOptions` in Kubernetes Deployments
+* Understand MachineConfig for cluster-wide policy distribution
+* Implement a GitOps pattern for versioned SELinux policies
+--
+
+[[introduction]]
+== Introduction
+
+In Module 1, you generated udica SELinux policies manually on a developer workstation. At platform scale, that approach doesn't work -- you need policies generated **automatically** as part of CI/CD, versioned in Git, and distributed across cluster nodes.
+
+This sub-module bridges the gap: you'll create a Tekton Task that generates udica policies alongside image builds, then deploy with `seLinuxOptions` referencing the generated policy type.
+
+[[tekton-udica-task]]
+== Tekton Task: udica-policy-generate
+
+=== Step 1: Apply the Tekton Task
+
+This Task runs the built image briefly, captures `podman inspect` output, and feeds it to udica to produce a CIL policy file:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: udica-policy-generate
+  namespace: hummingbird-builds
+  labels:
+    app.kubernetes.io/part-of: hummingbird-workshop
+spec:
+  description: >-
+    Generate a custom SELinux CIL policy for a container image using udica.
+    The task inspects the image configuration and produces a policy scoped
+    to the image's actual port, mount, and capability requirements.
+  params:
+    - name: IMAGE
+      type: string
+      description: "Fully qualified image reference (registry/repo:tag or @sha256:...)"
+    - name: POLICY_NAME
+      type: string
+      description: "Name for the generated SELinux policy (alphanumeric + underscores)"
+    - name: PORTS
+      type: string
+      description: "Comma-separated list of ports the container exposes"
+      default: "8080"
+    - name: MOUNTS
+      type: string
+      description: "Comma-separated host paths the container bind-mounts (empty if none)"
+      default: ""
+  results:
+    - name: POLICY_CIL
+      description: "Contents of the generated .cil policy file"
+    - name: IMAGE_DIGEST
+      description: "Digest of the inspected image"
+    - name: POLICY_TYPE
+      description: "SELinux type to use in seLinuxOptions (policy_name.process)"
+  steps:
+    - name: generate-policy
+      image: registry.redhat.io/rhel9/toolbox:latest
+      securityContext:
+        privileged: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Installing udica ==="
+        dnf install -y -q udica podman container-selinux
+
+        IMAGE="$(params.IMAGE)"
+        POLICY="$(params.POLICY_NAME)"
+        PORTS="$(params.PORTS)"
+        MOUNTS="$(params.MOUNTS)"
+
+        echo "=== Pulling image: $IMAGE ==="
+        podman pull "$IMAGE"
+
+        DIGEST=$(podman inspect "$IMAGE" --format '{{.Digest}}')
+        echo -n "$DIGEST" > $(results.IMAGE_DIGEST.path)
+
+        echo "=== Running container for inspection ==="
+        RUN_ARGS=("--name" "udica-inspect" "--env" "container=podman")
+
+        # Add port mappings
+        IFS=',' read -ra PORT_LIST <<< "$PORTS"
+        for p in "${PORT_LIST[@]}"; do
+          [ -n "$p" ] && RUN_ARGS+=("-p" "${p}:${p}")
+        done
+
+        # Add mount mappings if specified
+        if [ -n "$MOUNTS" ]; then
+          IFS=',' read -ra MOUNT_LIST <<< "$MOUNTS"
+          for m in "${MOUNT_LIST[@]}"; do
+            [ -n "$m" ] && mkdir -p "$m" && RUN_ARGS+=("-v" "${m}:${m}:rw,Z")
+          done
+        fi
+
+        podman run -d "${RUN_ARGS[@]}" "$IMAGE" || true
+        sleep 3
+
+        echo "=== Generating udica policy: $POLICY ==="
+        podman inspect udica-inspect | udica "$POLICY"
+
+        echo "=== Generated CIL policy ==="
+        cat "${POLICY}.cil"
+
+        cp "${POLICY}.cil" /workspace/policy.cil
+        cat "${POLICY}.cil" > $(results.POLICY_CIL.path)
+        echo -n "${POLICY}.process" > $(results.POLICY_TYPE.path)
+
+        echo ""
+        echo "=== Policy type for seLinuxOptions: ${POLICY}.process ==="
+
+        podman stop udica-inspect 2>/dev/null || true
+        podman rm udica-inspect 2>/dev/null || true
+EOF
+----
+
+.*Expected output:*
+----
+task.tekton.dev/udica-policy-generate created
+----
+
+=== Step 2: Verify the Task
+
+[source,bash,role=execute]
+----
+oc get task udica-policy-generate -n hummingbird-builds
+----
+
+.*Expected output:*
+----
+NAME                      AGE
+udica-policy-generate     15s
+----
+
+[[run-policy-task]]
+== Run the Policy Generation Task
+
+=== Step 3: Create a TaskRun
+
+Generate a policy for the Node.js application built in Sub-Module 2.1:
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: generate-nodejs-policy
+  namespace: hummingbird-builds
+spec:
+  taskRef:
+    name: udica-policy-generate
+  params:
+    - name: IMAGE
+      value: "quay.io/{registry-user}/sample-nodejs:latest"
+    - name: POLICY_NAME
+      value: "hummingbird_nodejs"
+    - name: PORTS
+      value: "8080"
+    - name: MOUNTS
+      value: ""
+EOF
+----
+
+=== Step 4: Monitor the TaskRun
+
+[source,bash,role=execute]
+----
+oc get taskrun generate-nodejs-policy -w
+----
+
+Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
+
+=== Step 5: View the Generated Policy
+
+[source,bash,role=execute]
+----
+oc get taskrun generate-nodejs-policy \
+  -o jsonpath='{.status.results}' | python3 -m json.tool
+----
+
+The `POLICY_CIL` result contains the generated CIL policy. The `POLICY_TYPE` result gives you the SELinux type name (`hummingbird_nodejs.process`) to use in your Deployment spec.
+
+View the detailed logs:
+
+[source,bash,role=execute]
+----
+oc logs generate-nodejs-policy -c step-generate-policy
+----
+
+[[pipeline-integration]]
+== Pipeline Integration
+
+The `udica-policy-generate` Task fits naturally into a Shipwright/Tekton pipeline **after** the image build step. The flow is:
+
+----
+[Git Push] → [Shipwright BuildRun]
+  ↓
+[Image Built & Pushed to Registry]
+  ↓
+[udica-policy-generate Task]
+  ↓
+[CIL Policy in TaskRun Results]
+  ↓
+[Commit .cil to Git Repo]  →  [GitOps Sync]
+  ↓
+[MachineConfig loads policy on nodes]
+  ↓
+[Deployment with seLinuxOptions]
+----
+
+In a full pipeline, a subsequent Task would:
+
+1. Read the `POLICY_CIL` result from the udica Task
+2. Commit it to a Git repository under `selinux/<policy>.cil`
+3. Trigger a GitOps sync (ArgoCD/OpenShift GitOps) that applies a MachineConfig
+
+[[selinux-deployment]]
+== Deploying with seLinuxOptions
+
+=== Step 6: Update the Deployment
+
+Once the CIL policy is loaded on cluster nodes (via MachineConfig or manually), reference it in your Deployment's pod spec:
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nodejs-selinux
+  namespace: hummingbird-builds
+  labels:
+    app: nodejs-selinux
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nodejs-selinux
+  template:
+    metadata:
+      labels:
+        app: nodejs-selinux
+    spec:
+      containers:
+        - name: app
+          image: quay.io/{registry-user}/sample-nodejs:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seLinuxOptions:
+              type: hummingbird_nodejs.process
+EOF
+----
+
+[NOTE]
+====
+The `seLinuxOptions.type` field tells the container runtime to apply the custom SELinux type instead of the default `container_t`. This only works if the CIL policy has been loaded on the node via `semodule`.
+====
+
+=== Step 7: Verify the Deployment
+
+[source,bash,role=execute]
+----
+oc get pods -l app=nodejs-selinux -n hummingbird-builds
+----
+
+[TIP]
+====
+If pods fail with `SELinux type not found`, the CIL policy hasn't been loaded on the node yet. In a workshop environment, this is expected -- the MachineConfig step below shows how production clusters handle this.
+====
+
+[[machineconfig-distribution]]
+== Cluster-Wide Policy Distribution
+
+In production OpenShift clusters, **MachineConfig** loads CIL policies on every worker node during provisioning. This ensures the SELinux type is available before any pod requests it.
+
+=== MachineConfig Template
+
+[source,yaml]
+----
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-hummingbird-selinux-policy
+  labels:
+    machineconfiguration.openshift.io/role: worker
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /etc/selinux/hummingbird_nodejs.cil
+          mode: 0644
+          contents:
+            source: data:text/plain;charset=utf-8;base64,<BASE64_ENCODED_CIL>
+    systemd:
+      units:
+        - name: load-hummingbird-selinux.service
+          enabled: true
+          contents: |
+            [Unit]
+            Description=Load Hummingbird SELinux policies
+            After=selinux-autorelabel.service
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/sbin/semodule -i /etc/selinux/hummingbird_nodejs.cil \
+              /usr/share/udica/templates/base_container.cil \
+              /usr/share/udica/templates/net_container.cil
+            RemainAfterExit=true
+
+            [Install]
+            WantedBy=multi-user.target
+----
+
+.*What this MachineConfig does:*
+
+1. **Writes** the CIL policy file to `/etc/selinux/` on every worker node
+2. **Creates** a systemd unit that loads the policy via `semodule` on boot
+3. **Ensures** the SELinux type is available before pods are scheduled
+
+[IMPORTANT]
+====
+Applying a MachineConfig triggers a **rolling reboot** of worker nodes. In production, coordinate this with maintenance windows. The Machine Config Operator handles the rollout automatically.
+====
+
+[[gitops-pattern]]
+== GitOps Pattern for SELinux Policies
+
+=== Repository Structure
+
+The recommended structure commits CIL policies alongside application manifests:
+
+----
+application-repo/
+├── Containerfile
+├── src/
+│   └── ...
+├── selinux/
+│   ├── hummingbird_nodejs.cil        # generated by udica-policy-generate Task
+│   └── load-policy.sh                # helper for manual loading
+└── k8s/
+    ├── deployment.yaml                # references seLinuxOptions.type
+    ├── machineconfig.yaml             # distributes .cil to nodes
+    └── kustomization.yaml
+----
+
+=== load-policy.sh Helper
+
+[source,bash]
+----
+#!/bin/bash
+set -euo pipefail
+
+POLICY_DIR="$(dirname "$0")"
+
+for cil in "$POLICY_DIR"/*.cil; do
+  POLICY_NAME=$(basename "$cil" .cil)
+  echo "Loading policy: $POLICY_NAME"
+  sudo semodule -i "$cil" \
+    /usr/share/udica/templates/{base_container.cil,net_container.cil}
+done
+
+echo "All policies loaded successfully"
+sudo semodule -l | grep hummingbird
+----
+
+=== GitOps Workflow
+
+1. **Build pipeline** generates the image and triggers `udica-policy-generate`
+2. **Commit step** writes the `.cil` file to the `selinux/` directory in Git
+3. **ArgoCD/OpenShift GitOps** detects the change and applies the MachineConfig
+4. **Machine Config Operator** rolls out the policy to worker nodes
+5. **Deployment** references `seLinuxOptions.type` and runs under the custom policy
+
+This ensures every image version has a matching, auditable SELinux policy.
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
+
+.*What You've Accomplished*
+✅ Created a Tekton Task for automated udica policy generation +
+✅ Ran the Task against a built Hummingbird image +
+✅ Viewed the generated CIL policy in TaskRun results +
+✅ Deployed with `seLinuxOptions` referencing the custom policy +
+✅ Understood MachineConfig for cluster-wide policy distribution +
+✅ Learned the GitOps pattern for versioned SELinux policies
+
+.*Key Takeaways*
+
+**CI/CD Policy Generation:**
+* Generate SELinux policies automatically during image builds
+* Policy generation is deterministic: same image config produces the same CIL
+* `udica-policy-generate` Task captures ports, mounts, and capabilities from the image
+
+**Production Distribution:**
+* MachineConfig loads policies on all worker nodes at boot
+* `seLinuxOptions.type` in the pod spec activates the policy
+* GitOps ensures policies are versioned and auditable
+
+**End-to-End Security:**
+* Hummingbird minimal image (attack surface reduction)
+* Shipwright/Tekton automated builds (supply chain integrity)
+* SBOM + vulnerability scanning (compliance and visibility)
+* udica SELinux policies (kernel-level access control)
+* Image signing (provenance verification)
+
+=== Workshop Complete!
+
+You've finished both modules of the Project Hummingbird Environment Workshop!
+
+**What You've Mastered:**
+
+**Module 1 -- Developer Environment:**
+* Multi-stage builds with Hummingbird runtimes
+* Security scanning, SBOM generation, image signing
+* Custom SELinux policies with udica (fundamentals and advanced)
+* Production-ready iteration and distribution workflows
+
+**Module 2 -- Platform Engineering:**
+* Shipwright Builds operator on OpenShift
+* Buildpacks and custom BuildStrategies
+* Multi-language auto-detection
+* Complete security pipeline (build -> scan -> SBOM -> deploy)
+* Automated SELinux policy generation with Tekton
+
+**Combined Workflow:**
+1. **Module 1**: Develop and validate locally with Podman
+2. **Module 2**: Deploy to platform with Shipwright + Tekton
+3. **Production**: Automated builds, scanning, signing, SELinux policies, and deployment
+
+=== Optional Exercise
+
+**xref:module-02-05-chunkah-pipeline.adoc[Sub-Module 2.5: chunkah in CI/CD Pipelines]**
+
+Learn how to integrate chunkah content-based layer splitting into the Tekton pipeline for automated image optimisation (~12 min).
+
+=== Next Steps for Production
+
+**Implement GitOps:**
+* Integrate Shipwright with ArgoCD/OpenShift GitOps
+* Automate deployments and policy distribution on successful builds
+* Version control all manifests including `.cil` files
+
+**Set Up Webhooks:**
+* Trigger builds automatically on git commits
+* Use Tekton Triggers for event-driven builds and policy regeneration
+
+**Configure Admission Control:**
+* Deploy ACS/Stackrox for policy enforcement
+* Require signed images for production namespaces
+* Enforce resource limits and security contexts
+
+=== Additional Resources
+
+*Tekton Pipelines:*
+* https://tekton.dev/docs/[Tekton Documentation^]
+* https://docs.openshift.com/pipelines/latest/[OpenShift Pipelines^]
+
+*SELinux on Kubernetes:*
+* https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#assign-selinux-labels-to-a-container[Kubernetes SELinux Labels^]
+* https://docs.openshift.com/container-platform/latest/authentication/managing-security-context-constraints.html[OpenShift SCCs^]
+
+*udica Documentation:*
+* https://github.com/containers/udica[udica GitHub Repository^]
+
+*Shipwright Builds:*
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/builds_using_shipwright/index[Builds for OpenShift^]
+* https://shipwright.io/docs/[Shipwright Documentation^]
+
+=== Troubleshooting
+
+**Issue: TaskRun fails with permission errors**
+[source,bash]
+----
+oc get taskrun generate-nodejs-policy -o yaml | grep -A5 status
+
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds
+----
+
+**Issue: SELinux type not found on node**
+[source,bash]
+----
+oc debug node/<node-name> -- chroot /host semodule -l | grep hummingbird
+
+oc get machineconfig 99-hummingbird-selinux-policy
+oc get machineconfigpool worker
+----
+
+**Issue: MachineConfig not rolling out**
+[source,bash]
+----
+oc get machineconfigpool worker -o yaml | grep -A10 status
+
+oc get nodes -o wide
+----
+
+=== Thank You!
+
+Thank you for completing the **Project Hummingbird Environment Workshop**!
+
+You now have the skills to build, secure, harden, and deploy container applications using Project Hummingbird at both local and platform scales.
+
+For questions, feedback, or contributions:
+* Project Hummingbird: https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/hummingbird

@@ -1,0 +1,599 @@
+= Appendix B: OpenShift Platform Environment Setup
+
+.*Appendix Overview*
+[sidebar]
+--
+*Purpose:* Prepare an OpenShift {openshift-version} cluster with Shipwright for Module 2 (Platform Engineering) +
+*Duration:* 5-20 minutes depending on the option chosen +
+*Required for:* Module 2 labs (Buildpacks, Custom Strategies, Security Pipeline)
+
+*What gets configured:*
+
+* OpenShift cluster access verified
+* `hummingbird-builds` namespace created
+* OpenShift Pipelines (Tekton) operator installed and verified
+* {shipwright-operator} operator installed
+* Shipwright CRDs (BuildStrategy, Build, BuildRun) available
+--
+
+Choose one of the three options below to prepare your OpenShift platform environment. Option 1 is the fastest path.
+
+[[option-1-rhdp]]
+== Option 1: RHDP Pre-Provisioned Environment (Recommended)
+
+The **Red Hat Demo Platform (RHDP)** provides a ready-to-use OpenShift {openshift-version} cluster on AWS. This is the fastest way to get started.
+
+=== Deploy the Environment
+
+. Click the link below to open the RHDP catalog:
++
+**https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[Red Hat OpenShift Container Platform Cluster (AWS) on RHDP^]**
++
+. Log in with your Red Hat credentials (SSO for associates, user account for partners)
+. Click **Order** and wait for the environment to provision (typically 15-30 minutes for a full cluster)
+. Once ready, you will receive connection details including:
+  - OpenShift console URL
+  - API endpoint
+  - Admin credentials
+  - `oc` CLI login command
+
+=== After Provisioning
+
+The RHDP OpenShift cluster provides a clean OpenShift {openshift-version} environment. You will still need to install the {shipwright-operator} operator and create the workshop namespace. Use Option 2 (script) or Option 3 (manual steps) below to complete the setup.
+
+Verify your cluster access:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc login {openshift-api} -u {openshift-user}
+oc version
+oc auth can-i create clusterrole
+----
+
+[[option-2-script]]
+== Option 2: Automation Script
+
+Run a single script to install the operator, create the namespace, and verify everything is ready. Requires `oc` CLI with cluster-admin access.
+
+You can either download the script and run it, or copy-paste the inline version below.
+
+=== Download and Run
+
+[source,bash,role=execute]
+----
+curl -LO https://raw.githubusercontent.com/Red-Hat-SE-RTO/hummingbird-labs/main/content/modules/ROOT/assets/attachments/setup-openshift-platform.sh
+chmod +x setup-openshift-platform.sh
+./setup-openshift-platform.sh
+----
+
+Or download directly: link:{attachmentsdir}/setup-openshift-platform.sh[setup-openshift-platform.sh^]
+
+=== Or Copy-Paste Inline
+
+[source,bash,role=execute,subs="attributes"]
+----
+bash << 'SETUP_SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+echo "=== Hummingbird Workshop: OpenShift Platform Setup ==="
+echo ""
+
+# --- Verify Cluster Access ---
+echo "[1/6] Verifying OpenShift cluster access..."
+if ! oc whoami > /dev/null 2>&1; then
+    echo "ERROR: Not logged in to OpenShift. Run: oc login <api-url> -u <user>"
+    exit 1
+fi
+echo "  Logged in as: $(oc whoami)"
+echo "  Server: $(oc whoami --show-server)"
+
+# --- Verify Cluster-Admin ---
+echo "[2/6] Verifying cluster-admin privileges..."
+if ! oc auth can-i create clusterrole > /dev/null 2>&1; then
+    echo "ERROR: cluster-admin privileges required."
+    exit 1
+fi
+echo "  cluster-admin: confirmed"
+
+# --- Create Namespace ---
+echo "[3/6] Creating hummingbird-builds namespace..."
+if oc get project hummingbird-builds > /dev/null 2>&1; then
+    echo "  Namespace already exists, switching to it..."
+    oc project hummingbird-builds
+else
+    oc new-project hummingbird-builds
+fi
+
+# --- Install OpenShift Pipelines (Tekton) ---
+echo "[4/6] Verifying/Installing OpenShift Pipelines (Tekton)..."
+if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
+    echo "  OpenShift Pipelines already installed and running."
+else
+    echo "  Installing OpenShift Pipelines operator..."
+    cat << 'EOF' | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+
+    echo "  Waiting for OpenShift Pipelines to become ready (up to 5 minutes)..."
+    for i in $(seq 1 60); do
+        if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
+            echo "  OpenShift Pipelines installed successfully."
+            break
+        fi
+        if [ "$i" -eq 60 ]; then
+            echo "  WARNING: OpenShift Pipelines not yet ready. Check: oc get pods -n openshift-pipelines"
+        fi
+        sleep 5
+    done
+fi
+
+# --- Install Builds Operator ---
+echo "[5/6] Installing Builds for Red Hat OpenShift operator..."
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-builds
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-builds-operator-group
+  namespace: openshift-builds
+spec:
+  targetNamespaces:
+  - openshift-builds
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-builds-operator
+  namespace: openshift-builds
+spec:
+  channel: stable
+  name: openshift-builds-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+
+echo "  Waiting for operator to reach Succeeded phase (up to 5 minutes)..."
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n openshift-builds -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then
+        echo "  Operator installed successfully."
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "  WARNING: Operator not yet in Succeeded phase. Check with: oc get csv -n openshift-builds"
+    fi
+    sleep 5
+done
+
+# --- Verify CRDs ---
+echo "[6/6] Verifying Shipwright CRDs and Tekton..."
+for CRD in builds.shipwright.io buildruns.shipwright.io buildstrategies.shipwright.io clusterbuildstrategies.shipwright.io; do
+    if oc get crd "$CRD" > /dev/null 2>&1; then
+        echo "  $CRD: found"
+    else
+        echo "  $CRD: NOT FOUND (operator may still be installing)"
+    fi
+done
+
+TEKTON_STATUS="unknown"
+if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
+    TEKTON_STATUS="running"
+    echo "  OpenShift Pipelines (Tekton): running"
+else
+    TEKTON_STATUS="not ready"
+    echo "  OpenShift Pipelines (Tekton): NOT READY"
+fi
+
+echo ""
+echo "=== Setup Complete ==="
+echo "Cluster:    $(oc whoami --show-server)"
+echo "User:       $(oc whoami)"
+echo "Namespace:  hummingbird-builds"
+echo "Builds:     $(oc get csv -n openshift-builds -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo 'installing...')"
+echo "Pipelines:  $TEKTON_STATUS"
+echo ""
+echo "Proceed to Module 2 to start the workshop labs."
+SETUP_SCRIPT
+----
+
+[[option-3-manual]]
+== Option 3: Manual Steps
+
+Follow the detailed steps below if you prefer to configure each component individually, or if you need to troubleshoot a specific part of the setup.
+
+[[prerequisites]]
+=== Prerequisites Check
+
+==== Step 1: Verify OpenShift Access
+
+Confirm you can access your OpenShift cluster:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc login {openshift-api} -u {openshift-user}
+----
+
+When prompted, enter your password: `{openshift-password}`
+
+.*Expected output:*
+----
+Login successful.
+
+You have access to XX projects, the list has been suppressed...
+----
+
+==== Step 2: Verify Cluster Version
+
+Check that you're running OpenShift {openshift-version} or later:
+
+[source,bash,role=execute]
+----
+oc version
+----
+
+.*Expected output:*
+----
+Client Version: 4.21.x
+Server Version: 4.21.x
+Kubernetes Version: v1.34.x
+----
+
+[NOTE]
+====
+Builds for Red Hat OpenShift requires OpenShift 4.19+, but {openshift-version} is recommended for the latest features and security patches.
+====
+
+==== Step 3: Verify Cluster-Admin Privileges
+
+Shipwright installation requires cluster-admin privileges:
+
+[source,bash,role=execute]
+----
+oc auth can-i create clusterrole
+----
+
+.*Expected output:*
+----
+yes
+----
+
+[IMPORTANT]
+====
+If you see "no", contact your cluster administrator to grant cluster-admin privileges for this workshop. ClusterBuildStrategies are cluster-scoped resources that require elevated permissions.
+====
+
+==== Step 4: Create Workshop Namespace
+
+Create a dedicated namespace for your build experiments:
+
+[source,bash,role=execute]
+----
+oc new-project hummingbird-builds
+----
+
+.*Expected output:*
+----
+Now using project "hummingbird-builds" on server "https://...".
+----
+
+[TIP]
+====
+In production, you might use separate namespaces for different teams or environments:
+- `team-frontend-builds`
+- `team-backend-builds`
+- `prod-builds`
+====
+
+[[operator-install]]
+=== Operator Installation
+
+Install the {shipwright-operator} operator from OperatorHub.
+
+==== Step 5: Install Operator via CLI
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-builds
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-builds-operator-group
+  namespace: openshift-builds
+spec:
+  targetNamespaces:
+  - openshift-builds
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-builds-operator
+  namespace: openshift-builds
+spec:
+  channel: stable
+  name: openshift-builds-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/openshift-builds created
+operatorgroup.operators.coreos.com/openshift-builds-operator-group created
+subscription.operators.coreos.com/openshift-builds-operator created
+----
+
+[NOTE]
+====
+**What these resources do:**
+
+* **Namespace**: Dedicated namespace for the operator
+* **OperatorGroup**: Defines which namespaces the operator watches
+* **Subscription**: Tells OpenShift to install and manage the operator from the `stable` channel
+====
+
+==== Alternative: Install via Web Console
+
+If you prefer the GUI:
+
+. Access the OpenShift web console: {openshift-console}
+. Log in with your credentials
+. Navigate to **Operators** -> **OperatorHub**
+. Search for "Builds for Red Hat OpenShift"
+. Click **Install**
+. Select **Automatic** approval strategy
+. Choose namespace: `openshift-builds`
+. Click **Install**
+
+==== Step 6: Verify Operator Installation
+
+Wait for the operator to be ready (this may take 2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc get csv -n openshift-builds -w
+----
+
+.*Expected output:*
+----
+NAME                              DISPLAY                          VERSION   PHASE
+openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Installing
+openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Succeeded
+----
+
+Press `Ctrl+C` to stop watching once you see `Succeeded`.
+
+[TIP]
+====
+If the operator stays in `Installing` phase for more than 5 minutes, check events:
+
+[source,bash]
+----
+oc get events -n openshift-builds --sort-by=.metadata.creationTimestamp
+----
+====
+
+==== Step 7: Verify Shipwright CRDs
+
+Confirm the Shipwright Custom Resource Definitions are installed:
+
+[source,bash,role=execute]
+----
+oc get crd | grep shipwright
+----
+
+.*Expected output:*
+----
+buildruns.shipwright.io
+builds.shipwright.io
+buildstrategies.shipwright.io
+clusterbuildstrategies.shipwright.io
+----
+
+[NOTE]
+====
+These four CRDs are the foundation of Shipwright:
+
+* **BuildStrategy** (namespace-scoped): How to build images within a namespace
+* **ClusterBuildStrategy** (cluster-scoped): How to build images across the cluster
+* **Build**: What to build, from where, to where
+* **BuildRun**: Executes a Build
+====
+
+==== Step 8: Install OpenShift Pipelines (Tekton)
+
+Shipwright and Module 2's Tekton-based labs require OpenShift Pipelines. Check if it's already installed:
+
+[source,bash,role=execute]
+----
+oc get pods -n openshift-pipelines
+----
+
+If pods are running, Tekton is already installed and you can skip to Step 9. Otherwise, install it:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+subscription.operators.coreos.com/openshift-pipelines-operator created
+----
+
+Wait for OpenShift Pipelines to become ready (2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc get pods -n openshift-pipelines -w
+----
+
+.*Expected output:*
+----
+NAME                                           READY   STATUS    RESTARTS   AGE
+tekton-pipelines-controller-...                1/1     Running   0          2m
+tekton-pipelines-webhook-...                   1/1     Running   0          2m
+tekton-triggers-controller-...                 1/1     Running   0          2m
+----
+
+Press `Ctrl+C` once you see the pods in `Running` state.
+
+[NOTE]
+====
+OpenShift Pipelines may already be installed on some clusters (especially OpenShift 4.19+). The Subscription is idempotent -- applying it when Tekton is already present has no effect.
+====
+
+[[build-resources]]
+=== Understanding Build Resources
+
+Before starting the Module 2 labs, review the Shipwright resource hierarchy.
+
+==== Shipwright Resource Types
+
+**BuildStrategy** (Namespace-scoped)::
+Defines how to build images within a single namespace. Use for team-specific or experimental build patterns.
++
+[source,bash]
+----
+oc get buildstrategy -n hummingbird-builds
+----
+
+**ClusterBuildStrategy** (Cluster-scoped)::
+Defines how to build images across the entire cluster. Use for organization-wide standards that all teams can leverage.
++
+[source,bash]
+----
+oc get clusterbuildstrategy
+----
+
+**Build**::
+References a BuildStrategy and defines the source code location, output registry, and build parameters. This is what developers create to build their applications.
+
+**BuildRun**::
+Executes a Build. Can be created manually or triggered by events (git commits, webhooks).
+
+==== Resource Relationship Diagram
+
+----
+ClusterBuildStrategy: "nodejs-hummingbird"
+  -> (used by)
+Build: "myapp-build"
+  - Source: https://github.com/myorg/myapp.git
+  - Output: quay.io/myorg/myapp:latest
+  -> (executed by)
+BuildRun: "myapp-build-run-abc123"
+  - Status: Succeeded
+  - Image: quay.io/myorg/myapp:latest@sha256:...
+----
+
+==== Step 9: List Pre-installed BuildStrategies
+
+[source,bash,role=execute]
+----
+oc get clusterbuildstrategy
+----
+
+.*Expected output:*
+----
+NAME                    AGE
+buildah                 5m
+buildpacks-v3           5m
+source-to-image         5m
+----
+
+[NOTE]
+====
+These are starting points provided by the operator. In the Module 2 labs, you'll create custom strategies optimized for Hummingbird runtimes.
+====
+
+==== Step 10: Inspect a BuildStrategy
+
+Examine the `buildah` strategy that comes pre-installed:
+
+[source,bash,role=execute]
+----
+oc get clusterbuildstrategy buildah -o yaml | head -50
+----
+
+.*Key sections:*
+* **spec.parameters**: Customizable values (Dockerfile path, image registry, etc.)
+* **spec.buildSteps**: Tekton task steps that execute the build
+* **securityContext**: Security settings for build pods
+* **volumes**: Workspace and cache configurations
+
+[NOTE]
+====
+BuildStrategies use **Tekton Task** syntax. Each step runs in a container with specific tools (buildah, git, etc.). This is how Shipwright integrates with the OpenShift Pipelines ecosystem.
+====
+
+[[additional-resources]]
+=== Additional Resources
+
+*OpenShift Builds Documentation:*
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/builds_using_shipwright/index[Official Builds for OpenShift Docs^]
+* https://www.redhat.com/en/blog/builds-red-hat-openshift-now-generally-available[Builds for OpenShift GA Announcement^]
+
+*Shipwright Project:*
+* https://shipwright.io/[Shipwright Official Site^]
+* https://github.com/shipwright-io/build[Shipwright GitHub Repository^]
+
+[[troubleshooting]]
+=== Troubleshooting
+
+**Issue: Operator stuck in Installing**
+[source,bash]
+----
+oc logs -n openshift-builds -l name=openshift-builds-operator
+
+oc get events -n openshift-builds --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: CRDs not appearing**
+[source,bash]
+----
+oc get csv -n openshift-builds
+
+oc get pods -n openshift-builds
+----
+
+**Issue: Permission denied creating ClusterBuildStrategy**
+[source,bash]
+----
+oc auth can-i create clusterbuildstrategy
+
+oc auth can-i '*' '*' --all-namespaces
+----

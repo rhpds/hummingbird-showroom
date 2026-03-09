@@ -1,0 +1,567 @@
+= Sub-Module 1.2: Security Scanning & SBOMs
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~15 minutes +
+*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Learning Objectives:*
+
+* Scan container images for CVEs with Grype
+* Generate SBOMs with Syft for compliance
+* Sign images and attach SBOM attestations with cosign
+* Compare Hummingbird vs UBI image sizes and vulnerability counts
+* Verify SBOM attestations via Podman Desktop
+--
+
+[[introduction]]
+== Introduction
+
+Security doesn't end when the build completes. In this sub-module, you'll implement a complete security workflow: scanning for vulnerabilities, generating Software Bill of Materials (SBOMs) for compliance, and signing images to prove provenance.
+
+You'll see firsthand why Hummingbird's "zero-CVE at ship time" approach dramatically reduces your security burden compared to traditional base images.
+
+[[vulnerability-scanning]]
+== Vulnerability Scanning with Grype
+
+=== Step 1: Scan for CVEs
+
+Use Grype to scan your image for known CVEs:
+
+[source,bash,role=execute]
+----
+grype hummingbird-demo:v1 --only-fixed
+----
+
+.*Expected output:*
+----
+No vulnerabilities found
+----
+
+[NOTE]
+====
+The `--only-fixed` flag shows only vulnerabilities with available patches. This is useful because it focuses on actionable issues.
+
+Hummingbird base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
+====
+
+=== Step 2: Compare with Full UBI Image
+
+Let's build a comparison image using only UBI (no Hummingbird runtime) to see the difference.
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/sample-app
+
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > Containerfile.ubi << 'EOF'
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+WORKDIR /app
+RUN cp -r /build/target/quarkus-app/* /app/
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+
+# Build UBI-only version
+podman build -f Containerfile.ubi -t demo-ubi:v1 .
+----
+
+Now scan the UBI version:
+
+[source,bash,role=execute]
+----
+grype demo-ubi:v1 --only-fixed
+----
+
+.*Expected output (varies, but typically):*
+----
+✔ Scanned for vulnerabilities [15-30 vulnerability matches]
+  ├── 0 critical, 2-5 high, 5-15 medium, 5-10 low, 0 negligible
+  └── 15-30 fixed
+----
+
+[IMPORTANT]
+====
+**Key Insight:**
+
+* **Hummingbird image**: 0 CVEs (or very few)
+* **UBI image**: 15-30+ CVEs (even in a recent version)
+
+The difference is due to unnecessary packages in the UBI image that aren't needed at runtime but still have security vulnerabilities.
+====
+
+[[sbom-generation]]
+== SBOM Generation with Syft
+
+=== Step 3: Generate SBOM
+
+Create a Software Bill of Materials for compliance:
+
+[source,bash,role=execute]
+----
+syft hummingbird-demo:v1 -o spdx-json=sbom.json
+
+# View package count
+jq '.packages | length' sbom.json
+----
+
+.*Expected output:*
+----
+ ✔ Cataloged packages      [170 packages]
+
+170
+----
+
+.*What's in the SBOM:*
+The SBOM includes every package in your container:
+* OpenJDK 21 JRE
+* Quarkus runtime and its Java dependencies (Netty, Vert.x, Jackson, SmallRye, etc.)
+* System RPM libraries from Hummingbird base image (glibc, NSS, etc.)
+
+=== Step 4: View SBOM Summary
+
+View a human-readable table of packages:
+
+[source,bash,role=execute]
+----
+syft hummingbird-demo:v1 -o table
+----
+
+.*Expected output (excerpt):*
+----
+NAME                          VERSION                  TYPE
+quarkus-rest                  3.32.2                   java-archive
+quarkus-rest-jackson          3.32.2                   java-archive
+jackson-databind              2.21.1                   java-archive
+jakarta.ws.rs-api             3.1.0                    java-archive
+netty-common                  4.1.130.Final            java-archive
+vertx-core                    4.5.25                   java-archive
+...
+java-21-openjdk-headless      1:21.0.10.0.7-2.1.hum1  rpm
+glibc                         2.42-10.hum1             rpm
+nss                           3.119.1-1.1.hum1         rpm
+----
+
+[NOTE]
+====
+**SBOM Formats:**
+
+Syft supports multiple output formats:
+
+* **SPDX-JSON**: Standard format for compliance (ISO/IEC 5962:2021)
+* **CycloneDX**: Alternative SBOM standard
+* **Table**: Human-readable for quick review
+* **JSON**: Syft's native format with detailed metadata
+
+For compliance requirements, use SPDX-JSON or CycloneDX.
+====
+
+=== Podman Desktop Example 3: Verify SBOM Attestation
+
+While we'll attach SBOMs as attestations in the next section, here's how you can verify SBOM information in Podman Desktop:
+
+. Navigate to **Images** tab in Podman Desktop
+. Click on `hummingbird-demo:v1`
+. Click **History** tab
+. Look for OCI labels that may contain SBOM references:
+  - `org.opencontainers.image.source`: Git repository URL
+  - `org.opencontainers.image.revision`: Git commit SHA
+  - Build provenance metadata
+. Once we attach an SBOM attestation (Step 9), you can verify it with cosign CLI
+
+[TIP]
+====
+Some registries (like Quay.io) automatically generate SBOMs when you push images. You can view them in the registry UI under the "Security" or "Packages" tab.
+====
+
+[[image-signing]]
+== Image Signing with Cosign
+
+Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll start a lightweight local registry and push the image there before signing.
+
+=== Step 5: Start a Local Registry and Push the Image
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/sample-app
+
+# Start a local OCI registry
+podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
+
+# Tag and push our image to the local registry
+podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
+podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
+
+# Capture the image digest for use with cosign
+IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
+echo "Image digest: ${IMAGE_DIGEST}"
+----
+
+.*Expected output:*
+----
+Getting image source signatures
+Copying blob sha256:...
+...
+Writing manifest to image destination
+Image digest: sha256:abc123...
+----
+
+[NOTE]
+====
+We capture the image **digest** (`sha256:...`) rather than relying on the `:v1` tag. Cosign requires (and future versions will enforce) digest-based references so you always sign exactly the image you intend. The `IMAGE_DIGEST` variable is used in all subsequent cosign commands.
+====
+
+=== Step 6: Generate Signing Keys
+
+Generate a key pair for testing (in production, use keyless signing or KMS):
+
+[source,bash,role=execute]
+----
+# Generate key pair
+cosign generate-key-pair
+
+# Enter a password when prompted (remember it for verification)
+----
+
+.*Expected output:*
+----
+Enter password for private key:
+Enter password for private key again:
+Private key written to cosign.key
+Public key written to cosign.pub
+----
+
+[IMPORTANT]
+====
+**Production Signing Methods:**
+
+* **Keyless Signing**: Uses OIDC identity (GitHub, GitLab, Google, etc.) instead of keys
+* **KMS-Backed Keys**: AWS KMS, Azure Key Vault, Google Cloud KMS, HashiCorp Vault
+* **Hardware Security Modules (HSM)**: For highly regulated environments
+
+For this workshop, we use local keys for simplicity. Never commit `cosign.key` to git!
+====
+
+=== Step 7: Sign the Image
+
+Sign your image with cosign using the digest captured in Step 5. The `--tlog-upload=false` flag skips the Rekor transparency log (which requires internet access to the Sigstore public instance), and `--allow-insecure-registry` allows HTTP access to our local registry:
+
+[source,bash,role=execute]
+----
+cosign sign --yes --key cosign.key \
+  --tlog-upload=false \
+  --allow-insecure-registry \
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+Enter password for private key:
+Pushing signature to: localhost:5000/hummingbird-demo
+----
+
+[NOTE]
+====
+The `--tlog-upload=false` flag is used here because we are working with a local registry that does not have access to the Sigstore Rekor transparency log. In production with a public or enterprise registry, omit this flag so signatures are recorded in the transparency log for auditability.
+====
+
+=== Step 8: Verify the Signature
+
+Verify the image signature. The `--insecure-ignore-tlog=true` flag matches our signing choice to skip the transparency log:
+
+[source,bash,role=execute]
+----
+cosign verify --key cosign.pub \
+  --insecure-ignore-tlog=true \
+  --allow-insecure-registry \
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.
+
+Verification for localhost:5000/hummingbird-demo@sha256:abc123... --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - The signatures were verified against the specified public key
+
+[{"critical":{"identity":{"docker-reference":"localhost:5000/hummingbird-demo"},...
+----
+
+[NOTE]
+====
+The tlog **WARNING** is expected. We skipped the Rekor transparency log when signing (Step 7), so we must also skip tlog verification here. In production, both signing and verification should use the transparency log.
+====
+
+[[sbom-attestation]]
+== Attach SBOM as Attestation
+
+=== Step 9: Attach SBOM Attestation
+
+Attach the SBOM as a signed attestation:
+
+[source,bash,role=execute]
+----
+cosign attest --yes --key cosign.key \
+  --predicate sbom.json --type spdxjson \
+  --tlog-upload=false \
+  --allow-insecure-registry \
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+Enter password for private key:
+Using payload from: sbom.json
+----
+
+[NOTE]
+====
+**What is an Attestation?**
+
+An attestation is metadata about an image (like an SBOM, scan results, or build provenance) that is:
+
+1. Signed with the same key/identity as the image
+2. Stored alongside the image in the registry
+3. Verifiable by consumers before running the image
+
+This proves the SBOM came from the same trusted source as the image.
+====
+
+=== Step 10: Verify SBOM Attestation
+
+Verify the SBOM attestation:
+
+[source,bash,role=execute]
+----
+cosign verify-attestation --key cosign.pub \
+  --type spdxjson \
+  --insecure-ignore-tlog=true \
+  --allow-insecure-registry \
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST} \
+  | jq -r '.payload' | base64 -d | jq '.predicate.packages | length'
+----
+
+.*Expected output:*
+----
+Verification for localhost:5000/hummingbird-demo@sha256:abc123... --
+...
+170
+----
+
+This confirms:
+* The attestation signature is valid
+* The SBOM contains 170 packages
+* The SBOM was signed by the holder of `cosign.key`
+
+[[size-comparison]]
+== Image Size and Vulnerability Comparison
+
+=== Step 11: Compare Image Sizes
+
+See the dramatic size difference:
+
+[source,bash,role=execute]
+----
+# Compare sizes (filter out the registry copy)
+podman images | grep -E "hummingbird-demo|demo-ubi" | grep -v "5000"
+----
+
+.*Expected output:*
+----
+localhost/hummingbird-demo  v1    67d4b5f4fa41  10 minutes ago  272 MB
+localhost/demo-ubi          v1    87b0aeed9e23  5 minutes ago   621 MB
+----
+
+.*Size Reduction: ~56%*
+
+[source,bash,role=execute]
+----
+# Calculate exact percentage
+awk 'BEGIN { printf "Size reduction: %.1f%%\n", (1 - 272.0/621.0) * 100 }'
+----
+
+.*Output:*
+----
+Size reduction: 56.2%
+----
+
+[NOTE]
+====
+The UBI single-stage image is larger (~621 MB) because it retains the full JDK, Maven, and all build tools alongside the application. The Hummingbird multi-stage image (~272 MB) ships only the JRE and your application.
+====
+
+[[vulnerability-comparison]]
+=== Step 12: Vulnerability Count Comparison
+
+Generate comparison report:
+
+[source,bash,role=execute]
+----
+echo "=== Hummingbird Image Scan ==="
+grype hummingbird-demo:v1 --only-fixed
+
+echo ""
+echo "=== UBI Image Scan ==="
+grype demo-ubi:v1 --only-fixed
+----
+
+.*Expected comparison:*
+----
+=== Hummingbird Image Scan ===
+No vulnerabilities found
+
+=== UBI Image Scan ===
+NAME              INSTALLED         FIXED-IN          TYPE          VULNERABILITY        SEVERITY
+dom4j             1.1               2.0.3             java-archive  GHSA-hwj3-m3p6-hj38  Critical
+maven-core        3.2.5             3.8.1             java-archive  GHSA-2f88-5hg8-9x2x  Critical
+commons-compress  1.20              1.21              java-archive  GHSA-7hfm-57qf-j43q  High
+...
+(28 total vulnerability matches including 2 critical, 8 high, 10 medium, 5 low)
+----
+
+=== Step 13: Clean Up Local Registry
+
+Once you're done with signing and attestation, you can stop the local registry:
+
+[source,bash,role=execute]
+----
+podman stop registry && podman rm registry
+----
+
+[[podman-desktop-scan]]
+=== Podman Desktop Example 5: Scan and Compare in GUI
+
+If you have the Grype extension installed in Podman Desktop:
+
+. Navigate to **Images** tab
+. Click on `hummingbird-demo:v1`
+. Look for a **Scan** button or **Security** tab (depends on extension)
+. Run the scan
+. Expected result: 0 CVEs for Hummingbird base
+. Repeat for `demo-ubi:v1`
+. Expected result: 15-30+ CVEs for UBI base
+
+[NOTE]
+====
+The Grype extension may not be installed by default. You can install it via **Extensions** → **Browse** → search for "Grype" or "Security Scanning."
+
+Alternatively, use the CLI workflow shown above, which works universally.
+====
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.2 and implemented a complete security workflow.
+
+.*What You've Accomplished*
+✅ Scanned images for CVEs with Grype (0 CVEs in Hummingbird) +
+✅ Generated SBOMs with Syft in SPDX-JSON format (170 packages cataloged) +
+✅ Set up a local OCI registry for signing workflows +
+✅ Created cosign key pair for image signing +
+✅ Signed container images with cosign +
+✅ Verified image signatures +
+✅ Attached SBOM as signed attestation +
+✅ Verified SBOM attestations +
+✅ Compared Hummingbird vs UBI image sizes (~56% reduction) +
+✅ Compared vulnerability counts (0 vs 28+ CVEs)
+
+.*Key Takeaways*
+
+**Hummingbird Security Benefits:**
+* **Zero or near-zero CVEs** at ship time
+* **56%+ smaller** images reduce attack surface and download time
+* **Complete transparency** via SBOMs
+
+**Security Workflow:**
+1. **Build** → Multi-stage Containerfile with Hummingbird runtime
+2. **Scan** → Grype checks for CVEs (should be 0)
+3. **SBOM** → Syft generates compliance artifacts
+4. **Sign** → Cosign proves provenance
+5. **Verify** → Consumers verify signatures before deploying
+
+**Compliance Ready:**
+* SBOMs meet NIST and EU Cyber Resilience Act requirements
+* Signed attestations prove SBOM authenticity
+* Automated scanning catches vulnerabilities early
+
+=== Next Sub-Module
+
+Ready to add SELinux hardening? Proceed to:
+
+**xref:module-01-03-selinux.adoc[Sub-Module 1.3: SELinux Fundamentals with udica]**
+
+Generate custom SELinux policies for Hummingbird containers using udica, handling the no-shell challenge with `podman inspect` and audit logs.
+
+=== Additional Resources
+
+*Security Tools Documentation:*
+* https://docs.sigstore.dev/cosign/[Cosign Documentation^]
+* https://github.com/anchore/syft[Syft GitHub Repository^]
+* https://github.com/anchore/grype[Grype GitHub Repository^]
+
+*SBOM Standards:*
+* https://spdx.dev/[SPDX Official Site^]
+* https://cyclonedx.org/[CycloneDX Official Site^]
+
+*Supply Chain Security:*
+* https://slsa.dev/[SLSA Framework^]
+* https://www.cisa.gov/sbom[CISA SBOM Resources^]
+
+=== Troubleshooting
+
+**Issue: Grype database download fails**
+[source,bash]
+----
+# Manually update database
+grype db update
+
+# Check database status
+grype db status
+----
+
+**Issue: Cosign sign/verify fails with UNAUTHORIZED error**
+
+Cosign requires images to be in an OCI registry -- it cannot sign images in local Podman storage. Ensure the local registry is running and the image has been pushed:
+[source,bash]
+----
+# Check that the local registry is running
+podman ps | grep registry
+
+# If not running, start it
+podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
+
+# Push the image
+podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
+podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
+----
+
+**Issue: Cosign verification fails**
+[source,bash]
+----
+# Ensure you're using the correct public key, registry flags, and digest
+cosign verify --key cosign.pub --insecure-ignore-tlog=true --allow-insecure-registry localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+
+# If IMAGE_DIGEST is not set, recapture it
+IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
+----
+
+**Issue: SBOM generation incomplete**
+[source,bash]
+----
+# Try different output formats
+syft hummingbird-demo:v1 -o json=sbom-detailed.json
+
+# Verify image is accessible
+podman images | grep hummingbird-demo
+----

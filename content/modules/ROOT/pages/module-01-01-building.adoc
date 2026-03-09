@@ -1,0 +1,577 @@
+= Sub-Module 1.1: Building with Hummingbird
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~15 minutes +
+*Prerequisites:* Environment setup complete (see xref:appendix-a-rhel-setup.adoc[Appendix A]) +
+*Learning Objectives:*
+
+* Install security tools (cosign, syft, grype)
+* Create a sample Quarkus REST application
+* Write multi-stage Containerfiles with UBI builder + Hummingbird runtime
+* Build minimal container images using Podman and Buildah
+* Test and verify built applications
+* Build images using Podman Desktop GUI
+--
+
+[[introduction]]
+== Introduction
+
+In this sub-module, you'll move from running pre-built images to creating your own Hummingbird-based containers. You'll learn the multi-stage build pattern that uses full UBI images for compilation and Hummingbird images for runtime, achieving dramatic size reductions while maintaining functionality.
+
+We'll also install the security tools (cosign, syft, grype) that you'll use extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
+
+[[security-tools]]
+== Security Tools Installation
+
+Security is a critical part of modern container workflows. Install tools for image signing, SBOM generation, and vulnerability scanning.
+
+=== Step 1: Install Cosign (Image Signing)
+
+Cosign is used to sign and verify container images:
+
+[source,bash,role=execute]
+----
+# Install cosign from GitHub releases
+COSIGN_VERSION=v2.4.1
+curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
+sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
+rm cosign-linux-amd64
+
+# Verify installation
+cosign version
+----
+
+.*Expected output:*
+----
+cosign version v2.4.1
+----
+
+[TIP]
+====
+**Cosign in Production:**
+
+* **Development**: Generate key pairs locally (as we'll do in this workshop)
+* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
+* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
+====
+
+=== Step 2: Install Syft (SBOM Generation)
+
+Syft generates Software Bill of Materials (SBOMs) from container images:
+
+[source,bash,role=execute]
+----
+# Install syft
+SYFT_VERSION=v1.17.0
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
+
+# Verify installation
+syft version
+----
+
+.*Expected output:*
+----
+syft version 1.17.0
+----
+
+[NOTE]
+====
+**What is an SBOM?**
+
+A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
+
+* **Supply chain security**: Know exactly what's in your images
+* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
+* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
+====
+
+=== Step 3: Install Grype (Vulnerability Scanning)
+
+Grype scans container images for known CVEs:
+
+[source,bash,role=execute]
+----
+# Install grype
+GRYPE_VERSION=v0.88.0
+curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
+
+# Verify installation
+grype version
+----
+
+.*Expected output:*
+----
+grype version 0.88.0
+----
+
+[TIP]
+====
+Grype downloads a vulnerability database on first run. This may take a few minutes initially. The database is cached locally and updated periodically.
+====
+
+[[sample-application]]
+== Create Sample Application
+
+Let's create a simple Quarkus REST application that we'll build into a Hummingbird container.
+
+=== Step 4: Scaffold the Project with Quarkus CLI
+
+The Quarkus CLI generates the full project structure -- `pom.xml`, Maven wrapper, source directories, and configuration -- in a single command:
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab
+cd ~/hummingbird-lab
+quarkus create app com.example:sample-app \
+    --extension='rest,rest-jackson' \
+    --no-code
+cd sample-app
+----
+
+.*What `quarkus create app` generates:*
+* `pom.xml` with Quarkus BOM, `quarkus-rest` and `quarkus-rest-jackson` extensions
+* Maven wrapper (`mvnw`, `.mvn/`) for reproducible builds without a system Maven installation
+* `src/main/java/com/example/` and `src/main/resources/` directory structure
+* Default `application.properties`
+* `.gitignore` and `.dockerignore`
+
+The `--no-code` flag tells the CLI to skip generating starter endpoint code so we can write our own.
+
+[TIP]
+====
+Using the Maven wrapper (`./mvnw`) instead of a system `mvn` ensures every developer (and every container build) uses the exact same Maven version, avoiding "works on my machine" issues.
+====
+
+=== Step 4a: Prepare Project for Multi-Stage Container Builds
+
+The Quarkus scaffold generates a `.dockerignore` that excludes everything except pre-built artifacts -- this is designed for single-stage builds where you compile locally first. Our multi-stage Containerfile compiles _inside_ the container, so source files must be included in the build context.
+
+Replace the generated `.dockerignore`:
+
+[source,bash,role=execute]
+----
+cat > .dockerignore << 'EOF'
+target/
+.git/
+.gitignore
+README.md
+*.cmd
+EOF
+----
+
+The Quarkus scaffold also generates files with restrictive permissions (600/700) that can cause "Permission denied" errors during container builds. Fix them:
+
+[source,bash,role=execute]
+----
+chmod -R a+rX .mvn/ src/
+chmod a+r pom.xml
+chmod a+x mvnw
+----
+
+[NOTE]
+====
+The Maven wrapper's `distributionSha256Sum` in `.mvn/wrapper/maven-wrapper.properties` may contain an incorrect hash for the Maven version. If you see a "Failed to validate Maven distribution SHA-256" error during the container build, clear the hash:
+
+[source,bash]
+----
+sed -i 's/distributionSha256Sum=.*/distributionSha256Sum=/' .mvn/wrapper/maven-wrapper.properties
+----
+====
+
+=== Step 5: Create Application Resource
+
+[source,bash,role=execute]
+----
+mkdir -p src/main/java/com/example
+cat > src/main/java/com/example/GreetingResource.java << 'EOF'
+package com.example;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+@Path("/")
+public class GreetingResource {
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, String> hello() {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("message", "Hello from Hummingbird!");
+        response.put("runtime", "Java " + System.getProperty("java.version"));
+        response.put("platform", System.getProperty("os.name").toLowerCase());
+        response.put("timestamp", Instant.now().toString());
+        return response;
+    }
+
+    @GET
+    @Path("/health")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, String> health() {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("status", "healthy");
+        return response;
+    }
+}
+EOF
+----
+
+=== Step 6: Configure Application Properties
+
+[source,bash,role=execute]
+----
+cat > src/main/resources/application.properties << 'EOF'
+quarkus.http.host=0.0.0.0
+quarkus.http.port=8080
+EOF
+----
+
+[[multi-stage-containerfile]]
+== Multi-Stage Containerfile
+
+Now let's create the Containerfile that builds our application using the multi-stage pattern.
+
+=== Step 7: Create Multi-Stage Containerfile
+
+[source,bash,role=execute]
+----
+cat > Containerfile << 'EOF'
+# Multi-stage build: UBI builder -> Hummingbird runtime
+
+# Build arguments for registry flexibility
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# ============================================
+# Stage 1: Build stage using full UBI image
+# ============================================
+FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+
+# Install unzip needed by the Maven wrapper to extract the Maven distribution
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+
+WORKDIR /build
+
+# Copy Maven wrapper and dependency manifest first (layer cache)
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+
+# Download dependencies (cached unless pom.xml changes)
+RUN ./mvnw dependency:go-offline -B
+
+# Copy source and build
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+
+# ============================================
+# Stage 2: Runtime stage using Hummingbird
+# ============================================
+FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
+
+WORKDIR /app
+
+# Copy the Quarkus fast-jar layout
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/quarkus/ ./quarkus/
+
+# Run as non-root user
+USER 1001
+
+# Expose port
+EXPOSE 8080
+
+# JVM configuration
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
+
+# Start application
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+----
+
+.*Key Points in this Containerfile:*
+
+* **Build Arguments**: `ARG BUILDER_REGISTRY` and `ARG RUNTIME_REGISTRY` allow switching registries without editing the file -- useful for Buildah and air-gapped environments
+* **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
+* **Unzip Installation**: The UBI9 OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
+* **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
+* **Security**: Non-root user (1001), proper file ownership with `--chown`
+* **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup
+* **Image Naming**: Hummingbird images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
+
+[IMPORTANT]
+====
+**Why Multi-Stage Builds Matter:**
+
+**Stage 1 (Builder)**:
+* Full UBI OpenJDK 21 image (~435MB) -- includes JDK compiler, Maven, and build tools
+* Downloads dependencies and compiles the application
+* If you shipped this image as-is with your app: ~454MB
+
+**Stage 2 (Runtime)**:
+* Hummingbird OpenJDK 21 runtime base: ~253MB (JRE only -- no compiler, no Maven, no build tools)
+* Final image with app: ~272MB (app layers add ~19MB)
+
+**Result**: ~272MB final image instead of ~454MB -- a **40% size reduction**. The savings come from stripping build tools and the JDK compiler, shipping only the JRE and your application.
+====
+
+[[building-image]]
+== Building the Image
+
+=== Step 8: Build with Podman
+
+Build your first Hummingbird-based container image:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/sample-app
+podman build -t hummingbird-demo:v1 .
+----
+
+[NOTE]
+====
+The first build downloads Maven dependencies and may take 3-5 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
+====
+
+.*Expected output (excerpt):*
+----
+[1/2] STEP 1/9: FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS builder
+[1/2] STEP 2/9: USER root
+[1/2] STEP 3/9: RUN microdnf install -y unzip && microdnf clean all
+[1/2] STEP 4/9: WORKDIR /build
+[1/2] STEP 5/9: COPY mvnw pom.xml ./
+...
+[INFO] BUILD SUCCESS
+...
+[2/2] STEP 1/10: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+...
+[2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+COMMIT hummingbird-demo:v1
+Successfully tagged localhost/hummingbird-demo:v1
+----
+
+=== Step 9: Verify Image Size
+
+Check the size of your built image:
+
+[source,bash,role=execute]
+----
+podman images | grep hummingbird-demo
+----
+
+.*Expected output:*
+----
+localhost/hummingbird-demo  v1  abc123def456  1 minute ago  272 MB
+----
+
+[[testing-application]]
+== Testing the Application
+
+=== Step 10: Run and Test the Container
+
+Run the container and test it:
+
+[source,bash,role=execute]
+----
+# Run in background
+podman run -d --name demo -p 8080:8080 hummingbird-demo:v1
+
+# Wait for Quarkus to start
+sleep 5
+
+# Test the endpoint
+curl http://localhost:8080/
+----
+
+.*Expected output:*
+----
+{
+  "message": "Hello from Hummingbird!",
+  "runtime": "Java 21.0.10",
+  "platform": "linux",
+  "timestamp": "2026-03-06T12:34:56.789Z"
+}
+----
+
+Test the health endpoint:
+
+[source,bash,role=execute]
+----
+curl http://localhost:8080/health
+----
+
+.*Expected output:*
+----
+{"status":"healthy"}
+----
+
+=== Step 11: View Container Logs
+
+[source,bash,role=execute]
+----
+podman logs demo
+----
+
+.*Expected output:*
+----
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+...
+Listening on: http://0.0.0.0:8080
+----
+
+=== Step 12: Stop and Remove Container
+
+[source,bash,role=execute]
+----
+podman stop demo
+podman rm demo
+----
+
+[[podman-desktop-build]]
+== Building with Podman Desktop GUI
+
+Now let's build the same image using Podman Desktop's visual interface.
+
+=== Podman Desktop Example 4: Build Your App on Top of Hummingbird
+
+. Open Podman Desktop
+. Navigate to **Images** tab
+. Click **Build** button in the top-right
+. In the "Build Image" dialog:
+  - **Containerfile path**: Click **Browse** and select `~/hummingbird-lab/sample-app/Containerfile`
+  - **Build context**: Select `~/hummingbird-lab/sample-app` (the directory containing the Containerfile)
+  - **Image name**: `hummingbird-demo:gui-v1`
+  - **Build arguments** (optional):
+    * Add `BUILDER_REGISTRY=registry.access.redhat.com/ubi9`
+    * Add `RUNTIME_REGISTRY=quay.io/hummingbird-hatchling`
+. Click **Build**
+. Monitor build progress in the GUI:
+  - You'll see each Containerfile step execute in real-time
+  - Stage 1 (builder) will show Maven download and build output
+  - Stage 2 (runtime) will show the COPY operations
+. Once complete, the image `hummingbird-demo:gui-v1` will appear in your **Images** list
+
+.*Key Observation:*
+The Podman Desktop build uses the same Podman engine backend as the CLI, so the result is identical. The GUI provides a visual representation of the build process, which can be helpful for learning and debugging.
+
+[[containerfile-editor]]
+=== Containerfile Visual Editor (Optional)
+
+Some versions of Podman Desktop include a Containerfile editor:
+
+. In the **Images** tab, click **Create**
+. Choose **From Containerfile**
+. Use the visual editor to:
+  - View syntax highlighting
+  - See build arguments highlighted
+  - Get linting warnings for common mistakes
+
+[TIP]
+====
+While the visual editor is convenient, most developers prefer using their IDE (VS Code, IntelliJ, etc.) for Containerfile editing, as it provides better syntax highlighting and linting extensions.
+====
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbird application.
+
+.*What You've Accomplished*
+✅ Installed security tools (cosign, syft, grype) +
+✅ Created a sample Quarkus REST application +
+✅ Wrote a multi-stage Containerfile with UBI builder + Hummingbird runtime +
+✅ Built a container image with Podman CLI (~272MB final size) +
+✅ Tested the running application and verified health endpoint +
+✅ Built the same image using Podman Desktop GUI +
+✅ Understood the build stage vs. runtime stage pattern
+
+.*Key Takeaways*
+
+**Multi-Stage Build Pattern:**
+* **Stage 1 (Builder)**: Full UBI image (~435MB) with all build tools (JDK, Maven)
+* **Stage 2 (Runtime)**: Hummingbird runtime (~253MB base) with only the JRE
+* **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
+
+**Security Tools Installed:**
+* **cosign**: Image signing and verification
+* **syft**: SBOM generation for compliance
+* **grype**: Vulnerability scanning
+
+**Best Practices Applied:**
+* Non-root user (UID 1001)
+* Minimal runtime image (no build tools, no package managers, no compiler)
+* Proper file ownership with `--chown`
+* Dependency layer caching for faster rebuilds
+* Health endpoints for orchestrator probes
+
+=== Next Sub-Module
+
+Ready to secure your images? Proceed to:
+
+**xref:module-01-02-security.adoc[Sub-Module 1.2: Security Scanning & SBOMs]**
+
+Scan images for CVEs, generate SBOMs, sign images with cosign, and compare Hummingbird vs. UBI image sizes and vulnerability counts.
+
+=== Optional: Multi-Language Builds
+
+Want to see this multi-stage pattern applied to other languages? The optional exercise covers production-ready Containerfiles for Node.js, Quarkus Native, Python (gunicorn + FastAPI), and Go -- each building on the same UBI builder to Hummingbird runtime pattern you used here.
+
+**xref:module-01-06-multi-lang-builds.adoc[Sub-Module 1.6: Multi-Language Builds with Hummingbird (~15 min)]**
+
+=== Troubleshooting
+
+**Issue: Build fails with Maven dependency download errors**
+[source,bash]
+----
+# Clear build cache and rebuild
+podman build --no-cache -t hummingbird-demo:v1 .
+
+# Check network connectivity
+curl https://repo.maven.apache.org/maven2/
+----
+
+**Issue: Image size larger than expected**
+[source,bash]
+----
+# Verify multi-stage build is working
+podman history hummingbird-demo:v1
+
+# Check if builder stage artifacts leaked into runtime
+podman run --rm hummingbird-demo:v1 ls /build 2>/dev/null && echo "LEAK" || echo "OK"
+----
+
+**Issue: Container fails to start**
+[source,bash]
+----
+# Check logs for errors
+podman logs demo
+
+# Verify the fast-jar layout is intact
+podman run --rm hummingbird-demo:v1 ls -la /app/
+
+# Test Java availability in the runtime image
+podman run --rm hummingbird-demo:v1 java -version
+----
+
+**Issue: Maven build fails inside the container**
+[source,bash]
+----
+# Run builder stage interactively to debug
+podman run --rm -it registry.access.redhat.com/ubi9/openjdk-21:latest bash
+
+# Verify Maven wrapper is executable
+ls -la mvnw
+chmod +x mvnw
+./mvnw --version
+----

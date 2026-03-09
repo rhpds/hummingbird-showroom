@@ -1,0 +1,602 @@
+= Sub-Module 1.6: Multi-Language Builds with Hummingbird (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~15 minutes +
+*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Status:* Optional exercise -- not required for Module 1 completion +
+*Learning Objectives:*
+
+* Apply the multi-stage build pattern from Sub-Module 1.1 to Node.js, Java (native), Python, and Go
+* Build a Node.js Express application with the same Buildah-compatible Containerfile pattern
+* Build Quarkus applications as native executables on `ubi-micro`
+* Build Python applications with compiled C extensions using the wheel pattern
+* Build Go applications as static binaries on a near-empty Hummingbird base
+* Compare final image sizes across languages
+--
+
+[[introduction]]
+== Introduction
+
+In Sub-Module 1.1, you built a Quarkus JVM application using the multi-stage pattern: full UBI builder in Stage 1, minimal Hummingbird runtime in Stage 2. That pattern is **universal** -- it works for any language. Only the builder image and the copy commands change.
+
+This optional exercise walks through production-ready Containerfiles for five additional scenarios across Node.js, Java (native), Python, and Go. Each one uses the same `ARG BUILDER_REGISTRY` / `ARG RUNTIME_REGISTRY` pattern for registry flexibility, and produces a dramatically smaller final image compared to building on a full UBI base.
+
+[[nodejs-express]]
+== Exercise 1: Node.js Express Application
+
+Node.js is one of the most common container workloads. The multi-stage pattern separates `npm ci` (build dependencies) from the minimal runtime.
+
+=== Step 1: Create the Application
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/nodejs-express
+cd ~/hummingbird-lab/nodejs-express
+
+cat > package.json << 'EOF'
+{
+  "name": "hummingbird-node-demo",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.18.2" }
+}
+EOF
+
+cat > server.js << 'EOF'
+const express = require("express");
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+app.get("/", (req, res) => {
+  res.json({
+    message: "Hello from Hummingbird!",
+    runtime: `Node.js ${process.version}`,
+    platform: process.platform,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy" });
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+EOF
+----
+
+=== Step 2: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cat > Containerfile << 'EOF'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with full UBI Node.js (npm, build tools)
+FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
+
+WORKDIR /build
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+
+# Stage 2: Runtime on Hummingbird Node.js
+FROM ${RUNTIME_REGISTRY}/nodejs-20:latest
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /build/node_modules ./node_modules
+COPY --from=builder --chown=1001:1001 /build/server.js ./
+COPY --from=builder --chown=1001:1001 /build/package.json ./
+
+USER 1001
+
+EXPOSE 8080
+
+CMD ["node", "server.js"]
+EOF
+----
+
+=== Step 3: Build and Test
+
+[source,bash,role=execute]
+----
+podman build -t hummingbird-node-demo:v1 .
+
+podman run -d --name node-demo -p 8081:8080 hummingbird-node-demo:v1
+sleep 3
+curl http://localhost:8081/
+curl http://localhost:8081/health
+
+podman images | grep hummingbird-node-demo
+----
+
+.*Expected output:*
+----
+{"message":"Hello from Hummingbird!","runtime":"Node.js v20...","platform":"linux","timestamp":"..."}
+{"status":"healthy"}
+
+localhost/hummingbird-node-demo  v1  ...  ~95 MB
+----
+
+Cleanup:
+
+[source,bash,role=execute]
+----
+podman stop node-demo && podman rm node-demo
+----
+
+.*Key Points:*
+
+* `npm ci --only=production` skips devDependencies (test frameworks, linters) for a smaller runtime
+* The Hummingbird `nodejs-20` runtime has the Node.js interpreter but no npm, no build tools, no compilers
+* At ~95 MB, this is 77% smaller than the full UBI Node.js image (~420 MB)
+
+[[quarkus-native]]
+== Exercise 2: Quarkus Native Build
+
+A GraalVM native executable produces the **smallest possible Java final image** -- no JVM at all. The resulting binary runs directly on `ubi-micro`.
+
+=== Step 4: Create the Containerfile
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/quarkus-native
+cat > ~/hummingbird-lab/quarkus-native/Containerfile << 'EOF'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with UBI + GraalVM (full toolchain)
+FROM ${BUILDER_REGISTRY}/graalvm-ce:22 AS builder
+
+WORKDIR /build
+
+COPY pom.xml ./
+RUN mvn dependency:go-offline -B
+
+COPY src ./src
+RUN mvn package -Pnative -Dquarkus.native.container-build=false \
+    -DskipTests -B
+
+# Stage 2: Runtime on Hummingbird ubi-micro
+FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /build/target/*-runner ./application
+
+USER 1001
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD ["/app/application", "-Dquarkus.http.host=0.0.0.0", "-Dquarkus.http.port=8080", "health"]
+
+ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
+EOF
+----
+
+.*Key Points:*
+
+* **GraalVM native-image** compiles Java bytecode to a standalone binary at build time
+* The final image contains **only** the binary on `ubi-micro` -- no JVM, no class files, no Maven
+* `ARG BUILDER_REGISTRY` allows switching to an internal mirror for air-gapped builds
+* Native compilation is slow (~3-5 min) but the resulting image starts in milliseconds
+
+[NOTE]
+====
+Native compilation requires significant memory (4GB+). If the build fails with an out-of-memory error, increase the builder container's memory limit or use the JVM variant from Sub-Module 1.1.
+====
+
+[TIP]
+====
+**When to choose Native vs JVM:**
+
+* **Native**: Cold-start latency matters (serverless, scale-to-zero), smallest possible image
+* **JVM**: Build speed matters, need full reflection/dynamic proxy support, debugging with standard Java tools
+====
+
+[[python-gunicorn]]
+== Exercise 3: Python with gunicorn
+
+Python applications often depend on C extensions (psycopg2 for PostgreSQL, cryptography for TLS). These need `gcc` and header files at build time but not at runtime. The multi-stage pattern separates the two.
+
+=== Step 5: Create the Containerfile
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/python-gunicorn
+cat > ~/hummingbird-lab/python-gunicorn/Containerfile << 'EOF'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with full UBI Python (pip, compilers, headers)
+FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
+
+WORKDIR /build
+
+USER root
+RUN dnf install -y gcc python3-devel libpq-devel && dnf clean all
+USER 1001
+
+COPY --chown=1001:1001 requirements.txt ./
+RUN pip install --no-cache-dir \
+    --prefix=/install \
+    -r requirements.txt
+
+# Stage 2: Runtime on Hummingbird Python
+FROM ${RUNTIME_REGISTRY}/python-311:latest
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /install/lib /usr/local/lib
+
+COPY --chown=1001:1001 src/ ./src/
+COPY --chown=1001:1001 gunicorn.conf.py ./
+
+USER 1001
+
+EXPOSE 8000
+
+CMD ["python", "-m", "gunicorn", \
+     "--config", "gunicorn.conf.py", \
+     "src.main:app"]
+EOF
+----
+
+.*Key Points:*
+
+* `--prefix=/install` isolates pip packages into a directory that can be copied cleanly to the runtime stage
+* `gcc`, `python3-devel`, and `libpq-devel` exist only in the builder -- the runtime image has no compiler
+* gunicorn is the production WSGI server (never use Flask's dev server in production)
+* The Hummingbird `python-311` image has the Python interpreter but no pip, no gcc, no headers
+
+[[python-fastapi]]
+== Exercise 4: Python FastAPI with Pre-Compiled Wheels
+
+The **wheel pattern** is an alternative to `--prefix` that pre-compiles all dependencies into wheel archives, then installs them in the runtime stage without needing a compiler.
+
+=== Step 6: Create the Containerfile
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/python-fastapi
+cat > ~/hummingbird-lab/python-fastapi/Containerfile << 'EOF'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build wheels
+FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
+
+WORKDIR /build
+
+USER root
+RUN dnf install -y gcc python3-devel && dnf clean all
+USER 1001
+
+COPY --chown=1001:1001 requirements.txt .
+
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+# Stage 2: Runtime on Hummingbird Python
+FROM ${RUNTIME_REGISTRY}/python-311:latest
+
+WORKDIR /app
+
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* \
+    && rm -rf /wheels
+
+COPY --chown=1001:1001 app/ ./app/
+
+USER 1001
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+----
+
+.*Key Points:*
+
+* `pip wheel` compiles all dependencies into `.whl` files in the builder stage
+* `--no-index --find-links=/wheels` installs from local wheels only -- no network access needed in the runtime stage
+* The wheels are deleted after install (`rm -rf /wheels`) to keep the final image small
+* uvicorn is the production ASGI server for FastAPI
+
+[NOTE]
+====
+**When to choose gunicorn vs uvicorn:**
+
+* **gunicorn**: WSGI apps (Flask, Django), synchronous request handling
+* **uvicorn**: ASGI apps (FastAPI, Starlette), async/await, WebSocket support
+====
+
+[[go-static]]
+== Exercise 5: Go Static Binary
+
+Go compiles to a **single static binary** with no runtime dependencies. Combined with `ubi-micro`, this produces the smallest possible Hummingbird image -- just the binary on a near-empty base.
+
+=== Step 7: Create a Sample Go App
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/go-app
+cat > ~/hummingbird-lab/go-app/main.go << 'GOAPP'
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"runtime"
+	"time"
+)
+
+type Response struct {
+	Message   string `json:"message"`
+	Runtime   string `json:"runtime"`
+	Platform  string `json:"platform"`
+	Timestamp string `json:"timestamp"`
+}
+
+func main() {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		resp := Response{
+			Message:   "Hello from Hummingbird!",
+			Runtime:   fmt.Sprintf("Go %s", runtime.Version()),
+			Platform:  runtime.GOOS,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"healthy"}`))
+	})
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("Server running on port %s\n", port)
+	http.ListenAndServe(":"+port, nil)
+}
+GOAPP
+
+cat > ~/hummingbird-lab/go-app/go.mod << 'GOMOD'
+module hummingbird-go-demo
+
+go 1.21
+GOMOD
+----
+
+=== Step 8: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cat > ~/hummingbird-lab/go-app/Containerfile << 'EOF'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with UBI Go toolset
+FROM ${BUILDER_REGISTRY}/go-toolset:latest AS builder
+
+WORKDIR /build
+
+COPY go.mod go.sum* ./
+RUN go mod download 2>/dev/null || true
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /app .
+
+# Stage 2: Runtime on Hummingbird ubi-micro
+FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /app ./application
+
+USER 1001
+
+EXPOSE 8080
+
+ENTRYPOINT ["./application"]
+EOF
+----
+
+=== Step 9: Build and Test
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/go-app
+podman build -t hummingbird-go-demo:v1 .
+----
+
+Run and test:
+
+[source,bash,role=execute]
+----
+podman run -d --name go-demo -p 8082:8080 hummingbird-go-demo:v1
+sleep 2
+curl http://localhost:8082/
+curl http://localhost:8082/health
+----
+
+.*Expected output:*
+----
+{"message":"Hello from Hummingbird!","runtime":"Go go1.21...","platform":"linux","timestamp":"..."}
+{"status":"healthy"}
+----
+
+Check the image size:
+
+[source,bash,role=execute]
+----
+podman images | grep hummingbird-go-demo
+----
+
+.*Expected output:*
+----
+localhost/hummingbird-go-demo  v1  ...  ~15-25 MB
+----
+
+Cleanup:
+
+[source,bash,role=execute]
+----
+podman stop go-demo && podman rm go-demo
+----
+
+.*Key Points:*
+
+* `CGO_ENABLED=0` produces a fully static binary with no libc dependency
+* `-ldflags="-s -w"` strips debug symbols and DWARF info, reducing binary size by ~30%
+* `ubi-micro` is the smallest Hummingbird base -- just enough to run a static binary
+* No runtime, no interpreter, no package manager in the final image
+
+[[size-comparison]]
+== Image Size Comparison
+
+The table below shows approximate final image sizes when using Hummingbird runtimes vs full UBI base images:
+
+[cols="2,1,1,1",options="header"]
+|===
+| Language / Scenario | Full UBI | Hummingbird | Reduction
+
+| Node.js (Express app)
+| ~420 MB
+| ~95 MB
+| 77%
+
+| Quarkus JVM (OpenJDK 21) -- Sub-Module 1.1
+| ~450 MB
+| ~185 MB
+| 60%
+
+| Quarkus Native (GraalVM)
+| ~400 MB
+| ~35 MB
+| 91%
+
+| Python (gunicorn/FastAPI)
+| ~350 MB
+| ~90 MB
+| 74%
+
+| Go (static binary)
+| ~350 MB
+| ~15 MB
+| 96%
+|===
+
+[NOTE]
+====
+Sizes are approximate and vary by application dependencies. The key insight is that **every language benefits** from the multi-stage pattern, and the reduction is most dramatic for compiled languages (Go, Quarkus Native) where the final image contains only the binary.
+====
+
+[[the-universal-pattern]]
+== The Universal Pattern
+
+Every Containerfile in this exercise follows the same structure:
+
+----
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Full UBI builder image
+FROM ${BUILDER_REGISTRY}/<language-toolchain>:latest AS builder
+WORKDIR /build
+COPY <dependency-manifest> .
+RUN <install-dependencies>
+COPY <source> .
+RUN <compile-or-package>
+
+# Stage 2: Minimal Hummingbird runtime
+FROM ${RUNTIME_REGISTRY}/<runtime>:latest
+WORKDIR /app
+COPY --from=builder --chown=1001:1001 <artifact> .
+USER 1001
+EXPOSE <port>
+CMD [<entrypoint>]
+----
+
+The only things that change between languages are:
+
+* **Builder image**: `nodejs-20`, `openjdk-21`, `python-311`, `go-toolset`, `graalvm-ce`
+* **Runtime image**: `nodejs-20`, `openjdk-21-runtime`, `python-311`, `ubi-micro`
+* **Dependency install**: `npm ci`, `mvn dependency:go-offline`, `pip install`, `go mod download`
+* **Build command**: (none for Node.js), `mvn package`, `pip wheel`, `go build`
+* **Artifact copied**: `node_modules + source`, `.jar files`, `wheel packages`, `static binary`
+
+The `ARG BUILDER_REGISTRY` / `ARG RUNTIME_REGISTRY` pattern makes every Containerfile work identically with Buildah on RHEL, Podman Desktop, or in CI/CD pipelines -- and allows easy switching to internal registry mirrors for air-gapped environments.
+
+[[cleanup]]
+== Cleanup
+
+[source,bash,role=execute]
+----
+rm -rf ~/hummingbird-lab/nodejs-express
+rm -rf ~/hummingbird-lab/quarkus-native
+rm -rf ~/hummingbird-lab/python-gunicorn
+rm -rf ~/hummingbird-lab/python-fastapi
+rm -rf ~/hummingbird-lab/go-app
+podman rmi hummingbird-node-demo:v1 hummingbird-go-demo:v1 2>/dev/null || true
+----
+
+[[summary]]
+== Summary
+
+.*What You've Accomplished*
+✅ Built a Node.js Express application with the Hummingbird multi-stage pattern +
+✅ Reviewed a Quarkus native Containerfile for the smallest possible Java image +
+✅ Learned the `--prefix` and `pip wheel` patterns for Python C extensions +
+✅ Built and tested a Go static binary on `ubi-micro` (~15 MB final image) +
+✅ Compared image sizes across all languages +
+✅ Identified the universal multi-stage build pattern with registry ARGs
+
+.*Key Takeaways*
+
+**The Pattern is Universal:**
+* Stage 1: Full UBI builder with all build tools
+* Stage 2: Minimal Hummingbird runtime with only the artifact
+* `ARG BUILDER_REGISTRY` / `ARG RUNTIME_REGISTRY` for portability
+* Works for every language Red Hat supports
+
+**Choose Your Runtime:**
+* `ubi-micro` -- for static binaries (Go, Quarkus Native) and the smallest possible images
+* `openjdk-21-runtime` -- for JVM applications
+* `python-311` -- for Python applications
+* `nodejs-20` -- for Node.js applications
+
+**Production Patterns:**
+* Pre-compile C extensions as wheels (Python)
+* Use the Quarkus fast-jar layout (Java JVM)
+* Always build with `CGO_ENABLED=0` for Go static binaries
+* Strip debug symbols with `-ldflags="-s -w"` (Go)
+
+=== Additional Resources
+
+*Hummingbird Runtime Images:*
+* https://quay.io/organization/hummingbird-hatchling[Hummingbird Image Registry^]
+* Available runtimes: Node.js 18/20, Python 3.9/3.11, OpenJDK 11/17/21, .NET 8, Go, ubi-micro, httpd, nginx
+
+*Quarkus Containerisation:*
+* https://quarkus.io/guides/building-native-image[Quarkus Native Image Guide^]
+* https://quarkus.io/guides/container-image[Quarkus Container Image Guide^]
+
+*Python Packaging:*
+* https://pip.pypa.io/en/stable/cli/pip_wheel/[pip wheel Documentation^]
+* https://docs.gunicorn.org/en/stable/[gunicorn Documentation^]
+
+*Go Build Optimisation:*
+* https://go.dev/doc/install/source#environment[Go Environment Variables^]

@@ -1,0 +1,542 @@
+= Sub-Module 2.2: Custom Multi-Language Strategies
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~12 minutes +
+*Prerequisites:* Completion of Sub-Module 2.1 (Cloud Native Buildpacks) +
+*Learning Objectives:*
+
+* Create ClusterBuildStrategy with language auto-detection
+* Configure conditional Hummingbird runtime selection (Node.js, Python, Java, Go)
+* Integrate with OpenShift internal registry
+* Configure registry mirrors for air-gapped environments
+--
+
+[[introduction]]
+== Introduction
+
+In Sub-Module 2.1, you created a BuildStrategy specific to Node.js. In production environments, platform teams often support multiple languages across different application teams. Creating separate BuildStrategies for each language creates overhead and inconsistency.
+
+In this sub-module, you'll create a **multi-language ClusterBuildStrategy** that automatically detects the application language and selects the appropriate Hummingbird runtime, providing a single, consistent build interface for all development teams.
+
+[[multi-language-strategy]]
+== Create Multi-Language BuildStrategy
+
+=== Step 1: Create ClusterBuildStrategy with Auto-Detection
+
+This strategy uses Buildah directly with conditional logic for different languages:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: ClusterBuildStrategy
+metadata:
+  name: hummingbird-multi-lang
+spec:
+  parameters:
+  - name: DOCKERFILE
+    description: Path to Dockerfile
+    default: "Containerfile"
+  - name: CONTEXT_DIR
+    description: Build context directory
+    default: "."
+  - name: RUNTIME_IMAGE
+    description: Override Hummingbird runtime image (optional)
+  - name: LANGUAGE
+    description: Programming language (nodejs, python, java, go) - auto-detected if not specified
+    default: "auto"
+
+  buildSteps:
+  - name: detect-language
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    workingDir: $(params.shp-source-root)
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+      set -e
+      echo "Detecting application language..."
+
+      if [ -f "package.json" ]; then
+        echo "nodejs" > /workspace/detected-lang
+        echo "Detected: Node.js"
+      elif [ -f "requirements.txt" ] || [ -f "setup.py" ]; then
+        echo "python" > /workspace/detected-lang
+        echo "Detected: Python"
+      elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
+        echo "java" > /workspace/detected-lang
+        echo "Detected: Java"
+      elif [ -f "go.mod" ]; then
+        echo "go" > /workspace/detected-lang
+        echo "Detected: Go"
+      else
+        echo "unknown" > /workspace/detected-lang
+        echo "Warning: Could not detect language, will use parameter default"
+      fi
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+
+  - name: build-image
+    image: registry.redhat.io/rhel9/buildah:latest
+    workingDir: $(params.shp-source-root)/$(params.CONTEXT_DIR)
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+      set -e
+
+      LANG=$(cat /workspace/detected-lang 2>/dev/null || echo "$(params.LANGUAGE)")
+      echo "Building with language: $LANG"
+
+      # Select appropriate Hummingbird runtime
+      case $LANG in
+        nodejs)
+          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/nodejs-20:latest}"
+          BUILDER="registry.access.redhat.com/ubi9/nodejs-20:latest"
+          ;;
+        python)
+          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/python-311:latest}"
+          BUILDER="registry.access.redhat.com/ubi9/python-311:latest"
+          ;;
+        java)
+          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/openjdk-21:latest}"
+          BUILDER="registry.access.redhat.com/ubi9/openjdk-21:latest"
+          ;;
+        go)
+          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/ubi9-micro:latest}"
+          BUILDER="registry.access.redhat.com/ubi9/go-toolset:latest"
+          ;;
+        *)
+          echo "Unsupported language: $LANG"
+          exit 1
+          ;;
+      esac
+
+      # Generate multi-stage Containerfile if not present
+      if [ ! -f "$(params.DOCKERFILE)" ]; then
+        echo "Generating Containerfile for $LANG..."
+        cat > Containerfile << DOCKERFILE_EOF
+      ARG BUILDER_IMAGE=$BUILDER
+      ARG RUNTIME_IMAGE=$RUNTIME
+
+      FROM \$BUILDER_IMAGE AS builder
+      WORKDIR /build
+      COPY . .
+      RUN if [ "$LANG" = "nodejs" ]; then npm ci --only=production; fi
+      RUN if [ "$LANG" = "python" ]; then pip install --user -r requirements.txt; fi
+      RUN if [ "$LANG" = "java" ]; then mvn clean package -DskipTests; fi
+      RUN if [ "$LANG" = "go" ]; then go build -o app .; fi
+
+      FROM \$RUNTIME_IMAGE
+      WORKDIR /app
+      COPY --from=builder --chown=1001:1001 /build ./
+      USER 1001
+      EXPOSE 8080
+      DOCKERFILE_EOF
+      fi
+
+      # Build with buildah
+      buildah bud \
+        --storage-driver=vfs \
+        --format=oci \
+        --tls-verify=true \
+        --no-cache \
+        -f $(params.DOCKERFILE) \
+        -t $(params.shp-output-image) \
+        .
+
+      # Push image
+      buildah push \
+        --storage-driver=vfs \
+        --tls-verify=true \
+        --digestfile /workspace/image-digest \
+        $(params.shp-output-image) \
+        docker://$(params.shp-output-image)
+
+      echo "Image built and pushed: $(params.shp-output-image)"
+      cat /workspace/image-digest
+
+    env:
+    - name: STORAGE_DRIVER
+      value: vfs
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    - name: $(params.shp-output-directory)
+      mountPath: /var/lib/containers
+      readOnly: false
+    securityContext:
+      capabilities:
+        add:
+        - SETFCAP
+
+  volumes:
+  - name: workspace
+    emptyDir: {}
+EOF
+----
+
+.*Expected output:*
+----
+clusterbuildstrategy.shipwright.io/hummingbird-multi-lang created
+----
+
+.*What this strategy does:*
+
+* **Auto-detects** application language (Node.js, Python, Java, Go)
+* **Selects** appropriate UBI builder and Hummingbird runtime images
+* **Generates** a multi-stage Containerfile if one doesn't exist
+* **Builds** and pushes the image using buildah
+
+[NOTE]
+====
+**Platform Engineering Benefit:**
+
+This single ClusterBuildStrategy supports 4+ languages. Development teams can use it without worrying about language-specific configuration. The platform team maintains one strategy instead of four.
+====
+
+=== Step 2: Test Multi-Language Strategy
+
+Create a Build using this strategy with the same Node.js sample:
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  name: auto-detect-build
+  namespace: hummingbird-builds
+spec:
+  source:
+    type: Git
+    git:
+      url: https://github.com/shipwright-io/sample-nodejs
+      revision: main
+  strategy:
+    name: hummingbird-multi-lang
+    kind: ClusterBuildStrategy
+  output:
+    image: quay.io/{registry-user}/auto-detect-app:latest
+    credentials:
+      name: registry-credentials
+EOF
+----
+
+[IMPORTANT]
+====
+Replace `{registry-user}` with your actual registry username/organization.
+====
+
+=== Step 3: Trigger Build
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  name: auto-detect-build-run-1
+  namespace: hummingbird-builds
+spec:
+  build:
+    name: auto-detect-build
+EOF
+----
+
+Monitor the build:
+
+[source,bash,role=execute]
+----
+oc get buildrun auto-detect-build-run-1 -w
+----
+
+Press `Ctrl+C` once the build succeeds.
+
+=== Step 4: View Language Detection Logs
+
+Check that the language was detected correctly:
+
+[source,bash,role=execute]
+----
+TASKRUN=$(oc get buildrun auto-detect-build-run-1 -o jsonpath='{.status.taskRunName}')
+
+# View detect-language step output
+oc logs $TASKRUN -c step-detect-language
+----
+
+.*Expected output:*
+----
+Detecting application language...
+Detected: Node.js
+----
+
+=== Step 5: Verify Build Logs
+
+Confirm the full build pipeline worked by inspecting the build step output:
+
+[source,bash,role=execute]
+----
+oc logs $TASKRUN -c step-build-image | head -20
+----
+
+.*Expected output:*
+----
+Building with language: nodejs
+...
+STEP 1/...: FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
+...
+STEP .../...: FROM quay.io/hummingbird-hatchling/nodejs-20:latest
+...
+----
+
+This confirms the strategy correctly selected the Node.js UBI builder for compilation and the Hummingbird Node.js runtime for the final image.
+
+[TIP]
+====
+To test with different languages, point the Build at repositories with:
+- **Python**: Repository with `requirements.txt` or `setup.py`
+- **Java**: Repository with `pom.xml` or `build.gradle`
+- **Go**: Repository with `go.mod`
+====
+
+[[registry-integration]]
+== Registry Integration
+
+=== Step 6: Configure Internal OpenShift Registry
+
+Use OpenShift's internal registry for development builds:
+
+[source,bash,role=execute]
+----
+# Enable image registry default route (if not already enabled)
+oc patch configs.imageregistry.operator.openshift.io/cluster \
+  --type merge \
+  --patch '{"spec":{"defaultRoute":true}}'
+
+# Get internal registry route
+INTERNAL_REGISTRY=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}' 2>/dev/null || echo "Not yet available")
+echo "Internal registry: $INTERNAL_REGISTRY"
+----
+
+[NOTE]
+====
+If the route doesn't exist yet, it may take 1-2 minutes for the operator to create it after patching.
+====
+
+=== Step 7: Create Build Using Internal Registry
+
+Create a Build using the internal registry:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  name: internal-registry-build
+  namespace: hummingbird-builds
+spec:
+  source:
+    type: Git
+    git:
+      url: https://github.com/shipwright-io/sample-nodejs
+      revision: main
+  strategy:
+    name: hummingbird-multi-lang
+    kind: ClusterBuildStrategy
+  output:
+    image: image-registry.openshift-image-registry.svc:5000/hummingbird-builds/sample-app:latest
+EOF
+----
+
+.*Expected output:*
+----
+build.shipwright.io/internal-registry-build created
+----
+
+[NOTE]
+====
+**Internal Registry Benefits:**
+
+* **No credentials needed** when building within the same cluster
+* **Automatic garbage collection** via OpenShift image pruning
+* **ImageStreams** for automatic deployment updates
+* **Ideal for dev/test environments**
+====
+
+=== Step 8: Trigger Internal Registry Build
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  generateName: internal-registry-build-run-
+  namespace: hummingbird-builds
+spec:
+  build:
+    name: internal-registry-build
+EOF
+----
+
+[TIP]
+====
+Using `generateName` instead of `name` allows OpenShift to auto-generate unique names, which is useful for repeated builds.
+====
+
+[[air-gap-registry-mirrors]]
+== Air-Gapped Registry Mirrors
+
+For air-gapped or restricted environments, configure registry mirrors to redirect pulls to internal registries.
+
+=== Step 9: Configure ImageContentSourcePolicy (Optional)
+
+[IMPORTANT]
+====
+**Warning**: ImageContentSourcePolicy requires cluster-admin privileges and triggers a cluster-wide MachineConfig update that will reboot all nodes. Only perform this step if:
+
+1. You have cluster-admin privileges
+2. You're working in a dedicated test cluster
+3. You understand the impact of a cluster-wide node reboot
+
+**For workshop purposes**, you can skip this step and just review the configuration.
+====
+
+.*Example Configuration (Do NOT apply unless you understand the impact):*
+
+[source,yaml]
+----
+# DO NOT APPLY - This is for reference only
+apiVersion: operator.openshift.io/v1alpha1
+kind: ImageContentSourcePolicy
+metadata:
+  name: hummingbird-mirror
+spec:
+  repositoryDigestMirrors:
+  - mirrors:
+    - registry.internal.example.com/hummingbird
+    source: quay.io/hummingbird-hatchling
+  - mirrors:
+    - registry.internal.example.com/ubi9
+    source: registry.access.redhat.com/ubi9
+----
+
+.*What this does:*
+
+* Redirects pulls from `quay.io/hummingbird-hatchling` to `registry.internal.example.com/hummingbird`
+* Redirects pulls from `registry.access.redhat.com/ubi9` to `registry.internal.example.com/ubi9`
+* All cluster nodes (and all pods) automatically use the mirrors
+* Shipwright builds automatically use mirrored images
+
+[NOTE]
+====
+**Production Air-Gap Workflow:**
+
+1. **Mirror images** from public registries to internal registry using `skopeo sync`
+2. **Apply ImageContentSourcePolicy** to redirect all pulls
+3. **Test Shipwright builds** to ensure they pull from mirrors
+4. **Update BuildStrategies** if needed to reference mirror URLs
+
+See the full air-gap mirror setup guide in the reference documentation.
+====
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 2.2 and created advanced multi-language build strategies!
+
+.*What You've Accomplished*
+✅ Created ClusterBuildStrategy with language auto-detection +
+✅ Configured conditional Hummingbird runtime selection for 4+ languages +
+✅ Tested auto-detection with Node.js application +
+✅ Verified build logs confirm correct runtime selection +
+✅ Enabled OpenShift internal registry +
+✅ Created Build using internal registry (no credentials needed) +
+✅ Understood ImageContentSourcePolicy for air-gapped environments +
+✅ Learned registry mirror configuration patterns
+
+.*Key Takeaways*
+
+**Multi-Language Strategy Benefits:**
+* **Single interface** for all development teams
+* **Automatic detection** reduces configuration burden
+* **Consistent Hummingbird usage** across all languages
+* **Platform team maintains one strategy** instead of many
+
+**Registry Integration Patterns:**
+* **External registries** (quay.io, Docker Hub): Require credentials
+* **Internal registry**: No credentials within same cluster
+* **Registry mirrors**: Enable air-gapped deployments
+
+**Production Readiness:**
+* Auto-detection reduces developer errors
+* Internal registry ideal for dev/test environments
+* ImageContentSourcePolicy for air-gapped production
+
+=== Next Sub-Module
+
+Ready to add security pipelines? Proceed to:
+
+**xref:module-02-03-security-pipeline.adoc[Sub-Module 2.3: Security Pipeline & Production]**
+
+Integrate SBOM generation, vulnerability scanning, image signing, and production deployment with proper security contexts.
+
+=== Additional Resources
+
+*Buildah Documentation:*
+* https://buildah.io/[Buildah Official Site^]
+* https://github.com/containers/buildah/tree/main/docs[Buildah Documentation^]
+
+*OpenShift Registry:*
+* https://docs.openshift.com/container-platform/4.21/registry/index.html[OpenShift Image Registry Documentation^]
+* https://docs.openshift.com/container-platform/4.21/openshift_images/image-streams-manage.html[ImageStreams Guide^]
+
+*Air-Gap Deployments:*
+* https://docs.openshift.com/container-platform/4.21/installing/disconnected_install/index.html[Disconnected Installation Guide^]
+
+=== Troubleshooting
+
+**Issue: Language detection fails**
+[source,bash]
+----
+# Check detect-language step logs
+TASKRUN=$(oc get buildrun <buildrun-name> -o jsonpath='{.status.taskRunName}')
+oc logs $TASKRUN -c step-detect-language
+
+# Verify source repository contents
+# Ensure package.json, requirements.txt, etc. exist in the repo
+----
+
+**Issue: Buildah build fails**
+[source,bash]
+----
+# Check build-image step logs for errors
+oc logs $TASKRUN -c step-build-image
+
+# Common issues:
+# - Missing build tools in UBI builder image
+# - Network connectivity to registries
+# - Storage driver issues (vfs vs overlay)
+----
+
+**Issue: Internal registry not accessible**
+[source,bash]
+----
+# Verify registry route exists
+oc get route default-route -n openshift-image-registry
+
+# Check registry operator status
+oc get clusteroperator image-registry
+
+# Enable default route if not already enabled
+oc patch configs.imageregistry.operator.openshift.io/cluster \
+  --type merge \
+  --patch '{"spec":{"defaultRoute":true}}'
+----
