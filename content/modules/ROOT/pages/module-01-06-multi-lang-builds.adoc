@@ -78,21 +78,21 @@ ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 # Stage 1: Build with full UBI Node.js (npm, build tools)
 FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
 
-WORKDIR /build
+WORKDIR /opt/app-root/src
 
-COPY package*.json ./
-RUN npm ci --only=production
+COPY --chown=1001:1001 package*.json ./
+RUN npm install --omit=dev
 
-COPY . .
+COPY --chown=1001:1001 . .
 
 # Stage 2: Runtime on Hummingbird Node.js
-FROM ${RUNTIME_REGISTRY}/nodejs-20:latest
+FROM ${RUNTIME_REGISTRY}/nodejs:20
 
 WORKDIR /app
 
-COPY --from=builder --chown=1001:1001 /build/node_modules ./node_modules
-COPY --from=builder --chown=1001:1001 /build/server.js ./
-COPY --from=builder --chown=1001:1001 /build/package.json ./
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/node_modules ./node_modules
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/server.js ./
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/package.json ./
 
 USER 1001
 
@@ -121,7 +121,7 @@ podman images | grep hummingbird-node-demo
 {"message":"Hello from Hummingbird!","runtime":"Node.js v20...","platform":"linux","timestamp":"..."}
 {"status":"healthy"}
 
-localhost/hummingbird-node-demo  v1  ...  ~95 MB
+localhost/hummingbird-node-demo  v1  ...  ~246 MB
 ----
 
 Cleanup:
@@ -133,9 +133,10 @@ podman stop node-demo && podman rm node-demo
 
 .*Key Points:*
 
-* `npm ci --only=production` skips devDependencies (test frameworks, linters) for a smaller runtime
-* The Hummingbird `nodejs-20` runtime has the Node.js interpreter but no npm, no build tools, no compilers
-* At ~95 MB, this is 77% smaller than the full UBI Node.js image (~420 MB)
+* `npm install --omit=dev` skips devDependencies (test frameworks, linters) for a smaller runtime
+* The Hummingbird `nodejs:20` runtime has the Node.js interpreter but no npm, no build tools, no compilers
+* The UBI builder images run as user 1001 -- use `--chown=1001:1001` on COPY and `/opt/app-root/src` as the WORKDIR
+* The final image is significantly smaller than the full UBI Node.js image (~614 MB)
 
 [[quarkus-native]]
 == Exercise 2: Quarkus Native Build
@@ -149,7 +150,7 @@ A GraalVM native executable produces the **smallest possible Java final image** 
 mkdir -p ~/hummingbird-lab/quarkus-native
 cat > ~/hummingbird-lab/quarkus-native/Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/ubi9
 
 # Stage 1: Build with UBI + GraalVM (full toolchain)
 FROM ${BUILDER_REGISTRY}/graalvm-ce:22 AS builder
@@ -163,7 +164,7 @@ COPY src ./src
 RUN mvn package -Pnative -Dquarkus.native.container-build=false \
     -DskipTests -B
 
-# Stage 2: Runtime on Hummingbird ubi-micro
+# Stage 2: Runtime on ubi-micro (minimal base for static binaries)
 FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
 
 WORKDIR /app
@@ -230,7 +231,7 @@ RUN pip install --no-cache-dir \
     -r requirements.txt
 
 # Stage 2: Runtime on Hummingbird Python
-FROM ${RUNTIME_REGISTRY}/python-311:latest
+FROM ${RUNTIME_REGISTRY}/python:3.11
 
 WORKDIR /app
 
@@ -254,7 +255,7 @@ EOF
 * `--prefix=/install` isolates pip packages into a directory that can be copied cleanly to the runtime stage
 * `gcc`, `python3-devel`, and `libpq-devel` exist only in the builder -- the runtime image has no compiler
 * gunicorn is the production WSGI server (never use Flask's dev server in production)
-* The Hummingbird `python-311` image has the Python interpreter but no pip, no gcc, no headers
+* The Hummingbird `python:3.11` image has the Python interpreter but no pip, no gcc, no headers
 
 [[python-fastapi]]
 == Exercise 4: Python FastAPI with Pre-Compiled Wheels
@@ -284,7 +285,7 @@ COPY --chown=1001:1001 requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 # Stage 2: Runtime on Hummingbird Python
-FROM ${RUNTIME_REGISTRY}/python-311:latest
+FROM ${RUNTIME_REGISTRY}/python:3.11
 
 WORKDIR /app
 
@@ -385,26 +386,26 @@ GOMOD
 ----
 cat > ~/hummingbird-lab/go-app/Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/ubi9
 
 # Stage 1: Build with UBI Go toolset
 FROM ${BUILDER_REGISTRY}/go-toolset:latest AS builder
 
-WORKDIR /build
+WORKDIR /opt/app-root/src
 
-COPY go.mod go.sum* ./
+COPY --chown=1001:1001 go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 
-COPY . .
+COPY --chown=1001:1001 . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /app .
+    go build -ldflags="-s -w" -o /opt/app-root/app .
 
-# Stage 2: Runtime on Hummingbird ubi-micro
+# Stage 2: Runtime on ubi-micro (minimal base for static binaries)
 FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
 
 WORKDIR /app
 
-COPY --from=builder --chown=1001:1001 /app ./application
+COPY --from=builder --chown=1001:1001 /opt/app-root/app ./application
 
 USER 1001
 
@@ -447,7 +448,7 @@ podman images | grep hummingbird-go-demo
 
 .*Expected output:*
 ----
-localhost/hummingbird-go-demo  v1  ...  ~15-25 MB
+localhost/hummingbird-go-demo  v1  ...  ~29 MB
 ----
 
 Cleanup:
@@ -474,14 +475,14 @@ The table below shows approximate final image sizes when using Hummingbird runti
 | Language / Scenario | Full UBI | Hummingbird | Reduction
 
 | Node.js (Express app)
-| ~420 MB
-| ~95 MB
-| 77%
+| ~614 MB
+| ~246 MB
+| 60%
 
 | Quarkus JVM (OpenJDK 21) -- Sub-Module 1.1
-| ~450 MB
-| ~185 MB
-| 60%
+| ~621 MB
+| ~272 MB
+| 56%
 
 | Quarkus Native (GraalVM)
 | ~400 MB
@@ -494,9 +495,9 @@ The table below shows approximate final image sizes when using Hummingbird runti
 | 74%
 
 | Go (static binary)
-| ~350 MB
-| ~15 MB
-| 96%
+| ~1.14 GB
+| ~29 MB
+| 97%
 |===
 
 [NOTE]
@@ -532,9 +533,9 @@ CMD [<entrypoint>]
 
 The only things that change between languages are:
 
-* **Builder image**: `nodejs-20`, `openjdk-21`, `python-311`, `go-toolset`, `graalvm-ce`
-* **Runtime image**: `nodejs-20`, `openjdk-21-runtime`, `python-311`, `ubi-micro`
-* **Dependency install**: `npm ci`, `mvn dependency:go-offline`, `pip install`, `go mod download`
+* **Builder image**: `nodejs-20`, `openjdk-21`, `python-311`, `go-toolset`, `graalvm-ce` (UBI builders run as user 1001 -- use `--chown=1001:1001` on COPY and `/opt/app-root/src` as WORKDIR)
+* **Runtime image**: `nodejs:20`, `openjdk:21-runtime`, `python:3.11`, `ubi-micro` (Hummingbird images use `<name>:<version>` format)
+* **Dependency install**: `npm install --omit=dev`, `mvn dependency:go-offline`, `pip install`, `go mod download`
 * **Build command**: (none for Node.js), `mvn package`, `pip wheel`, `go build`
 * **Artifact copied**: `node_modules + source`, `.jar files`, `wheel packages`, `static binary`
 
@@ -574,9 +575,9 @@ podman rmi hummingbird-node-demo:v1 hummingbird-go-demo:v1 2>/dev/null || true
 
 **Choose Your Runtime:**
 * `ubi-micro` -- for static binaries (Go, Quarkus Native) and the smallest possible images
-* `openjdk-21-runtime` -- for JVM applications
-* `python-311` -- for Python applications
-* `nodejs-20` -- for Node.js applications
+* `openjdk:21-runtime` -- for JVM applications
+* `python:3.11` -- for Python applications
+* `nodejs:20` -- for Node.js applications
 
 **Production Patterns:**
 * Pre-compile C extensions as wheels (Python)
