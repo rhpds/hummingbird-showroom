@@ -25,6 +25,11 @@ asciidoc:
     openshift-version: '4.21'
     shipwright-operator: 'Builds for Red Hat OpenShift'
 
+    # ACS (Red Hat Advanced Cluster Security)
+    acs-central-url: 'https://central-stackrox.apps.cluster-{guid}.example.com'
+    acs-namespace: 'stackrox'
+    roxctl-version: '4.7'
+
     # Registry Configuration
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'

@@ -14,6 +14,7 @@
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
+* _(Optional)_ Red Hat Advanced Cluster Security (ACS) for Sub-Module 2.7
 --
 
 Choose one of the three options below to prepare your OpenShift platform environment. Option 1 is the fastest path.
@@ -597,3 +598,236 @@ oc auth can-i create clusterbuildstrategy
 
 oc auth can-i '*' '*' --all-namespaces
 ----
+
+[[acs-setup]]
+== Optional: Red Hat Advanced Cluster Security (ACS) Setup
+
+[NOTE]
+====
+This section is only required if you plan to complete **xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**. You can skip it for all other Module 2 labs.
+====
+
+Red Hat Advanced Cluster Security for Kubernetes (RHACS) provides vulnerability scanning, policy enforcement, and admission control. Sub-Module 2.7 uses ACS to enforce a zero-CVE posture on the cluster.
+
+=== Step 1: Install the ACS Operator
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stackrox
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhacs-operator-group
+  namespace: stackrox
+spec:
+  targetNamespaces:
+  - stackrox
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhacs-operator
+  namespace: stackrox
+spec:
+  channel: stable
+  name: rhacs-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/stackrox created
+operatorgroup.operators.coreos.com/rhacs-operator-group created
+subscription.operators.coreos.com/rhacs-operator created
+----
+
+Wait for the operator to reach the `Succeeded` phase:
+
+[source,bash,role=execute]
+----
+echo "Waiting for ACS operator..."
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n stackrox -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then
+        echo "ACS operator installed successfully."
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "WARNING: Operator not yet ready. Check: oc get csv -n stackrox"
+    fi
+    sleep 5
+done
+----
+
+=== Step 2: Deploy ACS Central
+
+Create the Central custom resource, which deploys the ACS management console and scanner:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: platform.stackrox.io/v1alpha1
+kind: Central
+metadata:
+  name: stackrox-central-services
+  namespace: stackrox
+spec:
+  central:
+    exposure:
+      loadBalancer:
+        enabled: false
+      route:
+        enabled: true
+    persistence:
+      persistentVolumeClaim:
+        claimName: stackrox-db
+  scanner:
+    analyzer:
+      scaling:
+        autoScaling: Enabled
+        maxReplicas: 3
+        minReplicas: 1
+        replicas: 1
+    scannerComponent: Enabled
+EOF
+----
+
+Wait for Central to become ready (this typically takes 3-5 minutes):
+
+[source,bash,role=execute]
+----
+echo "Waiting for ACS Central pods..."
+oc wait --for=condition=Available deployment/central -n stackrox --timeout=300s
+----
+
+=== Step 3: Retrieve the ACS Admin Password
+
+[source,bash,role=execute]
+----
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+echo "ACS Central admin password: $ACS_PASSWORD"
+----
+
+[IMPORTANT]
+====
+Save this password -- you will need it to log in to ACS Central and to generate API tokens for `roxctl`.
+====
+
+=== Step 4: Access ACS Central
+
+[source,bash,role=execute,subs="attributes"]
+----
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+echo "ACS Central URL: https://$ACS_ROUTE"
+----
+
+Open the URL in your browser and log in with username `admin` and the password from Step 3.
+
+=== Step 5: Deploy the Secured Cluster Services
+
+The Secured Cluster bundle connects your OpenShift cluster to ACS Central for runtime monitoring and admission control:
+
+. In ACS Central, navigate to *Platform Configuration* -> *Clusters*
+. Click *New Cluster*
+. Name: `workshop-cluster`
+. Set the Central API Endpoint to `central.stackrox.svc:443`
+. Click *Next* and download the YAML bundle
+. Apply the bundle:
+
+[source,bash,role=execute]
+----
+oc apply -R -f sensor-bundle/
+----
+
+Alternatively, create the SecuredCluster CR directly:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: platform.stackrox.io/v1alpha1
+kind: SecuredCluster
+metadata:
+  name: stackrox-secured-cluster-services
+  namespace: stackrox
+spec:
+  clusterName: workshop-cluster
+  admissionControl:
+    listenOnCreates: true
+    listenOnUpdates: true
+    listenOnEvents: true
+    contactImageScanners: ScanIfMissing
+    timeoutSeconds: 20
+    bypass: BreakGlassAnnotation
+  perNode:
+    collector:
+      collection: EBPF
+      imageFlavor: Regular
+    taintToleration: TolerateTaints
+EOF
+----
+
+Wait for the admission controller to start:
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=Available deployment/admission-control -n stackrox --timeout=300s
+----
+
+=== Step 6: Install the roxctl CLI
+
+[source,bash,role=execute]
+----
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+
+curl -sk "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
+chmod +x roxctl
+sudo mv roxctl /usr/local/bin/
+
+roxctl version
+----
+
+=== Step 7: Verify ACS Installation
+
+[source,bash,role=execute]
+----
+oc get pods -n stackrox
+----
+
+.*Expected output:*
+----
+NAME                                 READY   STATUS    RESTARTS   AGE
+admission-control-...                1/1     Running   0          ...
+central-...                          1/1     Running   0          ...
+collector-...                        2/2     Running   0          ...
+scanner-...                          1/1     Running   0          ...
+scanner-db-...                       1/1     Running   0          ...
+sensor-...                           1/1     Running   0          ...
+----
+
+Verify the admission controller webhook is registered:
+
+[source,bash,role=execute]
+----
+oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
+----
+
+.*Expected output:*
+----
+NAME                         WEBHOOKS   AGE
+stackrox-validating-webhook  1          ...
+----
+
+[TIP]
+====
+If the webhook does not appear, check that `listenOnCreates` is set to `true` in the SecuredCluster spec and that the admission controller pod is running.
+====
+
+Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress].

@@ -19,6 +19,7 @@
 ** xref:module-01-08-tomcat-hummingbird.adoc[1.8: Layering Tomcat on Hummingbird]
 ** xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines]
 ** xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS]
+** xref:module-02-07-acs-zero-cve.adoc[2.7: The Immutable Fortress -- Zero-CVE with ACS]
 
 * Appendix: Environment Setup
 ** xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]

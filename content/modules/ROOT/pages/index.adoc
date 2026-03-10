@@ -89,6 +89,7 @@ This module focuses on platform-level image building and deployment:
 * **SELinux CI/CD**: Automate udica policy generation with Tekton and distribute via MachineConfig
 * **Optional -- chunkah Pipeline**: Automated content-based layer splitting in CI/CD
 * **Optional -- RHTAS**: Keyless image signing and SBOM attestation with Red Hat Trusted Artifact Signer
+* **Optional -- The Immutable Fortress**: Zero-CVE enforcement with ACS admission control and Hummingbird distroless images
 
 .*Expected Outcomes*
 By the end of Module 2, you'll have working Shipwright builds deploying Hummingbird-based applications with automated security controls and SELinux policies.
@@ -199,6 +200,7 @@ Ready to begin? Make sure your environment is prepared (see <<Environment Setup>
   - xref:module-01-08-tomcat-hummingbird.adoc[1.8: Layering Tomcat on Hummingbird (~15 min)]
   - xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines (~12 min)]
   - xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS (~20 min)]
+  - xref:module-02-07-acs-zero-cve.adoc[2.7: The Immutable Fortress -- Zero-CVE with ACS (~25 min)]
 
 * **Appendix: Environment Setup** - Setup instructions if your environment is not pre-configured
   - xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]

@@ -1,0 +1,968 @@
+= Sub-Module 2.7: The Immutable Fortress -- Zero-CVE with ACS Enforcement (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~25 minutes +
+*Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline); ACS installed per xref:appendix-b-openshift-setup.adoc[Appendix B] +
+*Status:* Optional exercise -- not required for Module 2 completion +
+*Target Audience:* Application Developers, DevSecOps Engineers, CI/CD Architects +
+*Learning Objectives:*
+
+* Understand how unused OS packages in legacy base images create an unsustainable vulnerability treadmill
+* Deploy a deliberately vulnerable Python REST API to experience the anti-pattern firsthand
+* Rewrite the application using a Hummingbird distroless multi-stage build with strict JSON exec form
+* Inspect cryptographic SBOMs and SLSA provenance attached to Hummingbird artifacts
+* Author declarative ACS policies that enforce zero fixable CVEs and mandatory SBOM presence
+* Prove the guardrails by observing ACS admission control block a non-compliant deployment
+--
+
+[[introduction]]
+== Introduction
+
+Every organisation running containers on Kubernetes faces the same operational burden: a constant stream of CVE advisories against base image packages that the application never calls. Patching `apt`, `systemd`, or `glibc` inside a Python runtime image is not security -- it is **technical debt theatre**. You are patching code your application does not use, on a schedule dictated by upstream maintainers you do not control.
+
+This sub-module introduces a fundamentally different posture. Instead of reactively patching an ever-growing attack surface, you **proactively eradicate the attack surface** by switching to Project Hummingbird distroless images that ship only what the application actually needs. You then lock that posture in place using Red Hat Advanced Cluster Security (ACS) admission controllers so that no legacy, bloated image can re-enter your cluster.
+
+=== What You Will Build
+
+----
+Phase 1: Deploy legacy Python API (python:3.11-buster)
+  -> ACS scan reveals 100+ CVEs from unused OS packages
+
+Phase 2: Rebuild with Hummingbird distroless multi-stage
+  -> ACS scan reveals ZERO fixable CVEs
+
+Phase 3: Author ACS enforcement policies
+  -> Cluster rejects any image with fixable CVEs > 0
+  -> Cluster rejects any image without a verifiable SBOM
+
+Phase 4: Attempt to redeploy the legacy image
+  -> ACS admission controller BLOCKS the deployment
+----
+
+=== Prerequisites
+
+* OpenShift {openshift-version} cluster with cluster-admin access
+* `oc` CLI authenticated to the cluster
+* ACS (RHACS) operator installed and Central accessible (see xref:appendix-b-openshift-setup.adoc#acs-setup[Appendix B: ACS Setup])
+* `roxctl` CLI installed and configured
+* `cosign` and `syft` available (installed in Sub-Module 2.3)
+
+[[setup]]
+== Exercise 1: Prepare the Environment
+
+=== Step 1: Create the Lab Namespace
+
+[source,bash,role=execute]
+----
+oc new-project hummingbird-acs-lab
+----
+
+.*Expected output:*
+----
+Now using project "hummingbird-acs-lab" on server "https://...".
+----
+
+=== Step 2: Configure roxctl CLI
+
+Set the ACS Central endpoint and API token so that `roxctl` can communicate with your ACS installation:
+
+[source,bash,role=execute,subs="attributes"]
+----
+export ROX_CENTRAL_ADDRESS={acs-central-url}:443
+export ROX_API_TOKEN=$(oc -n {acs-namespace} create token central-service-account --duration=4h 2>/dev/null || echo "SET-MANUALLY")
+----
+
+[TIP]
+====
+If token creation fails, generate an API token through the ACS Central UI:
+
+. Navigate to *Platform Configuration* -> *Integrations* -> *Authentication Tokens*
+. Click *Generate Token*, name it `workshop-token`, select the *Admin* role
+. Copy the token and export it: `export ROX_API_TOKEN=<your-token>`
+====
+
+Verify connectivity:
+
+[source,bash,role=execute]
+----
+roxctl central whoami --insecure-skip-tls-verify
+----
+
+.*Expected output:*
+----
+User:
+  auth-provider: ...
+  Roles: Admin
+  Access: ...
+----
+
+[[deploy-legacy]]
+== Exercise 2: Deploy the Anti-Pattern (Legacy Python API)
+
+This exercise deliberately deploys a vulnerable application. The goal is to make the problem visceral before introducing the solution.
+
+=== Step 1: Create the Python REST API
+
+[source,bash,role=execute]
+----
+mkdir -p ~/acs-fortress-lab && cd ~/acs-fortress-lab
+
+cat > app.py << 'PYEOF'
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json, os
+
+class APIHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/healthz":
+            self._respond(200, {"status": "healthy"})
+        elif self.path == "/api/v1/greeting":
+            self._respond(200, {"message": "Hello from the Immutable Fortress lab"})
+        else:
+            self._respond(404, {"error": "not found"})
+
+    def _respond(self, code, body):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), APIHandler)
+    print(f"Listening on :{port}")
+    server.serve_forever()
+PYEOF
+----
+
+=== Step 2: Write the Legacy Containerfile
+
+This Containerfile uses `python:3.11-buster`, a full Debian-based image packed with OS-level packages the application will never use:
+
+[source,bash,role=execute]
+----
+cat > Containerfile.legacy << 'EOF'
+FROM docker.io/library/python:3.11-buster
+WORKDIR /app
+COPY app.py .
+EXPOSE 8080
+USER 1001
+CMD ["python3", "app.py"]
+EOF
+----
+
+=== Step 3: Build and Push the Legacy Image
+
+[source,bash,role=execute,subs="attributes"]
+----
+podman build -f Containerfile.legacy -t legacy-python-api:vulnerable .
+
+podman tag legacy-python-api:vulnerable \
+  quay.io/{registry-user}/legacy-python-api:vulnerable
+
+podman push quay.io/{registry-user}/legacy-python-api:vulnerable
+----
+
+=== Step 4: Deploy to OpenShift
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy-python-api
+  namespace: hummingbird-acs-lab
+  labels:
+    app: legacy-python-api
+    tier: legacy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: legacy-python-api
+  template:
+    metadata:
+      labels:
+        app: legacy-python-api
+        tier: legacy
+    spec:
+      containers:
+      - name: api
+        image: quay.io/REGISTRY_USER/legacy-python-api:vulnerable
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: legacy-python-api
+  namespace: hummingbird-acs-lab
+spec:
+  selector:
+    app: legacy-python-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: legacy-python-api
+  namespace: hummingbird-acs-lab
+spec:
+  to:
+    kind: Service
+    name: legacy-python-api
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+EOF
+----
+
+[NOTE]
+====
+Replace `REGISTRY_USER` with your actual registry username, or use `sed` inline:
+
+[source,bash,subs="attributes"]
+----
+oc set image deployment/legacy-python-api \
+  api=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  -n hummingbird-acs-lab
+----
+====
+
+=== Step 5: Verify the Legacy Deployment
+
+[source,bash,role=execute]
+----
+oc rollout status deployment/legacy-python-api -n hummingbird-acs-lab --timeout=120s
+
+ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+curl -sk "https://${ROUTE}/api/v1/greeting"
+----
+
+.*Expected output:*
+----
+{"message": "Hello from the Immutable Fortress lab"}
+----
+
+The API works. Now let's see what is lurking beneath the surface.
+
+[[scan-legacy]]
+== Exercise 3: Scan with ACS -- Exposing Hidden Technical Debt
+
+=== Step 1: Scan the Legacy Image with roxctl
+
+[source,bash,role=execute,subs="attributes"]
+----
+roxctl image scan \
+  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --insecure-skip-tls-verify \
+  --output=table
+----
+
+.*Expected output (abbreviated -- your counts will vary):*
+----
+COMPONENT        VERSION   CVE               SEVERITY   FIXED BY
+apt              2.2.4     CVE-2024-XXXXX    CRITICAL   2.2.5
+libsystemd0     247.3-7   CVE-2023-XXXXX    HIGH       ...
+glibc            2.31-13   CVE-2024-XXXXX    HIGH       ...
+openssl          1.1.1n    CVE-2024-XXXXX    HIGH       ...
+...
+
+TOTAL: XX critical, XX high, XX medium, XX low
+----
+
+[IMPORTANT]
+====
+**The key insight**: you will typically see **50 to 200+ CVEs** in this scan. Every single one of them comes from Debian Buster OS packages -- `apt`, `dpkg`, `systemd`, `glibc`, `openssl`, `bash`, `coreutils`, and dozens more. Your Python API uses **none of them**. It needs only the Python interpreter and the standard library.
+
+You are carrying the security burden of an entire general-purpose operating system for an application that requires only a language runtime.
+====
+
+=== Step 2: Check the Image in ACS Dashboard (Optional)
+
+If you have access to the ACS Central web UI:
+
+. Navigate to *Vulnerability Management* -> *Images*
+. Search for `legacy-python-api`
+. Observe the CVE breakdown by severity and component
+. Note how the vulnerable components are exclusively OS-level packages
+
+=== Step 3: Count the Fixable CVEs
+
+[source,bash,role=execute,subs="attributes"]
+----
+roxctl image scan \
+  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --insecure-skip-tls-verify \
+  --output=json | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+vulns = data.get('result', {}).get('summary', {})
+print(f'Total components: {vulns.get(\"componentCount\", \"N/A\")}')
+print(f'Critical: {vulns.get(\"criticalCount\", 0)}')
+print(f'Important: {vulns.get(\"importantCount\", 0)}')
+print(f'Moderate: {vulns.get(\"moderateCount\", 0)}')
+print(f'Low: {vulns.get(\"lowCount\", 0)}')
+fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
+print(f'Fixable vulnerabilities: {fixable}')
+"
+----
+
+Remember these numbers. You will compare them against the Hummingbird image shortly.
+
+[[build-fortress]]
+== Exercise 4: Build the Immutable Fortress (Hummingbird Multi-Stage)
+
+=== Step 1: Write the Distroless Containerfile
+
+[source,bash,role=execute]
+----
+cd ~/acs-fortress-lab
+
+cat > Containerfile.fortress << 'EOF'
+# Stage 1: Builder -- install dependencies in a full image
+FROM docker.io/library/python:3.11-slim AS builder
+WORKDIR /build
+COPY app.py .
+
+# Stage 2: Runtime -- copy only what the app needs into Hummingbird
+FROM quay.io/hummingbird-hatchling/python:latest
+COPY --from=builder /build/app.py /app/app.py
+WORKDIR /app
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["python3", "/app/app.py"]
+EOF
+----
+
+[IMPORTANT]
+====
+**Why JSON array syntax for ENTRYPOINT/CMD?**
+
+Hummingbird images are distroless -- they contain **no shell** (`/bin/sh`, `/bin/bash`). If you write:
+
+[source,dockerfile]
+----
+CMD python3 /app/app.py
+----
+
+Docker/Podman interprets this as `sh -c "python3 /app/app.py"`, which fails because `/bin/sh` does not exist. You must use the JSON exec form:
+
+[source,dockerfile]
+----
+ENTRYPOINT ["python3", "/app/app.py"]
+----
+
+This invokes the Python interpreter directly via the kernel's `execve` syscall, bypassing the need for a shell entirely.
+====
+
+=== Step 2: Build and Push the Hummingbird Image
+
+[source,bash,role=execute,subs="attributes"]
+----
+podman build -f Containerfile.fortress -t fortress-python-api:zero-cve .
+
+podman tag fortress-python-api:zero-cve \
+  quay.io/{registry-user}/fortress-python-api:zero-cve
+
+podman push quay.io/{registry-user}/fortress-python-api:zero-cve
+----
+
+=== Step 3: Compare Image Sizes
+
+[source,bash,role=execute]
+----
+podman images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | \
+  grep -E "(legacy-python-api|fortress-python-api)"
+----
+
+.*Expected output:*
+----
+REPOSITORY:TAG                                   SIZE
+localhost/legacy-python-api:vulnerable            920 MB
+localhost/fortress-python-api:zero-cve            85 MB
+----
+
+[NOTE]
+====
+The Hummingbird image is roughly **10x smaller** because it contains only the Python interpreter, shared libraries it actually links against, and TLS root certificates -- nothing else. No package manager, no shell, no coreutils, no man pages.
+====
+
+[[inspect-sbom]]
+== Exercise 5: Inspect SBOM and Provenance
+
+Hummingbird images built through the Konflux software factory ship with cryptographically signed SBOMs and SLSA provenance metadata. Even when building locally, you can generate and compare SBOMs.
+
+=== Step 1: Generate SBOMs for Both Images
+
+[source,bash,role=execute]
+----
+echo "=== Legacy image SBOM ==="
+syft legacy-python-api:vulnerable -o table | head -30
+echo ""
+LEGACY_COUNT=$(syft legacy-python-api:vulnerable -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+echo "Total packages in legacy image: $LEGACY_COUNT"
+----
+
+[source,bash,role=execute]
+----
+echo "=== Hummingbird image SBOM ==="
+syft fortress-python-api:zero-cve -o table | head -30
+echo ""
+FORTRESS_COUNT=$(syft fortress-python-api:zero-cve -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+echo "Total packages in Hummingbird image: $FORTRESS_COUNT"
+----
+
+.*Expected comparison:*
+----
+Legacy image:      ~430 packages (Debian Buster + Python)
+Hummingbird image: ~15-25 packages (Python runtime only)
+----
+
+=== Step 2: Inspect Hummingbird Upstream Provenance
+
+Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations. Inspect the upstream image:
+
+[source,bash,role=execute,subs="attributes"]
+----
+cosign tree {hummingbird-registry}/python:latest 2>/dev/null || \
+  echo "cosign tree requires registry access -- inspect with skopeo instead:"
+
+skopeo inspect --raw docker://{hummingbird-registry}/python:latest | \
+  python3 -c "
+import json, sys
+manifest = json.load(sys.stdin)
+if manifest.get('mediaType') == 'application/vnd.oci.image.index.v1+json':
+    for m in manifest.get('manifests', []):
+        ann = m.get('annotations', {})
+        if 'vnd.sigstore' in json.dumps(ann) or 'sbom' in m.get('artifactType', '').lower():
+            print(f'  Artifact: {m.get(\"artifactType\", \"unknown\")}')
+            print(f'  Digest:   {m.get(\"digest\", \"unknown\")}')
+            print()
+else:
+    print('Single-arch manifest (inspect child manifests for attestations)')
+"
+----
+
+[NOTE]
+====
+**SLSA Provenance** records exactly which source commit, build system, and builder identity produced the image. Combined with the SBOM, this provides a complete, cryptographically verifiable chain from source code to deployed artifact. The Konflux software factory automates this for every Hummingbird release.
+====
+
+[[zero-cve-moment]]
+== Exercise 6: The Zero-CVE Moment
+
+=== Step 1: Deploy the Hummingbird Image
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fortress-python-api
+  namespace: hummingbird-acs-lab
+  labels:
+    app: fortress-python-api
+    tier: fortress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fortress-python-api
+  template:
+    metadata:
+      labels:
+        app: fortress-python-api
+        tier: fortress
+    spec:
+      containers:
+      - name: api
+        image: quay.io/REGISTRY_USER/fortress-python-api:zero-cve
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fortress-python-api
+  namespace: hummingbird-acs-lab
+spec:
+  selector:
+    app: fortress-python-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fortress-python-api
+  namespace: hummingbird-acs-lab
+spec:
+  to:
+    kind: Service
+    name: fortress-python-api
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+EOF
+----
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc set image deployment/fortress-python-api \
+  api=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  -n hummingbird-acs-lab
+
+oc rollout status deployment/fortress-python-api -n hummingbird-acs-lab --timeout=120s
+----
+
+=== Step 2: Verify the Application
+
+[source,bash,role=execute]
+----
+ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+curl -sk "https://${ROUTE}/api/v1/greeting"
+----
+
+.*Expected output:*
+----
+{"message": "Hello from the Immutable Fortress lab"}
+----
+
+Identical functionality. Radically different security posture.
+
+=== Step 3: Scan the Hummingbird Image with ACS
+
+[source,bash,role=execute,subs="attributes"]
+----
+roxctl image scan \
+  --image=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  --insecure-skip-tls-verify \
+  --output=table
+----
+
+.*Expected output:*
+----
+No fixable vulnerabilities found
+----
+
+[source,bash,role=execute,subs="attributes"]
+----
+echo "=== Side-by-Side Comparison ==="
+echo ""
+echo "Legacy (python:3.11-buster):"
+roxctl image scan \
+  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --insecure-skip-tls-verify \
+  --output=json 2>/dev/null | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+s = data.get('result', {}).get('summary', {})
+fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
+print(f'  Components: {s.get(\"componentCount\", \"N/A\")}  |  Fixable CVEs: {fixable}')
+"
+
+echo ""
+echo "Fortress (Hummingbird distroless):"
+roxctl image scan \
+  --image=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  --insecure-skip-tls-verify \
+  --output=json 2>/dev/null | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+s = data.get('result', {}).get('summary', {})
+fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
+print(f'  Components: {s.get(\"componentCount\", \"N/A\")}  |  Fixable CVEs: {fixable}')
+"
+----
+
+[IMPORTANT]
+====
+This is the paradigm shift. The vulnerability count did not drop because you patched faster -- it dropped because **the vulnerable code no longer exists in the image**. There is nothing to patch. The attack surface has been eradicated, not managed.
+====
+
+[[enforce-policy]]
+== Exercise 7: Enforce the Posture with ACS Policies
+
+A zero-CVE scan is only as valuable as the policy that prevents regression. In this exercise you create two ACS policies that make the zero-CVE posture **mandatory** at the admission control level.
+
+=== Step 1: Enable ACS Admission Controller (if not already active)
+
+Verify the admission controller is listening:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
+----
+
+.*Expected output:*
+----
+NAME                         WEBHOOKS   AGE
+stackrox-validating-webhook  1          ...
+----
+
+If no webhook exists, enable it in ACS Central:
+
+. Navigate to *Platform Configuration* -> *Clusters*
+. Select your cluster
+. Under *Admission Controller Settings*, toggle *Configure Admission Controller Webhook to listen on creates* to **ON**
+. Toggle *Contact Admission Controller when policy is violated* to **ON**
+. Click *Save*
+
+=== Step 2: Create Policy -- Reject Images with Fixable CVEs
+
+This policy blocks any deployment where the image contains fixable vulnerabilities:
+
+[source,bash,role=execute]
+----
+roxctl declarative-config create security-policy \
+  --name="Zero Fixable CVEs Required" \
+  --description="Reject deployments where the image has any fixable CVE. Enforces proactive attack surface eradication over reactive patching." \
+  --severity=CRITICAL_SEVERITY \
+  --category="Vulnerability Management" \
+  --lifecycle-stage=DEPLOY \
+  --enforcement=FAIL_DEPLOYMENT_CREATE_ENFORCEMENT \
+  --scope-namespace=hummingbird-acs-lab \
+  --policy-section-name="Fixable CVE threshold" \
+  --field-name="Fixable CVSS" \
+  --comparison=GREATER_THAN_OR_EQUAL_TO \
+  --value="0" \
+  --insecure-skip-tls-verify 2>/dev/null
+----
+
+[NOTE]
+====
+If `roxctl declarative-config` is not available in your version, create the policy through the ACS Central UI:
+
+. Navigate to *Platform Configuration* -> *Policy Management*
+. Click *Create Policy*
+. Set the following:
+  - **Name**: `Zero Fixable CVEs Required`
+  - **Severity**: Critical
+  - **Lifecycle**: Deploy
+  - **Response**: Inform and enforce
+. Under *Policy Criteria*, add:
+  - **Fixable CVSS** >= 0 (any fixable vulnerability triggers the policy)
+. Under *Policy Scope*, restrict to namespace `hummingbird-acs-lab`
+. Click *Save*
+====
+
+=== Step 3: Create Policy -- Require SBOM / Image Scanning
+
+This policy rejects images that ACS has not scanned (ensuring every deployed image has been evaluated):
+
+[source,bash,role=execute]
+----
+roxctl declarative-config create security-policy \
+  --name="Image Scan Required" \
+  --description="Reject deployments where the image has not been scanned by ACS. Ensures every runtime artifact has a verified vulnerability assessment." \
+  --severity=HIGH_SEVERITY \
+  --category="Supply Chain Security" \
+  --lifecycle-stage=DEPLOY \
+  --enforcement=FAIL_DEPLOYMENT_CREATE_ENFORCEMENT \
+  --scope-namespace=hummingbird-acs-lab \
+  --policy-section-name="Scan status" \
+  --field-name="Unscanned Image" \
+  --value="true" \
+  --insecure-skip-tls-verify 2>/dev/null
+----
+
+[NOTE]
+====
+**UI alternative** for the scan policy:
+
+. Navigate to *Platform Configuration* -> *Policy Management*
+. Click *Create Policy*
+. Set the following:
+  - **Name**: `Image Scan Required`
+  - **Severity**: High
+  - **Lifecycle**: Deploy
+  - **Response**: Inform and enforce
+. Under *Policy Criteria*, add:
+  - **Unscanned Image** = true
+. Under *Policy Scope*, restrict to namespace `hummingbird-acs-lab`
+. Click *Save*
+====
+
+=== Step 4: Verify Policies Are Active
+
+[source,bash,role=execute]
+----
+roxctl policy ls --insecure-skip-tls-verify 2>/dev/null | \
+  grep -E "(Zero Fixable|Image Scan Required)"
+----
+
+.*Expected output:*
+----
+Zero Fixable CVEs Required     DEPLOY    CRITICAL    FAIL_DEPLOYMENT_CREATE
+Image Scan Required            DEPLOY    HIGH        FAIL_DEPLOYMENT_CREATE
+----
+
+Both policies are now active and will be evaluated by the admission controller on every deployment create or update in the `hummingbird-acs-lab` namespace.
+
+[[prove-guardrails]]
+== Exercise 8: Prove the Guardrails (Simulated Pipeline Failure)
+
+This is the definitive test. You will attempt to redeploy the original vulnerable image. The ACS admission controller must block it.
+
+=== Step 1: Attempt to Deploy the Legacy Image
+
+[source,bash,role=execute,subs="attributes"]
+----
+echo "=== Attempting to deploy vulnerable legacy image ==="
+echo "This SHOULD fail if ACS policies are enforced correctly."
+echo ""
+
+oc set image deployment/fortress-python-api \
+  api=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  -n hummingbird-acs-lab 2>&1
+
+echo ""
+echo "Exit code: $?"
+----
+
+=== Step 2: Alternative -- Create a New Deployment with the Legacy Image
+
+If the `set image` command does not trigger the admission webhook (some ACS configurations enforce only on create, not update), try creating a new deployment:
+
+[source,bash,role=execute,subs="attributes"]
+----
+cat << EOF | oc apply -f - 2>&1
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy-regression-test
+  namespace: hummingbird-acs-lab
+  labels:
+    app: legacy-regression-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: legacy-regression-test
+  template:
+    metadata:
+      labels:
+        app: legacy-regression-test
+    spec:
+      containers:
+      - name: api
+        image: quay.io/{registry-user}/legacy-python-api:vulnerable
+        ports:
+        - containerPort: 8080
+EOF
+
+echo ""
+echo "Exit code: $?"
+----
+
+.*Expected output:*
+----
+Error from server: admission webhook "policyeval.stackrox.io" denied the request:
+The attempted operation violated 1 enforced policy:
+
+Policy: Zero Fixable CVEs Required
+- Description: Reject deployments where the image has any fixable CVE.
+  Enforces proactive attack surface eradication over reactive patching.
+- Violation: Fixable CVSS score found in image
+- Remediation: Use a distroless base image (e.g., Hummingbird) to eliminate
+  unused OS packages and their associated CVEs.
+
+Exit code: 1
+----
+
+[IMPORTANT]
+====
+**This is the proof.** The admission controller returned a non-zero exit code. In a real CI/CD pipeline, this blocks the deployment step, fails the pipeline, and surfaces the policy violation in your CI dashboard. The vulnerable image never reaches the cluster.
+
+The operational model has shifted:
+
+* **Before**: Deploy first, scan later, patch reactively, repeat forever
+* **After**: Build distroless, verify at build time, enforce at admission, never patch unused code
+====
+
+=== Step 3: Verify the Fortress Remains Intact
+
+Confirm that your Hummingbird deployment is still running and serving traffic:
+
+[source,bash,role=execute]
+----
+oc get deployment fortress-python-api -n hummingbird-acs-lab
+
+ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+curl -sk "https://${ROUTE}/api/v1/greeting"
+----
+
+.*Expected output:*
+----
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+fortress-python-api   1/1     1            1           ...
+
+{"message": "Hello from the Immutable Fortress lab"}
+----
+
+=== Step 4: View Violations in ACS Dashboard
+
+Navigate to the ACS Central UI:
+
+. Go to *Violations*
+. Filter by namespace `hummingbird-acs-lab`
+. Observe the blocked deployment attempt with full details:
+  - Which policy was violated
+  - Which image triggered the violation
+  - The specific CVEs that exceeded the threshold
+  - Timestamp and requesting user identity
+
+[TIP]
+====
+In production, configure ACS to send violation alerts to your SIEM, Slack, or PagerDuty:
+
+. Navigate to *Platform Configuration* -> *Integrations* -> *Notifiers*
+. Add your notification channel
+. Edit each policy and attach the notifier under *Actions*
+
+This closes the loop: build -> verify -> enforce -> alert.
+====
+
+[[cleanup]]
+== Cleanup
+
+Remove the lab resources when you are finished:
+
+[source,bash,role=execute]
+----
+oc delete project hummingbird-acs-lab
+
+roxctl policy delete --name="Zero Fixable CVEs Required" --insecure-skip-tls-verify 2>/dev/null
+roxctl policy delete --name="Image Scan Required" --insecure-skip-tls-verify 2>/dev/null
+----
+
+[[summary]]
+== Summary
+
+Congratulations! You have completed Sub-Module 2.7 -- The Immutable Fortress.
+
+.*What You Accomplished*
+{empty} +
+pass:[&#10003;] Deployed a legacy Python API built on `python:3.11-buster` +
+pass:[&#10003;] Scanned with ACS and observed 50-200+ CVEs from unused OS packages +
+pass:[&#10003;] Rewrote the application using a Hummingbird distroless multi-stage build +
+pass:[&#10003;] Learned strict JSON exec form for ENTRYPOINT/CMD in shell-less images +
+pass:[&#10003;] Compared SBOM package counts: ~430 (legacy) vs ~20 (Hummingbird) +
+pass:[&#10003;] Inspected SLSA provenance and cryptographic SBOM attestations +
+pass:[&#10003;] Achieved a zero fixable CVE scan with the Hummingbird image +
+pass:[&#10003;] Authored ACS policies requiring zero fixable CVEs and mandatory image scanning +
+pass:[&#10003;] Proved the guardrails by observing ACS block a non-compliant deployment +
+pass:[&#10003;] Verified the Hummingbird deployment remained unaffected
+
+.*Key Takeaways*
+
+**The Vulnerability Treadmill Is Optional:**
+
+Legacy base images force you onto a never-ending patch cycle for code your application does not use. Hummingbird distroless images break this cycle by eliminating the unused code entirely.
+
+**Defence in Depth with ACS:**
+
+* *Build time*: Multi-stage builds produce minimal images
+* *Scan time*: ACS/roxctl validates the zero-CVE posture
+* *Deploy time*: Admission controllers enforce the posture as policy
+* *Runtime*: Distroless images resist exploitation (no shell, no package manager, no utilities)
+
+**From Reactive to Proactive:**
+
+The operational mindset shifts from "how fast can we patch?" to "there is nothing to patch." This is not incremental improvement -- it is a fundamental change in how container security is practised.
+
+=== Additional Resources
+
+*Red Hat Advanced Cluster Security:*
+
+* https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/[ACS Documentation^]
+* https://www.redhat.com/en/technologies/cloud-computing/openshift/advanced-cluster-security-kubernetes[ACS Product Page^]
+* https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/4.7/html/operating/manage-security-policies[ACS Policy Management^]
+
+*Supply Chain Security:*
+
+* https://slsa.dev/[SLSA Framework^]
+* https://www.cisa.gov/sbom[CISA SBOM Resources^]
+* https://www.redhat.com/en/blog/whats-next-software-supply-chain-security[Red Hat Supply Chain Security^]
+
+*Project Hummingbird:*
+
+* https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/hummingbird[Official Hummingbird Page^]
+* https://www.redhat.com/en/about/press-releases/red-hat-introduces-project-hummingbird-zero-cve-strategies[Hummingbird Press Release^]
+
+=== Troubleshooting
+
+**Issue: roxctl cannot reach ACS Central**
+[source,bash]
+----
+curl -sk https://$ROX_CENTRAL_ADDRESS/v1/metadata
+oc get route -n stackrox
+----
+
+**Issue: Admission controller not blocking deployments**
+[source,bash]
+----
+oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox -o yaml
+
+oc logs -n stackrox deploy/admission-control
+----
+
+**Issue: Policy not triggering on deployment**
+[source,bash]
+----
+roxctl policy ls --insecure-skip-tls-verify | grep -i "zero fixable"
+
+oc get events -n hummingbird-acs-lab --sort-by=.metadata.creationTimestamp | tail -20
+----
+
+**Issue: Hummingbird image fails to start (exec format error)**
+
+Ensure you are using JSON array syntax for ENTRYPOINT/CMD. Shell form will not work in distroless images:
+
+[source,dockerfile]
+----
+# Correct (exec form)
+ENTRYPOINT ["python3", "/app/app.py"]
+
+# Wrong (shell form -- requires /bin/sh)
+ENTRYPOINT python3 /app/app.py
+----
