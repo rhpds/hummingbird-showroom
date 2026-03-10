@@ -7,7 +7,7 @@
 *Prerequisites:* Environment setup complete (see xref:appendix-a-rhel-setup.adoc[Appendix A]) +
 *Learning Objectives:*
 
-* Install security tools (cosign, syft, grype)
+* Verify security tools (cosign, syft, grype) are installed
 * Create a sample Quarkus REST application
 * Write multi-stage Containerfiles with UBI builder + Hummingbird runtime
 * Build minimal container images using Podman and Buildah
@@ -20,95 +20,32 @@
 
 In this sub-module, you'll move from running pre-built images to creating your own Hummingbird-based containers. You'll learn the multi-stage build pattern that uses full UBI images for compilation and Hummingbird images for runtime, achieving dramatic size reductions while maintaining functionality.
 
-We'll also install the security tools (cosign, syft, grype) that you'll use extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
+We'll also verify that the security tools (cosign, syft, grype) -- installed via xref:appendix-a-rhel-setup.adoc[Appendix A] -- are available, as you'll use them extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
 
 [[security-tools]]
-== Security Tools Installation
+== Security Tools Verification
 
-Security is a critical part of modern container workflows. Install tools for image signing, SBOM generation, and vulnerability scanning.
+The security tools used in this sub-module and in Sub-Module 1.2 -- **cosign** (image signing), **syft** (SBOM generation), and **grype** (vulnerability scanning) -- should already be installed as part of your environment setup. If you haven't installed them yet, complete the security tools section in xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment Setup] before continuing.
 
-=== Step 1: Install Cosign (Image Signing)
-
-Cosign is used to sign and verify container images:
+=== Step 1: Verify Security Tools
 
 [source,bash,role=execute]
 ----
-# Install cosign from GitHub releases
-COSIGN_VERSION=v2.4.1
-curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
-sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
-rm cosign-linux-amd64
-
-# Verify installation
 cosign version
-----
-
-.*Expected output:*
-----
-cosign version v2.4.1
-----
-
-[TIP]
-====
-**Cosign in Production:**
-
-* **Development**: Generate key pairs locally (as we'll do in this workshop)
-* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
-* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
-====
-
-=== Step 2: Install Syft (SBOM Generation)
-
-Syft generates Software Bill of Materials (SBOMs) from container images:
-
-[source,bash,role=execute]
-----
-# Install syft
-SYFT_VERSION=v1.17.0
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
-
-# Verify installation
 syft version
-----
-
-.*Expected output:*
-----
-syft version 1.17.0
-----
-
-[NOTE]
-====
-**What is an SBOM?**
-
-A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
-
-* **Supply chain security**: Know exactly what's in your images
-* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
-* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
-====
-
-=== Step 3: Install Grype (Vulnerability Scanning)
-
-Grype scans container images for known CVEs:
-
-[source,bash,role=execute]
-----
-# Install grype
-GRYPE_VERSION=v0.88.0
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
-
-# Verify installation
 grype version
 ----
 
 .*Expected output:*
 ----
+cosign version v2.4.1
+syft version 1.17.0
 grype version 0.88.0
 ----
 
-[TIP]
+[NOTE]
 ====
-Grype downloads a vulnerability database on first run. This may take a few minutes initially. The database is cached locally and updated periodically.
+If any of the above commands fail with "command not found", return to xref:appendix-a-rhel-setup.adoc#security-tools-install[Appendix A: Security Tools Installation] and complete Steps 14-16.
 ====
 
 [[sample-application]]
@@ -116,7 +53,7 @@ Grype downloads a vulnerability database on first run. This may take a few minut
 
 Let's create a simple Quarkus REST application that we'll build into a Hummingbird container.
 
-=== Step 4: Scaffold the Project with Quarkus CLI
+=== Step 2: Scaffold the Project with Quarkus CLI
 
 The Quarkus CLI generates the full project structure -- `pom.xml`, Maven wrapper, source directories, and configuration -- in a single command:
 
@@ -144,7 +81,7 @@ The `--no-code` flag tells the CLI to skip generating starter endpoint code so w
 Using the Maven wrapper (`./mvnw`) instead of a system `mvn` ensures every developer (and every container build) uses the exact same Maven version, avoiding "works on my machine" issues.
 ====
 
-=== Step 4a: Prepare Project for Multi-Stage Container Builds
+=== Step 2a: Prepare Project for Multi-Stage Container Builds
 
 The Quarkus scaffold generates a `.dockerignore` that excludes everything except pre-built artifacts -- this is designed for single-stage builds where you compile locally first. Our multi-stage Containerfile compiles _inside_ the container, so source files must be included in the build context.
 
@@ -180,7 +117,7 @@ sed -i 's/distributionSha256Sum=.*/distributionSha256Sum=/' .mvn/wrapper/maven-w
 ----
 ====
 
-=== Step 5: Create Application Resource
+=== Step 3: Create Application Resource
 
 [source,bash,role=execute]
 ----
@@ -222,7 +159,7 @@ public class GreetingResource {
 EOF
 ----
 
-=== Step 6: Configure Application Properties
+=== Step 4: Configure Application Properties
 
 [source,bash,role=execute]
 ----
@@ -237,7 +174,7 @@ EOF
 
 Now let's create the Containerfile that builds our application using the multi-stage pattern.
 
-=== Step 7: Create Multi-Stage Containerfile
+=== Step 5: Create Multi-Stage Containerfile
 
 [source,bash,role=execute]
 ----
@@ -326,7 +263,7 @@ EOF
 [[building-image]]
 == Building the Image
 
-=== Step 8: Build with Podman
+=== Step 6: Build with Podman
 
 Build your first Hummingbird-based container image:
 
@@ -358,7 +295,7 @@ COMMIT hummingbird-demo:v1
 Successfully tagged localhost/hummingbird-demo:v1
 ----
 
-=== Step 9: Verify Image Size
+=== Step 7: Verify Image Size
 
 Check the size of your built image:
 
@@ -375,7 +312,7 @@ localhost/hummingbird-demo  v1  abc123def456  1 minute ago  272 MB
 [[testing-application]]
 == Testing the Application
 
-=== Step 10: Run and Test the Container
+=== Step 8: Run and Test the Container
 
 Run the container and test it:
 
@@ -413,7 +350,7 @@ curl http://localhost:8080/health
 {"status":"healthy"}
 ----
 
-=== Step 11: View Container Logs
+=== Step 9: View Container Logs
 
 [source,bash,role=execute]
 ----
@@ -430,7 +367,7 @@ __  ____  __  _____   ___  __ ____  ______
 Listening on: http://0.0.0.0:8080
 ----
 
-=== Step 12: Stop and Remove Container
+=== Step 10: Stop and Remove Container
 
 [source,bash,role=execute]
 ----
@@ -488,7 +425,7 @@ While the visual editor is convenient, most developers prefer using their IDE (V
 Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbird application.
 
 .*What You've Accomplished*
-✅ Installed security tools (cosign, syft, grype) +
+✅ Verified security tools are available (cosign, syft, grype) +
 ✅ Created a sample Quarkus REST application +
 ✅ Wrote a multi-stage Containerfile with UBI builder + Hummingbird runtime +
 ✅ Built a container image with Podman CLI (~272MB final size) +
@@ -503,7 +440,7 @@ Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbir
 * **Stage 2 (Runtime)**: Hummingbird runtime (~253MB base) with only the JRE
 * **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
 
-**Security Tools Installed:**
+**Security Tools Available:**
 * **cosign**: Image signing and verification
 * **syft**: SBOM generation for compliance
 * **grype**: Vulnerability scanning
