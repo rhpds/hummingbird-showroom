@@ -1,6 +1,6 @@
 ---
-name: hummingbird-workshop
-title: Zero CVE Hummingbird Workshop
+name: modules
+title: Project Hummingbird Environment Workshop
 version: '1.0'
 nav:
   - modules/ROOT/nav.adoc
