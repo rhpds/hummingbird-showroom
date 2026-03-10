@@ -184,23 +184,25 @@ Your unique lab environment identifier: `{guid}`
 
 Ready to begin? Make sure your environment is prepared (see <<Environment Setup>> above), then choose your starting module:
 
-* **Module 1: Developer Environment** - Build and secure Hummingbird container images
+* **Module 1: Developer Environment (RHEL)** - Build and secure Hummingbird container images
   - xref:module-01-01-building.adoc[1.1: Building with Hummingbird]
   - xref:module-01-02-security.adoc[1.2: Security Scanning & SBOMs]
   - xref:module-01-03-selinux.adoc[1.3: SELinux Fundamentals with udica]
   - xref:module-01-04-selinux-advanced.adoc[1.4: Advanced SELinux Hardening]
 
-* **Module 2: Shipwright and Buildpacks** - Deploy platform-level builds on OpenShift
+* **Module 2: Shipwright and Buildpacks (OpenShift)** - Deploy platform-level builds on OpenShift
   - xref:module-02-01-buildpacks.adoc[2.1: Cloud Native Buildpacks]
   - xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
   - xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
   - xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
 
-* **Optional Exercises** - Additional hands-on labs for image optimisation
+* **Optional: Module 1 Exercises (RHEL)** - Additional hands-on labs for RHEL environments
   - xref:module-01-05-chunkah.adoc[1.5: Content-Based Layer Splitting with chunkah (~15 min)]
   - xref:module-01-06-multi-lang-builds.adoc[1.6: Multi-Language Builds with Hummingbird (~15 min)]
   - xref:module-01-07-chunkah-value.adoc[1.7: The Aha Moment — Demonstrating chunkah Value (~20 min)]
   - xref:module-01-08-tomcat-hummingbird.adoc[1.8: Layering Tomcat on Hummingbird (~15 min)]
+
+* **Optional: Module 2 Exercises (OpenShift)** - Additional hands-on labs for OpenShift environments
   - xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines (~12 min)]
   - xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS (~20 min)]
   - xref:module-02-07-acs-zero-cve.adoc[2.7: The Immutable Fortress -- Zero-CVE with ACS (~25 min)]
