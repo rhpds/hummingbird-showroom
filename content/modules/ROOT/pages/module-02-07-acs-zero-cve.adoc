@@ -159,9 +159,9 @@ EOF
 podman build -f Containerfile.legacy -t legacy-python-api:vulnerable .
 
 podman tag legacy-python-api:vulnerable \
-  quay.io/{registry-user}/legacy-python-api:vulnerable
+  {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
 
-podman push quay.io/{registry-user}/legacy-python-api:vulnerable
+podman push {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
 ----
 
 === Step 4: Deploy to OpenShift
@@ -190,7 +190,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: quay.io/REGISTRY_USER/legacy-python-api:vulnerable
+        image: WORKSHOP_REGISTRY/REGISTRY_USER/legacy-python-api:vulnerable
         ports:
         - containerPort: 8080
         livenessProbe:
@@ -234,12 +234,12 @@ EOF
 
 [NOTE]
 ====
-Replace `REGISTRY_USER` with your actual registry username, or use `sed` inline:
+Replace `WORKSHOP_REGISTRY` and `REGISTRY_USER` with your actual values, or use `oc set image` inline:
 
 [source,bash,subs="attributes"]
 ----
 oc set image deployment/legacy-python-api \
-  api=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  api={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
   -n hummingbird-acs-lab
 ----
 ====
@@ -269,7 +269,7 @@ The API works. Now let's see what is lurking beneath the surface.
 [source,bash,role=execute,subs="attributes"]
 ----
 roxctl image scan \
-  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
   --insecure-skip-tls-verify \
   --output=table
 ----
@@ -307,7 +307,7 @@ If you have access to the ACS Central web UI:
 [source,bash,role=execute,subs="attributes"]
 ----
 roxctl image scan \
-  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
   --insecure-skip-tls-verify \
   --output=json | \
   python3 -c "
@@ -379,9 +379,9 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 podman build -f Containerfile.fortress -t fortress-python-api:zero-cve .
 
 podman tag fortress-python-api:zero-cve \
-  quay.io/{registry-user}/fortress-python-api:zero-cve
+  {workshop-registry}/{registry-user}/fortress-python-api:zero-cve
 
-podman push quay.io/{registry-user}/fortress-python-api:zero-cve
+podman push {workshop-registry}/{registry-user}/fortress-python-api:zero-cve
 ----
 
 === Step 3: Compare Image Sizes
@@ -494,7 +494,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: quay.io/REGISTRY_USER/fortress-python-api:zero-cve
+        image: WORKSHOP_REGISTRY/REGISTRY_USER/fortress-python-api:zero-cve
         ports:
         - containerPort: 8080
         livenessProbe:
@@ -546,7 +546,7 @@ EOF
 [source,bash,role=execute,subs="attributes"]
 ----
 oc set image deployment/fortress-python-api \
-  api=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  api={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
   -n hummingbird-acs-lab
 
 oc rollout status deployment/fortress-python-api -n hummingbird-acs-lab --timeout=120s
@@ -572,7 +572,7 @@ Identical functionality. Radically different security posture.
 [source,bash,role=execute,subs="attributes"]
 ----
 roxctl image scan \
-  --image=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  --image={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
   --insecure-skip-tls-verify \
   --output=table
 ----
@@ -588,7 +588,7 @@ echo "=== Side-by-Side Comparison ==="
 echo ""
 echo "Legacy (python:3.11-buster):"
 roxctl image scan \
-  --image=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
   --insecure-skip-tls-verify \
   --output=json 2>/dev/null | \
   python3 -c "
@@ -602,7 +602,7 @@ print(f'  Components: {s.get(\"componentCount\", \"N/A\")}  |  Fixable CVEs: {fi
 echo ""
 echo "Fortress (Hummingbird distroless):"
 roxctl image scan \
-  --image=quay.io/{registry-user}/fortress-python-api:zero-cve \
+  --image={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
   --insecure-skip-tls-verify \
   --output=json 2>/dev/null | \
   python3 -c "
@@ -752,7 +752,7 @@ echo "This SHOULD fail if ACS policies are enforced correctly."
 echo ""
 
 oc set image deployment/fortress-python-api \
-  api=quay.io/{registry-user}/legacy-python-api:vulnerable \
+  api={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
   -n hummingbird-acs-lab 2>&1
 
 echo ""
@@ -785,7 +785,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: quay.io/{registry-user}/legacy-python-api:vulnerable
+        image: {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
         ports:
         - containerPort: 8080
 EOF

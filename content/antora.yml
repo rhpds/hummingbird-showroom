@@ -30,7 +30,12 @@ asciidoc:
     acs-namespace: 'stackrox'
     roxctl-version: '4.7'
 
-    # Registry Configuration
+    # Workshop Registry (on-cluster Quay)
+    workshop-registry: 'quay-registry-quay-quay.apps.cluster-{guid}.example.com'
+    workshop-registry-console: 'https://quay-registry-quay-quay.apps.cluster-{guid}.example.com'
+    quay-namespace: 'quay'
+
+    # Upstream Source Registries
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 

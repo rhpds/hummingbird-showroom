@@ -14,6 +14,8 @@
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
+* Red Hat Quay on-cluster registry with Clair vulnerability scanning
+* Registry credentials and pipeline ServiceAccount linkage
 * _(Optional)_ Red Hat Advanced Cluster Security (ACS) for Sub-Module 2.7
 --
 
@@ -514,11 +516,11 @@ ClusterBuildStrategy: "nodejs-hummingbird"
   -> (used by)
 Build: "myapp-build"
   - Source: https://github.com/myorg/myapp.git
-  - Output: quay.io/myorg/myapp:latest
+  - Output: <on-cluster-quay>/myorg/myapp:latest
   -> (executed by)
 BuildRun: "myapp-build-run-abc123"
   - Status: Succeeded
-  - Image: quay.io/myorg/myapp:latest@sha256:...
+  - Image: <on-cluster-quay>/myorg/myapp:latest@sha256:...
 ----
 
 ==== Step 9: List Pre-installed BuildStrategies
@@ -597,6 +599,231 @@ oc get pods -n openshift-builds
 oc auth can-i create clusterbuildstrategy
 
 oc auth can-i '*' '*' --all-namespaces
+----
+
+[[quay-setup]]
+== Red Hat Quay On-Cluster Registry Setup
+
+All Module 2 labs push built images to an on-cluster Quay registry. Quay provides validated TLS via the OpenShift ingress, integrated Clair vulnerability scanning, and a web console for browsing repositories and scan results.
+
+=== Step 1: Install the Quay Operator
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quay
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: quay-operator-group
+  namespace: quay
+spec:
+  targetNamespaces:
+  - quay
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: quay-operator
+  namespace: quay
+spec:
+  channel: stable-3.13
+  name: quay-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/quay created
+operatorgroup.operators.coreos.com/quay-operator-group created
+subscription.operators.coreos.com/quay-operator created
+----
+
+Wait for the operator to reach the `Succeeded` phase:
+
+[source,bash,role=execute]
+----
+echo "Waiting for Quay operator..."
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n quay -l operators.coreos.com/quay-operator.quay -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then
+        echo "Quay operator installed successfully."
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "WARNING: Operator not yet ready. Check: oc get csv -n quay"
+    fi
+    sleep 5
+done
+----
+
+=== Step 2: Deploy QuayRegistry Instance
+
+Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle all dependencies (PostgreSQL, Redis, object storage, Clair) automatically:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: quay.redhat.com/v1
+kind: QuayRegistry
+metadata:
+  name: quay-registry
+  namespace: quay
+spec:
+  configBundleSecret: quay-config-bundle
+  components:
+    - kind: clair
+      managed: true
+    - kind: postgres
+      managed: true
+    - kind: redis
+      managed: true
+    - kind: objectstorage
+      managed: true
+    - kind: route
+      managed: true
+    - kind: tls
+      managed: true
+    - kind: horizontalpodautoscaler
+      managed: true
+    - kind: mirror
+      managed: false
+    - kind: monitoring
+      managed: false
+EOF
+----
+
+[NOTE]
+====
+Setting `tls: managed: true` means OpenShift provisions TLS certificates via the cluster ingress CA. All clients that trust the cluster CA (including pods running inside the cluster) can push and pull over HTTPS without `--tls-verify=false`.
+====
+
+Wait for Quay to become ready (this typically takes 3-5 minutes):
+
+[source,bash,role=execute]
+----
+echo "Waiting for Quay registry pods..."
+oc wait --for=condition=Available deployment -l quay-operator/quayregistry=quay-registry -n quay --timeout=300s 2>/dev/null || \
+  echo "Still starting -- check: oc get pods -n quay"
+----
+
+=== Step 3: Get the Quay Registry Route
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route quay-registry-quay-quay -n {quay-namespace} -o jsonpath='{.spec.host}' 2>/dev/null || \
+  oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+echo "Quay registry: $QUAY_ROUTE"
+echo "Quay console:  https://$QUAY_ROUTE"
+----
+
+[TIP]
+====
+Bookmark the Quay console URL. You will use it throughout Module 2 to browse repositories, inspect image tags, and view Clair vulnerability scan results.
+====
+
+=== Step 4: Create a Workshop User and Organisation
+
+Create a Quay user account for the workshop via the API:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "workshopuser",
+    "password": "workshoppass123",
+    "email": "workshop@example.com",
+    "access_token": true
+  }' | python3 -m json.tool
+----
+
+[NOTE]
+====
+The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns an error, the first user was already created. Log in to the Quay console to create additional users or organisations manually.
+====
+
+=== Step 5: Create Registry Credentials Secret
+
+Create the `registry-credentials` secret that all Module 2 labs reference for pushing images:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+oc create secret docker-registry registry-credentials \
+  --docker-server="${QUAY_ROUTE}" \
+  --docker-username={registry-user} \
+  --docker-password={registry-password} \
+  -n hummingbird-builds
+----
+
+.*Expected output:*
+----
+secret/registry-credentials created
+----
+
+=== Step 6: Link Secret to Pipeline ServiceAccount
+
+[source,bash,role=execute]
+----
+oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
+----
+
+[NOTE]
+====
+The `pipeline` ServiceAccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns. Linking the secret allows builds to push images to the on-cluster Quay registry.
+====
+
+=== Step 7: Verify Registry Access
+
+Confirm you can authenticate to the on-cluster Quay registry:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+podman login "${QUAY_ROUTE}" \
+  --username={registry-user} \
+  --password={registry-password}
+----
+
+.*Expected output:*
+----
+Login Succeeded!
+----
+
+[IMPORTANT]
+====
+Notice that no `--tls-verify=false` flag is needed. The on-cluster Quay registry uses TLS certificates issued by the OpenShift cluster ingress CA, which Podman trusts automatically when running on a cluster node or when the cluster CA has been added to the local trust store.
+====
+
+=== Clair Vulnerability Scanning
+
+Quay includes **Clair** as its built-in vulnerability scanner. Every image pushed to the registry is automatically scanned for CVEs. You do not need to install or configure Clair separately -- it was deployed as part of the QuayRegistry CR above (`clair: managed: true`).
+
+You will use Clair scan results in xref:module-02-03-security-pipeline.adoc[Sub-Module 2.3] alongside the grype-based pipeline scanning.
+
+To verify Clair is running:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc get pods -n {quay-namespace} -l quay-component=clair-app
+----
+
+.*Expected output:*
+----
+NAME                                          READY   STATUS    RESTARTS   AGE
+quay-registry-clair-app-...                   1/1     Running   0          ...
 ----
 
 [[acs-setup]]

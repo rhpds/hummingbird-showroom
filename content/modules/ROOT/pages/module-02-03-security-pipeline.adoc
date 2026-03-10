@@ -3,12 +3,13 @@
 .*Sub-Module Overview*
 [sidebar]
 --
-*Duration:* ~11 minutes +
+*Duration:* ~13 minutes +
 *Prerequisites:* Completion of Sub-Module 2.2 (Custom Multi-Language Strategies) +
 *Learning Objectives:*
 
 * Integrate SBOM generation into BuildStrategy
-* Add vulnerability scanning with failure thresholds
+* Add vulnerability scanning with failure thresholds (grype)
+* View continuous Clair scan results from the on-cluster Quay registry
 * Implement image signing framework
 * Deploy with production-grade security contexts and observability
 * Verify complete end-to-end workflow
@@ -185,7 +186,7 @@ spec:
   - name: RUNTIME_IMAGE
     value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
   output:
-    image: quay.io/{registry-user}/secure-nodejs:latest
+    image: {workshop-registry}/{registry-user}/secure-nodejs:latest
     credentials:
       name: registry-credentials
   retention:
@@ -279,7 +280,57 @@ Note: In production, remove '|| true' to fail build on high-severity CVEs
 ====
 **Hummingbird Zero-CVE Advantage:**
 
-The scan shows **0 vulnerabilities** in the base image. This is the power of Hummingbird—you only need to worry about vulnerabilities in your application dependencies, not the base image.
+The scan shows **0 vulnerabilities** in the base image. This is the power of Hummingbird -- you only need to worry about vulnerabilities in your application dependencies, not the base image.
+====
+
+=== Step 5b: View Clair Scan Results from Quay
+
+Because you pushed the image to the on-cluster Quay registry, Clair has already scanned it automatically. This provides a second layer of vulnerability assessment without any pipeline configuration.
+
+Query the Clair results via the Quay API:
+
+[source,bash,role=execute,subs="attributes"]
+----
+DIGEST=$(oc get buildrun secure-build-run-1 -o jsonpath='{.status.output.digest}')
+QUAY_ROUTE={workshop-registry}
+
+curl -sk "https://${QUAY_ROUTE}/api/v1/repository/{registry-user}/secure-nodejs/manifest/${DIGEST}/security?vulnerabilities=true" | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+status = data.get('status', 'unknown')
+print(f'Clair scan status: {status}')
+if status == 'scanned':
+    features = data.get('data', {}).get('Layer', {}).get('Features', [])
+    total_vulns = sum(len(f.get('Vulnerabilities', [])) for f in features)
+    print(f'Packages scanned: {len(features)}')
+    print(f'Total vulnerabilities: {total_vulns}')
+else:
+    print('Scan may still be in progress -- check the Quay console.')
+"
+----
+
+.*Expected output for a Hummingbird image:*
+----
+Clair scan status: scanned
+Packages scanned: 15
+Total vulnerabilities: 0
+----
+
+You can also view the results in the Quay web console:
+
+. Open {workshop-registry-console} in your browser
+. Navigate to *{registry-user}/secure-nodejs* -> *Tags*
+. The *Security Scan* column shows the vulnerability count for each tag
+
+[NOTE]
+====
+**Grype vs Clair -- Defence in Depth:**
+
+* **Grype** (pipeline step): Runs during the build. Provides a fail-fast gate -- the build can be configured to abort if high-severity CVEs are found. Point-in-time scan.
+* **Clair** (registry-integrated): Runs continuously after push. Re-scans images when new vulnerability data is published. Provides ongoing visibility without rebuilding.
+
+Using both gives you immediate feedback in the pipeline _and_ continuous monitoring in the registry.
 ====
 
 [[production-deployment]]
@@ -318,7 +369,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: quay.io/{registry-user}/secure-nodejs:latest
+        image: {workshop-registry}/{registry-user}/secure-nodejs:latest
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -439,12 +490,12 @@ In a production pipeline with signing enabled, verify the deployed image's signa
 echo "=== Verifying image trust chain ==="
 echo ""
 echo "In production with cosign signing enabled:"
-echo "  cosign verify --key cosign.pub quay.io/{registry-user}/secure-nodejs:latest"
+echo "  cosign verify --key cosign.pub {workshop-registry}/{registry-user}/secure-nodejs:latest"
 echo ""
 echo "With keyless (Sigstore):"
 echo "  cosign verify --certificate-identity=builder@example.com \\"
 echo "    --certificate-oidc-issuer=https://token.actions.githubusercontent.com \\"
-echo "    quay.io/{registry-user}/secure-nodejs:latest"
+echo "    {workshop-registry}/{registry-user}/secure-nodejs:latest"
 echo ""
 echo "For this workshop, verify the image digest matches the BuildRun output:"
 BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
@@ -466,10 +517,10 @@ If you have podman access locally:
 [source,bash,role=execute,subs="attributes"]
 ----
 # Pull and compare
-podman pull quay.io/{registry-user}/secure-nodejs:latest 2>/dev/null || echo "Run on a machine with podman"
+podman pull {workshop-registry}/{registry-user}/secure-nodejs:latest 2>/dev/null || echo "Run on a machine with podman"
 
-# Alternative: Check in registry UI
-echo "Check image size at: https://quay.io/repository/{registry-user}/secure-nodejs"
+# Alternative: Check in Quay console
+echo "Check image size at: {workshop-registry-console}/repository/{registry-user}/secure-nodejs"
 ----
 
 .*Expected size:* ~95-120 MB (Hummingbird) vs 400+ MB (full UBI Node.js)
@@ -481,9 +532,9 @@ echo "Check image size at: https://quay.io/repository/{registry-user}/secure-nod
 ----
 [Git Push] → [BuildRun Trigger]
   ↓
-[Buildah Build] → [Push to Registry]
-  ↓
-[Syft SBOM] → [Store SBOM in /workspace]
+[Buildah Build] → [Push to Quay Registry]
+  ↓                       ↓
+[Syft SBOM]          [Clair auto-scan (continuous)]
   ↓
 [Grype Scan] → [Fail if CVE threshold exceeded]
   ↓
@@ -513,7 +564,8 @@ Congratulations! You've completed Sub-Module 2.3!
 
 .*What You've Accomplished*
 ✅ Created ClusterBuildStrategy with SBOM generation +
-✅ Integrated vulnerability scanning with failure thresholds +
+✅ Integrated vulnerability scanning with failure thresholds (grype) +
+✅ Viewed Clair continuous scan results from the on-cluster Quay registry +
 ✅ Implemented image signing framework for production +
 ✅ Configured Build with retention policies +
 ✅ Viewed SBOM and scan outputs in build logs +
@@ -530,7 +582,8 @@ Congratulations! You've completed Sub-Module 2.3!
 **Security Pipeline:**
 * **Build** → Multi-stage Containerfile with Hummingbird runtime
 * **SBOM** → Automated compliance artifact generation
-* **Scan** → Vulnerability detection with actionable thresholds
+* **Scan (pipeline)** → Grype for fail-fast vulnerability gating
+* **Scan (registry)** → Clair for continuous vulnerability monitoring in Quay
 * **Sign** → Framework for provenance (integrate with production KMS)
 * **Deploy** → Proper security contexts and observability
 
@@ -590,6 +643,18 @@ oc logs $TASKRUN -c step-scan-vulnerabilities
 grype <image> --only-fixed
 
 # Update dependencies to fix CVEs
+----
+
+**Issue: Clair scan status shows "queued" or "unsupported"**
+[source,bash,subs="attributes"]
+----
+# Verify Clair is running
+oc get pods -n {quay-namespace} -l quay-component=clair-app
+
+# Check Clair logs
+oc logs -n {quay-namespace} -l quay-component=clair-app --tail=50
+
+# Clair scans are asynchronous -- wait 30-60 seconds and retry the API call
 ----
 
 **Issue: Production deployment CrashLoopBackOff**

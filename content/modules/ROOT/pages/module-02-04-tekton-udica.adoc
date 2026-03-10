@@ -164,7 +164,7 @@ spec:
     name: udica-policy-generate
   params:
     - name: IMAGE
-      value: "quay.io/{registry-user}/sample-nodejs:latest"
+      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest"
     - name: POLICY_NAME
       value: "hummingbird_nodejs"
     - name: PORTS
@@ -256,7 +256,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: quay.io/{registry-user}/sample-nodejs:latest
+          image: {workshop-registry}/{registry-user}/sample-nodejs:latest
           ports:
             - containerPort: 8080
           resources:

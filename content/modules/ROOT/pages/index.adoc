@@ -163,18 +163,21 @@ Your unique lab environment identifier: `{guid}`
 
 * cosign (image signing and verification)
 * syft (SBOM generation)
-* grype (vulnerability scanning)
+* grype (pipeline vulnerability scanning)
+* Clair (registry-integrated vulnerability scanning via Quay)
 
 *Platform Technologies:*
 
 * OpenShift {openshift-version}
 * {shipwright-operator}
+* Red Hat Quay (on-cluster container registry)
 * Cloud Native Buildpacks
 * Tekton Pipelines
 
 *Registries:*
 
-* Hummingbird Registry: `{hummingbird-registry}`
+* Workshop Registry (on-cluster Quay): `{workshop-registry}`
+* Hummingbird Source Registry: `{hummingbird-registry}`
 * UBI Registry: `{ubi-registry}`
 
 == Getting Started
