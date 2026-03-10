@@ -1,34 +1,118 @@
-= Showroom Template
+= Zero CVE Hummingbird Workshop
 
-A template for creating Red Hat Showroom lab guides and demo content, built with https://antora.org[Antora].
+== Introduction
 
-* 0% cruft
-* Red Hat Demo Platform UI Bundle default
-* Dev Mode extension that displays the asciidoc attributes you have to work with
+This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, built with https://antora.org[Antora] and designed for the https://github.com/rhpds/showroom_template_nookbag[Red Hat Showroom] lab platform on the Red Hat Demo Platform (RHDP).
 
-== Documentation
+**Project Hummingbird** represents Red Hat's strategic approach to delivering "zero-CVE" container base images built from Fedora components. This workshop provides hands-on experience building, securing, and deploying minimal, hardened container environments using Hummingbird runtimes, SELinux policy generation with udica, and platform-level builds with Shipwright on OpenShift.
 
-Full documentation — getting started, content structure, configuration, local development, and AI-assisted content creation — is available at:
+== Who Will Benefit Most?
 
-https://rhpds.github.io/showroom_template_nookbag/
+**Developers (Intermediate to Advanced)** -- Those responsible for building and securing container images locally using Podman, Buildah, and Skopeo. These users will learn multi-stage builds with Hummingbird runtimes, security scanning, SBOM generation, image signing, and custom SELinux policy generation with udica.
 
-== Quick Start
+**Platform Engineers / DevOps (Intermediate to Advanced)** -- Those responsible for platform-level container build and deployment infrastructure on OpenShift. These users will learn Shipwright Builds, Cloud Native Buildpacks, custom BuildStrategies, security pipelines, and automated SELinux policy CI/CD with Tekton.
 
-. https://github.com/rhpds/showroom_template_nookbag/generate[Create a repo from this template] (suggested naming: `showroom_<lab-name>`)
-. Clone your new repo and preview locally:
-+
-[source,sh]
+== Workshop Content
+
+*Duration:* 90 minutes (45 minutes per module) + optional exercises
+
+=== Module 1: Developer Environment (~45 min)
+
+* **1.1 Building with Hummingbird** -- Multi-stage builds with UBI builder + Hummingbird runtime
+* **1.2 Security Scanning & SBOMs** -- cosign, syft, grype for image signing and scanning
+* **1.3 SELinux Fundamentals with udica** -- Custom SELinux policy generation from `podman inspect`
+* **1.4 Advanced SELinux Hardening** -- Device access, `--append-rules`, iteration workflows, policy distribution
+
+=== Module 2: Shipwright and Buildpacks (~45 min)
+
+* **2.1 Cloud Native Buildpacks** -- Source-to-image builds without Dockerfiles
+* **2.2 Custom Multi-Language Strategies** -- Auto-detection for Node.js, Python, Java, Go
+* **2.3 Security Pipeline & Production** -- SBOM generation, vulnerability scanning, image signing
+* **2.4 SELinux Policy CI/CD with Tekton** -- Automated udica policy generation in pipelines
+
+=== Optional Exercises
+
+* **1.5 Content-Based Layer Splitting (chunkah)** -- Optimise image layers for pull deduplication
+* **1.6 Multi-Language Builds with Hummingbird**
+* **1.7 The Aha Moment -- Demonstrating chunkah Value**
+* **1.8 Layering Tomcat on Hummingbird**
+* **2.5 chunkah in CI/CD Pipelines** -- Automated layer splitting in Tekton pipelines
+* **2.6 Keyless Signing with RHTAS**
+
+=== Appendix: Environment Setup
+
+* **Appendix A** -- RHEL Developer Environment (Podman, Buildah, Skopeo, Podman Desktop)
+* **Appendix B** -- OpenShift Platform Environment (OpenShift Pipelines, Builds for OpenShift)
+
+Both modules function independently. Users can take Module 1 only, Module 2 only, or both.
+
+== Lab Environments
+
+The workshop uses pre-provisioned environments from the **Red Hat Demo Platform (RHDP)**:
+
+* **Module 1**: https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/sandboxes-gpte.rhel9-desktop.prod&utm_source=webapp&utm_medium=share-link[RHEL 9 Desktop on RHDP^]
+* **Module 2**: https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[OpenShift Container Platform Cluster (AWS) on RHDP^]
+
+See the Appendix modules in the workshop guide for automation scripts and manual setup steps.
+
+== Local Development
+
+=== Prerequisites
+
+* `podman` or `docker` (for building the Antora site locally)
+* `git`
+
+=== Clone the Repository
+
+[source,bash]
+----
+git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
+cd zero-cve-hummingbird-showroom
+----
+
+=== Preview Locally
+
+[source,bash]
 ----
 podman run --rm --name antora -v $PWD:/antora -p 8080:8080 -i -t ghcr.io/juliaaano/antora-viewer
 ----
-+
+
 On SELinux systems, append `:z` to the volume mount.
 
-. Edit content in `content/modules/ROOT/pages/`
-. See the https://rhpds.github.io/showroom_template_nookbag/modules/content-repo.html[Content Repository] docs for directory layout, Podman Compose with live reload, dev mode, and more.
+=== Project Structure
 
-== Create Content with AI
+----
+zero-cve-hummingbird-showroom/
+├── content/
+│   ├── antora.yml                       # Antora component descriptor
+│   ├── lib/                             # Antora extensions
+│   │   ├── tab-block.js
+│   │   └── remote-include-processor.js
+│   ├── supplemental-ui/                 # UI customisations
+│   └── modules/ROOT/
+│       ├── nav.adoc                     # Site navigation
+│       ├── pages/                       # Workshop content (AsciiDoc)
+│       │   ├── index.adoc
+│       │   ├── module-01-*.adoc         # Module 1 sub-modules
+│       │   ├── module-02-*.adoc         # Module 2 sub-modules
+│       │   └── appendix-*.adoc          # Environment setup appendices
+│       └── assets/
+│           ├── attachments/             # Downloadable scripts
+│           └── images/                  # Screenshots and diagrams
+├── site.yml                             # Antora site configuration
+├── ui-config.yml                        # Showroom UI configuration
+├── .github/workflows/gh-pages.yml       # GitHub Actions for Pages
+└── README.adoc                          # This file
+----
 
-The https://github.com/rhpds/rhdp-skills-marketplace[RHDP Skills Marketplace] provides skills for Cursor IDE and Claude Code that generate labs, demos, and validate content against Red Hat standards.
+== Version Information
 
-See the https://rhpds.github.io/showroom_template_nookbag/modules/content-repo.html#_creating_content_with_ai_tools[AI Tools documentation] for details.
+This edition of the workshop has been developed using:
+
+* RHEL 9.5 / Fedora 43
+* Podman 5.7.1
+* OpenShift Container Platform 4.21
+* Builds for Red Hat OpenShift (Shipwright) 1.1.0
+* Hummingbird runtime images from `quay.io/hummingbird-hatchling`
+* udica 0.2.8+
+* chunkah 0.2.0

@@ -164,7 +164,7 @@ spec:
     name: udica-policy-generate
   params:
     - name: IMAGE
-      value: "quay.io/{registry-user}/sample-nodejs:latest"
+      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest"
     - name: POLICY_NAME
       value: "hummingbird_nodejs"
     - name: PORTS
@@ -256,7 +256,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: quay.io/{registry-user}/sample-nodejs:latest
+          image: {workshop-registry}/{registry-user}/sample-nodejs:latest
           ports:
             - containerPort: 8080
           resources:
@@ -435,7 +435,7 @@ Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
 
 === Workshop Complete!
 
-You've finished both modules of the Project Hummingbird Environment Workshop!
+You've finished both modules of the Zero CVE Hummingbird Workshop!
 
 **What You've Mastered:**
 
@@ -525,7 +525,7 @@ oc get nodes -o wide
 
 === Thank You!
 
-Thank you for completing the **Project Hummingbird Environment Workshop**!
+Thank you for completing the **Zero CVE Hummingbird Workshop**!
 
 You now have the skills to build, secure, harden, and deploy container applications using Project Hummingbird at both local and platform scales.
 

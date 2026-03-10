@@ -40,8 +40,8 @@ Ensure you have access to the Hummingbird registry:
 
 [source,bash,role=execute]
 ----
-podman pull quay.io/hummingbird-hatchling/nodejs-20:latest
-podman pull quay.io/hummingbird-hatchling/python-311:latest
+podman pull quay.io/hummingbird-hatchling/nodejs:20
+podman pull quay.io/hummingbird-hatchling/python:3.11
 ----
 
 [NOTE]
@@ -58,7 +58,7 @@ This is the simplest demonstration. Pull a raw Hummingbird base image -- no appl
 
 [source,bash,role=execute]
 ----
-IMG="quay.io/hummingbird-hatchling/nodejs-20:latest"
+IMG="quay.io/hummingbird-hatchling/nodejs:20"
 
 echo "======================================================"
 echo " BEFORE chunkah"
@@ -73,9 +73,11 @@ podman history "$IMG" --format "{{.Size}}\t{{.Comment}}" | head -20
 
 .*Expected output (excerpt):*
 ----
-Layer count: 1
+Layer count: 33
 ...
 ----
+
+NOTE: Hummingbird base images are already built with fine-grained layers, so the count will be 30+ rather than 1. chunkah will restructure these layers based on RPM package groupings.
 
 === Step 2: Run chunkah with Verbose Output
 
@@ -86,24 +88,28 @@ The `-v` flag produces a debug log that shows exactly which RPM packages chunkah
 export CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")"
 
 podman run --rm \
-  --mount=type=image,src="$IMG",dest=/chunkah \
+  --mount=type=image,src="$IMG",dst=/chunkah \
   -e CHUNKAH_CONFIG_STR \
   quay.io/jlebon/chunkah:v0.2.0 build \
     --max-layers 64 \
     -v \
   2>chunkah-debug.log \
   | podman load
+
+# Tag the loaded image for easy comparison
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/nodejs-chunked:latest
 ----
 
 === Step 3: Compare Results
 
 [source,bash,role=execute]
 ----
-AFTER_LAYERS=$(podman inspect "$IMG" --format '{{len .RootFS.Layers}}')
+AFTER_LAYERS=$(podman inspect localhost/nodejs-chunked:latest --format '{{len .RootFS.Layers}}')
 echo "Layer count: $AFTER_LAYERS"
 echo ""
 echo "Layer history:"
-podman history "$IMG" --format "{{.Size}}\t{{.Comment}}"
+podman history localhost/nodejs-chunked:latest --format "{{.Size}}\t{{.Comment}}"
 
 echo ""
 echo "Before: $BEFORE_LAYERS layers  →  After: $AFTER_LAYERS layers"
@@ -135,7 +141,7 @@ This is the core argument for chunkah. When Hummingbird ships a security rebuild
 mkdir -p /tmp/chunkah-cve-demo
 
 cat > /tmp/chunkah-cve-demo/Containerfile << 'EOF'
-ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs:20
 FROM $RUNTIME
 
 WORKDIR /app
@@ -160,9 +166,9 @@ EOF
 [source,bash,role=execute]
 ----
 buildah build \
-  --squash-all \
+  --squash \
   --format oci \
-  --build-arg RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest \
+  --build-arg RUNTIME=quay.io/hummingbird-hatchling/nodejs:20 \
   --tag localhost/cve-demo:v1-standard \
   --file /tmp/chunkah-cve-demo/Containerfile \
   /tmp/chunkah-cve-demo
@@ -184,13 +190,15 @@ v1 standard layers: 1
 export CHUNKAH_CONFIG_STR="$(podman inspect localhost/cve-demo:v1-standard)"
 
 podman run --rm \
-  --mount=type=image,src=localhost/cve-demo:v1-standard,dest=/chunkah \
+  --mount=type=image,src=localhost/cve-demo:v1-standard,dst=/chunkah \
   -e CHUNKAH_CONFIG_STR \
   quay.io/jlebon/chunkah:v0.2.0 build \
     --max-layers 48 \
   | podman load
 
-podman tag localhost/cve-demo:v1-standard localhost/cve-demo:v1-chunked
+# Tag the loaded chunkah image (podman load creates an untagged image)
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/cve-demo:v1-chunked
 
 V1_CHUNKED_LAYERS=$(podman inspect localhost/cve-demo:v1-chunked \
   --format '{{len .RootFS.Layers}}')
@@ -266,72 +274,85 @@ app.listen(3000, () => log.info('listening on :3000'));
 EOF
 ----
 
-=== Step 10: Create the Containerfile with xattr Tagging
+=== Step 10: Create the Containerfile
 
 [source,bash,role=execute]
 ----
 cat > /tmp/chunkah-nodeapp/Containerfile.chunkah-demo << 'CFILE'
 ARG BUILDER=registry.access.redhat.com/ubi9/nodejs-20:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs:20
 
-# Stage 1: Build
+# Stage 1: Build dependencies and app code
 FROM $BUILDER AS builder
 
+USER root
 WORKDIR /app
-USER root
+COPY package.json ./
+RUN npm install --omit=dev
+COPY src/ ./src/
 
-RUN dnf install -y attr && dnf clean all
+# Stage 2: Hummingbird runtime
+FROM $RUNTIME
 
-COPY --chown=1001:1001 package.json ./
-USER 1001
-
-RUN npm ci --omit=dev
-
-COPY --chown=1001:1001 src/ ./src/
-
-# Tag each directory with a component name.
-# chunkah will put each tagged component in its own dedicated layer.
-#
-#   node_modules -> "app-deps" layer (changes when package.json changes)
-#   src/         -> "app-src"  layer (changes on every code commit)
-USER root
-RUN setfattr -n user.component -v "app-deps" /app/node_modules && \
-    setfattr -n user.component -v "app-src"  /app/src
-USER 1001
-
-# Stage 2: chunkah layer splitting
-FROM quay.io/jlebon/chunkah:v0.2.0 AS chunkah
-
-RUN --mount=from=builder,src=/,target=/chunkah,ro \
-    --mount=type=bind,target=/run/src,rw \
-        chunkah build \
-          --max-layers 48 \
-        > /run/src/out.ociarchive
-
-# Stage 3: Final image from OCI archive
-FROM oci-archive:out.ociarchive
+WORKDIR /app
+COPY --from=builder --chown=1001:1001 /app/node_modules ./node_modules/
+COPY --from=builder --chown=1001:1001 /app/src ./src/
 
 LABEL org.opencontainers.image.title="hummingbird-chunkah-demo"
-LABEL com.example.base="quay.io/hummingbird-hatchling/nodejs-20"
+LABEL com.example.base="quay.io/hummingbird-hatchling/nodejs"
 
 USER 1001
-WORKDIR /app
 EXPOSE 3000
 ENV NODE_ENV=production
 CMD ["node", "src/server.js"]
 CFILE
 ----
 
-=== Step 11: Build and Inspect
+=== Step 11: Build, Tag with xattrs, and Apply chunkah
+
+Build the Hummingbird-based image, squash it, set `user.component` xattrs to tell chunkah how to isolate app code, then post-process with chunkah.
 
 [source,bash,role=execute]
 ----
 buildah build \
-  --skip-unused-stages=false \
+  --squash \
   --format oci \
-  --tag localhost/hummingbird-demo:latest \
+  --tag localhost/hummingbird-demo:pre-chunk \
   --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
   /tmp/chunkah-nodeapp
+----
+
+Tag application directories with `user.component` xattrs. chunkah will put each tagged component in its own dedicated layer: `node_modules` in an "app-deps" layer (changes when `package.json` changes), `src/` in an "app-src" layer (changes on every code commit).
+
+[source,bash,role=execute]
+----
+buildah unshare bash -c '
+ctr=$(buildah from localhost/hummingbird-demo:pre-chunk)
+mnt=$(buildah mount $ctr)
+setfattr -n user.component -v "app-deps" $mnt/app/node_modules
+setfattr -n user.component -v "app-src"  $mnt/app/src
+getfattr -d $mnt/app/node_modules $mnt/app/src
+buildah commit $ctr localhost/hummingbird-demo:pre-chunk
+buildah unmount $ctr
+buildah rm $ctr
+'
+----
+
+Now run chunkah to split the image into content-based layers:
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect localhost/hummingbird-demo:pre-chunk)"
+
+podman run --rm \
+  --mount=type=image,src=localhost/hummingbird-demo:pre-chunk,dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 48 \
+  | podman load
+
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/hummingbird-demo:latest
 
 echo "=== Final layer structure ==="
 podman history localhost/hummingbird-demo:latest
@@ -342,11 +363,11 @@ podman inspect localhost/hummingbird-demo:latest \
   --format '{{range .RootFS.Layers}}{{println .}}{{end}}'
 ----
 
-You should see distinct small layers for `app-src` and `app-deps` alongside the larger RPM-based layers from the Hummingbird base.
+You should see distinct small layers for `xattr/app-src` and `xattr/app-deps` alongside the larger RPM-based layers from the Hummingbird base.
 
 === Step 12: Simulate a Code-Only Change and Diff
 
-This is the payoff. Change one line of application code, rebuild, and compare layer digests.
+This is the payoff. Change one line of application code, rebuild with the same process, and compare layer digests.
 
 [source,bash,role=execute]
 ----
@@ -354,11 +375,33 @@ sed -i 's/Hello from Hummingbird + chunkah/Hello from Hummingbird + chunkah v2/'
   /tmp/chunkah-nodeapp/src/server.js
 
 buildah build \
-  --skip-unused-stages=false \
+  --squash \
   --format oci \
-  --tag localhost/hummingbird-demo:v2 \
+  --tag localhost/hummingbird-demo:v2-pre-chunk \
   --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
   /tmp/chunkah-nodeapp
+
+buildah unshare bash -c '
+ctr=$(buildah from localhost/hummingbird-demo:v2-pre-chunk)
+mnt=$(buildah mount $ctr)
+setfattr -n user.component -v "app-deps" $mnt/app/node_modules
+setfattr -n user.component -v "app-src"  $mnt/app/src
+buildah commit $ctr localhost/hummingbird-demo:v2-pre-chunk
+buildah unmount $ctr
+buildah rm $ctr
+'
+
+export CHUNKAH_CONFIG_STR="$(podman inspect localhost/hummingbird-demo:v2-pre-chunk)"
+
+podman run --rm \
+  --mount=type=image,src=localhost/hummingbird-demo:v2-pre-chunk,dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 48 \
+  | podman load
+
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/hummingbird-demo:v2
 ----
 
 [source,bash,role=execute]
@@ -384,7 +427,7 @@ diff \
   || echo "^ These lines show which layers changed"
 ----
 
-Almost all layer digests will be identical between v1 and v2. Only the `app-src` layer digest changes. That is the entire value proposition in a `diff` output.
+Almost all layer digests will be identical between v1 and v2. Only the top few layers (app-src, app-deps, unclaimed) change while every RPM-based layer remains a cache hit. That is the entire value proposition in a `diff` output.
 
 [[exercise-4-python]]
 == Exercise 4: Python App with Hummingbird + chunkah
@@ -418,54 +461,67 @@ EOF
 
 cat > /tmp/chunkah-python/Containerfile.python-chunkah << 'CFILE'
 ARG BUILDER=registry.access.redhat.com/ubi9/python-311:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/python-311:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/python:3.11
 
+# Stage 1: Build dependencies
 FROM $BUILDER AS builder
 
-WORKDIR /app
 USER root
-RUN dnf install -y attr gcc python3-devel && dnf clean all
-
-COPY --chown=1001:1001 requirements.txt ./
-USER 1001
+WORKDIR /app
+RUN dnf install -y gcc python3-devel && dnf clean all
+COPY requirements.txt ./
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+COPY src/ ./src/
 
-COPY --chown=1001:1001 src/ ./src/
+# Stage 2: Hummingbird runtime
+FROM $RUNTIME
 
-USER root
-RUN setfattr -n user.component -v "python-site-pkgs" /install && \
-    setfattr -n user.component -v "app-src"           /app/src
-USER 1001
-
-# chunkah stage
-FROM quay.io/jlebon/chunkah:v0.2.0 AS chunkah
-
-RUN --mount=from=builder,src=/,target=/chunkah,ro \
-    --mount=type=bind,target=/run/src,rw \
-        chunkah build \
-          --max-layers 48 \
-        > /run/src/out.ociarchive
-
-FROM oci-archive:out.ociarchive
-
-USER 1001
 WORKDIR /app
+COPY --from=builder --chown=1001:1001 /install /install
+COPY --from=builder --chown=1001:1001 /app/src ./src/
+
+USER 1001
 EXPOSE 8000
 ENV PYTHONPATH=/install/lib/python3.11/site-packages
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 CFILE
 ----
 
-=== Step 14: Build and Inspect
+=== Step 14: Build, Tag with xattrs, and Apply chunkah
+
+Build the Hummingbird-based Python image, set xattrs to isolate pip packages and app code, then post-process with chunkah.
 
 [source,bash,role=execute]
 ----
 buildah build \
-  --skip-unused-stages=false \
+  --squash \
   --format oci \
-  --tag localhost/hummingbird-python-demo:latest \
+  --tag localhost/hummingbird-python-demo:pre-chunk \
   --file /tmp/chunkah-python/Containerfile.python-chunkah \
   /tmp/chunkah-python
+
+buildah unshare bash -c '
+ctr=$(buildah from localhost/hummingbird-python-demo:pre-chunk)
+mnt=$(buildah mount $ctr)
+setfattr -n user.component -v "python-site-pkgs" $mnt/install
+setfattr -n user.component -v "app-src"           $mnt/app/src
+getfattr -d $mnt/install $mnt/app/src
+buildah commit $ctr localhost/hummingbird-python-demo:pre-chunk
+buildah unmount $ctr
+buildah rm $ctr
+'
+
+export CHUNKAH_CONFIG_STR="$(podman inspect localhost/hummingbird-python-demo:pre-chunk)"
+
+podman run --rm \
+  --mount=type=image,src=localhost/hummingbird-python-demo:pre-chunk,dst=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 48 \
+  | podman load
+
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/hummingbird-python-demo:latest
 
 echo "=== Layer count ==="
 podman inspect localhost/hummingbird-python-demo:latest \
@@ -498,8 +554,7 @@ This exercise demonstrates the push command and calculates theoretical savings. 
 [source,bash,role=execute]
 ----
 buildah build \
-  --skip-unused-stages=false \
-  --squash-all \
+  --squash \
   --format oci \
   --tag localhost/full-stack-demo:v1-pre-chunk \
   --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
@@ -513,13 +568,15 @@ buildah build \
 export CHUNKAH_CONFIG_STR="$(podman inspect localhost/full-stack-demo:v1-pre-chunk)"
 
 podman run --rm \
-  --mount=type=image,src=localhost/full-stack-demo:v1-pre-chunk,dest=/chunkah \
+  --mount=type=image,src=localhost/full-stack-demo:v1-pre-chunk,dst=/chunkah \
   -e CHUNKAH_CONFIG_STR \
   quay.io/jlebon/chunkah:v0.2.0 build \
     --max-layers 48 \
   | podman load
 
-podman tag localhost/full-stack-demo:v1-pre-chunk localhost/full-stack-demo:v1
+# Tag the loaded chunkah image (podman load creates an untagged image)
+LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+podman tag "$LOADED_ID" localhost/full-stack-demo:v1
 ----
 
 === Step 17: Examine the Push Command
@@ -570,7 +627,7 @@ echo "At 100 nodes, that is ~$(( TOTAL_SIZE / 1024 / 1024 * 100 ))MB vs <100MB t
 
 Running through these exercises you will concretely see:
 
-. A standard `buildah build --squash-all` of a Hummingbird Node.js app gives you 1-4 layers. After chunkah it becomes 20-40 layers depending on how many RPM packages the Hummingbird base contains and your `--max-layers` setting.
+. A standard `buildah build --squash` of a Hummingbird Node.js app gives you 1-4 layers. After chunkah it becomes 20-40 layers depending on how many RPM packages the Hummingbird base contains and your `--max-layers` setting.
 . The layer digest diff between two builds that only changed application code will show every single RPM-based layer digest as identical -- those are cache hits on every node. Only the `app-src` digest changes.
 . The debug log from `-v` is worth reading once to understand what chunkah found -- it lists every RPM it discovered in the Hummingbird image (`nodejs`, `npm`, `libuv`, `openssl`, `glibc`, etc.) and shows its packing decisions. For Hummingbird images this log is very clean because the RPM database is complete and accurate.
 
@@ -580,10 +637,14 @@ Running through these exercises you will concretely see:
 [source,bash,role=execute]
 ----
 podman rmi \
+  localhost/nodejs-chunked:latest \
   localhost/cve-demo:v1-standard \
   localhost/cve-demo:v1-chunked \
+  localhost/hummingbird-demo:pre-chunk \
   localhost/hummingbird-demo:latest \
+  localhost/hummingbird-demo:v2-pre-chunk \
   localhost/hummingbird-demo:v2 \
+  localhost/hummingbird-python-demo:pre-chunk \
   localhost/hummingbird-python-demo:latest \
   localhost/full-stack-demo:v1-pre-chunk \
   localhost/full-stack-demo:v1 \

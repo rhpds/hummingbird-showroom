@@ -7,7 +7,7 @@
 *Prerequisites:* Environment setup complete (see xref:appendix-b-openshift-setup.adoc[Appendix B]) +
 *Learning Objectives:*
 
-* Create registry secrets for pushing built images
+* Verify on-cluster Quay registry credentials for pushing built images
 * Define ClusterBuildStrategy using Buildpacks with Hummingbird runtimes
 * Build Node.js application from git using Buildpacks
 * Monitor build execution and verify pushed image
@@ -24,51 +24,25 @@ In this sub-module, you'll create a ClusterBuildStrategy that combines Buildpack
 [[registry-secret]]
 == Registry Configuration
 
-=== Step 1: Create Registry Secret
+The on-cluster Quay registry and `registry-credentials` secret should already be configured from xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B: Quay Setup]. Verify the secret exists and is linked:
 
-Create a secret for pushing built images to a container registry:
-
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute]
 ----
-# Using quay.io as example - adjust for your registry
-oc create secret docker-registry registry-credentials \
-  --docker-server=quay.io \
-  --docker-username={registry-user} \
-  --docker-password={registry-password} \
-  -n hummingbird-builds
+oc get secret registry-credentials -n hummingbird-builds
+oc describe sa pipeline -n hummingbird-builds | grep registry-credentials
 ----
 
 .*Expected output:*
 ----
-secret/registry-credentials created
-----
+NAME                   TYPE                             DATA   AGE
+registry-credentials   kubernetes.io/dockerconfigjson   1      ...
 
-[TIP]
-====
-**For quay.io:**
-1. Log in to https://quay.io
-2. Navigate to **Account Settings** → **Robot Accounts**
-3. Create a robot account with push permissions to your repositories
-4. Use the robot account credentials for `{registry-user}` and `{registry-password}`
-
-**For other registries:**
-- **OpenShift Internal Registry**: No credentials needed within the same cluster
-- **Docker Hub**: Use your Docker Hub username and password or access token
-- **Harbor/Artifactory**: Use your registry-specific credentials
-====
-
-=== Step 2: Link Secret to Pipeline ServiceAccount
-
-Link the secret to the `pipeline` serviceaccount used by Shipwright:
-
-[source,bash,role=execute]
-----
-oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
+Mountable secrets:   registry-credentials
 ----
 
 [NOTE]
 ====
-The `pipeline` serviceaccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns.
+If the secret does not exist, return to xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B: Quay Setup] and complete Steps 5-6 to create the secret and link it to the `pipeline` ServiceAccount.
 ====
 
 [[buildpacks-strategy]]
@@ -192,18 +166,11 @@ spec:
   - name: RUN_IMAGE
     value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
   output:
-    image: quay.io/{registry-user}/sample-nodejs:latest
+    image: {workshop-registry}/{registry-user}/sample-nodejs:latest
     credentials:
       name: registry-credentials
 EOF
 ----
-
-[IMPORTANT]
-====
-Replace `{registry-user}` with your actual registry username/organization. For example:
-- quay.io/myuser/sample-nodejs:latest
-- quay.io/myorg/sample-nodejs:latest
-====
 
 .*Expected output:*
 ----
@@ -215,7 +182,7 @@ build.shipwright.io/sample-nodejs-app created
 * **Source**: Git repository with Node.js application
 * **Strategy**: Use `buildpacks-hummingbird` ClusterBuildStrategy
 * **Runtime**: Hummingbird Node.js 20 image
-* **Output**: Push to `quay.io/{registry-user}/sample-nodejs:latest`
+* **Output**: Push to `{workshop-registry}/{registry-user}/sample-nodejs:latest`
 * **Credentials**: Use `registry-credentials` secret for push
 
 [[execute-build]]
@@ -313,7 +280,7 @@ oc logs -f $TASKRUN --all-containers
 [exporter] Adding layer 'paketo-buildpacks/node-engine:nodejs'
 [exporter] Reusing layer 'paketo-buildpacks/npm-install:modules'
 ...
-[exporter] Successfully built image quay.io/.../sample-nodejs:latest
+[exporter] Successfully built image .../sample-nodejs:latest
 ----
 
 [NOTE]
@@ -348,9 +315,9 @@ sha256:abc123def456789...
 
 [TIP]
 ====
-You can also check your registry UI (quay.io) to confirm the image is present:
-1. Log in to quay.io
-2. Navigate to your repository: `quay.io/{registry-user}/sample-nodejs`
+You can also check your on-cluster Quay console to confirm the image is present:
+1. Open {workshop-registry-console} in your browser
+2. Navigate to your repository: `{registry-user}/sample-nodejs`
 3. You should see the `latest` tag with a recent push timestamp
 ====
 
@@ -360,9 +327,9 @@ Use `skopeo` to examine the built image and confirm it uses the Hummingbird runt
 
 [source,bash,role=execute,subs="attributes"]
 ----
-skopeo inspect docker://quay.io/{registry-user}/sample-nodejs:latest 2>/dev/null \
+skopeo inspect docker://{workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null \
   | head -40 \
-  || echo "Note: skopeo not available in cluster - check quay.io UI"
+  || echo "Note: skopeo not available in cluster - check the Quay console"
 ----
 
 [NOTE]
@@ -381,7 +348,7 @@ Deploy your Hummingbird-built application:
 ----
 # Create deployment
 oc create deployment sample-nodejs \
-  --image=quay.io/{registry-user}/sample-nodejs:latest \
+  --image={workshop-registry}/{registry-user}/sample-nodejs:latest \
   -n hummingbird-builds
 
 # Expose service
@@ -439,11 +406,11 @@ Verify the built image uses the Hummingbird runtime:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-# Pull and inspect image size (requires podman on your local machine)
-podman pull quay.io/{registry-user}/sample-nodejs:latest 2>/dev/null || echo "Note: Run on a machine with podman to verify size"
+# Pull and inspect image size
+podman pull {workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null || echo "Note: Run on a machine with podman to verify size"
 
-# Alternative: Check in quay.io UI
-echo "Check image size at: https://quay.io/repository/{registry-user}/sample-nodejs"
+# Alternative: Check in Quay console
+echo "Check image size at: {workshop-registry-console}/repository/{registry-user}/sample-nodejs"
 ----
 
 .*Expected size:* ~95-120 MB (vs 400MB+ for full UBI Node.js)
@@ -462,7 +429,7 @@ The image size is dramatically reduced because:
 Congratulations! You've completed Sub-Module 2.1 and built your first application with Buildpacks and Hummingbird!
 
 .*What You've Accomplished*
-✅ Created registry secret and linked to pipeline serviceaccount +
+✅ Verified on-cluster Quay registry credentials linked to pipeline ServiceAccount +
 ✅ Created ClusterBuildStrategy using Buildpacks with Hummingbird +
 ✅ Created Build resource pointing to git repository +
 ✅ Executed BuildRun and monitored progress +
@@ -519,10 +486,11 @@ Create a ClusterBuildStrategy with language auto-detection, conditional Hummingb
 oc get secret registry-credentials -n hummingbird-builds
 oc describe sa pipeline -n hummingbird-builds | grep registry-credentials
 
-# Recreate secret if needed
+# Recreate secret if needed (use your on-cluster Quay route)
 oc delete secret registry-credentials -n hummingbird-builds
+QUAY_ROUTE=$(oc get route -n quay -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
 oc create secret docker-registry registry-credentials \
-  --docker-server=quay.io \
+  --docker-server="${QUAY_ROUTE}" \
   --docker-username=YOUR_USER \
   --docker-password=YOUR_PASSWORD \
   -n hummingbird-builds

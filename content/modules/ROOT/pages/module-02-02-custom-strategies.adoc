@@ -222,15 +222,15 @@ spec:
     name: hummingbird-multi-lang
     kind: ClusterBuildStrategy
   output:
-    image: quay.io/{registry-user}/auto-detect-app:latest
+    image: {workshop-registry}/{registry-user}/auto-detect-app:latest
     credentials:
       name: registry-credentials
 EOF
 ----
 
-[IMPORTANT]
+[NOTE]
 ====
-Replace `{registry-user}` with your actual registry username/organization.
+The `{registry-user}` placeholder is replaced by your Antora attributes. Ensure the organisation or user exists in your on-cluster Quay registry.
 ====
 
 === Step 3: Trigger Build
@@ -471,8 +471,9 @@ Congratulations! You've completed Sub-Module 2.2 and created advanced multi-lang
 * **Platform team maintains one strategy** instead of many
 
 **Registry Integration Patterns:**
-* **External registries** (quay.io, Docker Hub): Require credentials
-* **Internal registry**: No credentials within same cluster
+* **On-cluster Quay**: Validated TLS, Clair scanning, used throughout this workshop
+* **OpenShift internal registry**: No credentials within same cluster
+* **External registries** (quay.io, Docker Hub): Require separate credentials
 * **Registry mirrors**: Enable air-gapped deployments
 
 **Production Readiness:**

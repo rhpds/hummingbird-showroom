@@ -71,6 +71,8 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/nodejs-express
+
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
@@ -78,21 +80,21 @@ ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 # Stage 1: Build with full UBI Node.js (npm, build tools)
 FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
 
-WORKDIR /build
+WORKDIR /opt/app-root/src
 
-COPY package*.json ./
-RUN npm ci --only=production
+COPY --chown=1001:1001 package*.json ./
+RUN npm install --omit=dev
 
-COPY . .
+COPY --chown=1001:1001 . .
 
 # Stage 2: Runtime on Hummingbird Node.js
-FROM ${RUNTIME_REGISTRY}/nodejs-20:latest
+FROM ${RUNTIME_REGISTRY}/nodejs:20
 
 WORKDIR /app
 
-COPY --from=builder --chown=1001:1001 /build/node_modules ./node_modules
-COPY --from=builder --chown=1001:1001 /build/server.js ./
-COPY --from=builder --chown=1001:1001 /build/package.json ./
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/node_modules ./node_modules
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/server.js ./
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/package.json ./
 
 USER 1001
 
@@ -106,6 +108,7 @@ EOF
 
 [source,bash,role=execute]
 ----
+cd ~/hummingbird-lab/nodejs-express
 podman build -t hummingbird-node-demo:v1 .
 
 podman run -d --name node-demo -p 8081:8080 hummingbird-node-demo:v1
@@ -121,7 +124,7 @@ podman images | grep hummingbird-node-demo
 {"message":"Hello from Hummingbird!","runtime":"Node.js v20...","platform":"linux","timestamp":"..."}
 {"status":"healthy"}
 
-localhost/hummingbird-node-demo  v1  ...  ~95 MB
+localhost/hummingbird-node-demo  v1  ...  ~246 MB
 ----
 
 Cleanup:
@@ -133,65 +136,123 @@ podman stop node-demo && podman rm node-demo
 
 .*Key Points:*
 
-* `npm ci --only=production` skips devDependencies (test frameworks, linters) for a smaller runtime
-* The Hummingbird `nodejs-20` runtime has the Node.js interpreter but no npm, no build tools, no compilers
-* At ~95 MB, this is 77% smaller than the full UBI Node.js image (~420 MB)
+* `npm install --omit=dev` skips devDependencies (test frameworks, linters) for a smaller runtime
+* The Hummingbird `nodejs:20` runtime has the Node.js interpreter but no npm, no build tools, no compilers
+* The UBI builder images run as user 1001 -- use `--chown=1001:1001` on COPY and `/opt/app-root/src` as the WORKDIR
+* The final image is significantly smaller than the full UBI Node.js image (~614 MB)
 
 [[quarkus-native]]
 == Exercise 2: Quarkus Native Build
 
 A GraalVM native executable produces the **smallest possible Java final image** -- no JVM at all. The resulting binary runs directly on `ubi-micro`.
 
-=== Step 4: Create the Containerfile
+=== Step 4: Copy the Sample App and Create the Containerfile
+
+This exercise reuses the Quarkus sample-app from Sub-Module 1.1 and compiles it to a native binary using the Mandrel builder image (Red Hat's GraalVM distribution for Quarkus).
 
 [source,bash,role=execute]
 ----
 mkdir -p ~/hummingbird-lab/quarkus-native
-cat > ~/hummingbird-lab/quarkus-native/Containerfile << 'EOF'
-ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+cp -r ~/hummingbird-lab/sample-app/pom.xml \
+      ~/hummingbird-lab/sample-app/src \
+      ~/hummingbird-lab/sample-app/.mvn \
+      ~/hummingbird-lab/sample-app/mvnw \
+      ~/hummingbird-lab/quarkus-native/
 
-# Stage 1: Build with UBI + GraalVM (full toolchain)
-FROM ${BUILDER_REGISTRY}/graalvm-ce:22 AS builder
+cd ~/hummingbird-lab/quarkus-native
+
+cat > Containerfile << 'EOF'
+ARG BUILDER_IMAGE=quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/ubi9
+
+# Stage 1: Build native executable with Mandrel (GraalVM distribution)
+FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /build
 
-COPY pom.xml ./
-RUN mvn dependency:go-offline -B
+COPY --chown=quarkus:quarkus pom.xml ./
+COPY --chown=quarkus:quarkus .mvn .mvn
+COPY --chown=quarkus:quarkus mvnw ./
+RUN chmod +x mvnw && ./mvnw dependency:go-offline -B
 
-COPY src ./src
-RUN mvn package -Pnative -Dquarkus.native.container-build=false \
-    -DskipTests -B
+COPY --chown=quarkus:quarkus src ./src
+RUN ./mvnw package -Pnative -DskipTests -B
 
-# Stage 2: Runtime on Hummingbird ubi-micro
+# Stage 2: Runtime on ubi-micro (minimal base for native binaries)
 FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
 
 WORKDIR /app
 
+COPY --from=builder /lib64/libz.so.1 /lib64/libz.so.1
 COPY --from=builder --chown=1001:1001 /build/target/*-runner ./application
 
 USER 1001
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-  CMD ["/app/application", "-Dquarkus.http.host=0.0.0.0", "-Dquarkus.http.port=8080", "health"]
-
 ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
 EOF
 ----
 
-.*Key Points:*
-
-* **GraalVM native-image** compiles Java bytecode to a standalone binary at build time
-* The final image contains **only** the binary on `ubi-micro` -- no JVM, no class files, no Maven
-* `ARG BUILDER_REGISTRY` allows switching to an internal mirror for air-gapped builds
-* Native compilation is slow (~3-5 min) but the resulting image starts in milliseconds
+=== Step 5: Build and Test
 
 [NOTE]
 ====
-Native compilation requires significant memory (4GB+). If the build fails with an out-of-memory error, increase the builder container's memory limit or use the JVM variant from Sub-Module 1.1.
+Native compilation takes ~2-4 minutes and requires 4GB+ of memory. The Mandrel builder image is ~1.5 GB. Be patient on the first build.
 ====
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/quarkus-native
+podman build -t hummingbird-quarkus-native:v1 .
+----
+
+Run and test:
+
+[source,bash,role=execute]
+----
+podman run -d --name quarkus-native-demo -p 8085:8080 hummingbird-quarkus-native:v1
+sleep 2
+curl http://localhost:8085/
+curl http://localhost:8085/health
+
+podman images | grep hummingbird-quarkus-native
+----
+
+.*Expected output:*
+----
+{"message":"Hello from Hummingbird!","runtime":"Java 21...","platform":"linux","timestamp":"..."}
+{"status":"healthy"}
+
+localhost/hummingbird-quarkus-native  v1  ...  ~79 MB
+----
+
+Check the startup time in the logs:
+
+[source,bash,role=execute]
+----
+podman logs quarkus-native-demo 2>&1 | head -5
+----
+
+.*Expected output:*
+----
+...Quarkus... started in 0.036s. Listening on: http://0.0.0.0:8080
+----
+
+Cleanup:
+
+[source,bash,role=execute]
+----
+podman stop quarkus-native-demo && podman rm quarkus-native-demo
+----
+
+.*Key Points:*
+
+* **Mandrel** is Red Hat's GraalVM distribution optimised for Quarkus native builds
+* The final image contains **only** the binary + `libz.so.1` on `ubi-micro` -- no JVM, no class files, no Maven
+* Native compilation is slow (~2-4 min) but the resulting image starts in **milliseconds** (0.036s observed)
+* The native binary needs `libz.so.1` -- copy it from the builder stage into `ubi-micro`
+* At ~79 MB, this is 87% smaller than the JVM variant (~621 MB full UBI)
 
 [TIP]
 ====
@@ -206,35 +267,76 @@ Native compilation requires significant memory (4GB+). If the build fails with a
 
 Python applications often depend on C extensions (psycopg2 for PostgreSQL, cryptography for TLS). These need `gcc` and header files at build time but not at runtime. The multi-stage pattern separates the two.
 
-=== Step 5: Create the Containerfile
+=== Step 6: Create the Application
 
 [source,bash,role=execute]
 ----
-mkdir -p ~/hummingbird-lab/python-gunicorn
-cat > ~/hummingbird-lab/python-gunicorn/Containerfile << 'EOF'
+mkdir -p ~/hummingbird-lab/python-gunicorn/src
+cd ~/hummingbird-lab/python-gunicorn
+
+cat > requirements.txt << 'EOF'
+flask==3.0.0
+gunicorn==21.2.0
+EOF
+
+cat > src/__init__.py << 'EOF'
+EOF
+
+cat > src/main.py << 'EOF'
+from flask import Flask, jsonify
+import platform
+import sys
+from datetime import datetime, timezone
+
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+    return jsonify({
+        "message": "Hello from Hummingbird!",
+        "runtime": f"Python {sys.version}",
+        "platform": platform.system(),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "healthy"})
+EOF
+
+cat > gunicorn.conf.py << 'EOF'
+bind = "0.0.0.0:8000"
+workers = 2
+accesslog = "-"
+EOF
+----
+
+=== Step 7: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/python-gunicorn
+
+cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 
 # Stage 1: Build with full UBI Python (pip, compilers, headers)
 FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
 
-WORKDIR /build
-
-USER root
-RUN dnf install -y gcc python3-devel libpq-devel && dnf clean all
-USER 1001
+WORKDIR /opt/app-root/src
 
 COPY --chown=1001:1001 requirements.txt ./
 RUN pip install --no-cache-dir \
-    --prefix=/install \
+    --prefix=/opt/app-root/install \
     -r requirements.txt
 
 # Stage 2: Runtime on Hummingbird Python
-FROM ${RUNTIME_REGISTRY}/python-311:latest
+FROM ${RUNTIME_REGISTRY}/python:3.11
 
 WORKDIR /app
 
-COPY --from=builder --chown=1001:1001 /install/lib /usr/local/lib
+COPY --from=builder --chown=1001:1001 /opt/app-root/install /usr/local
 
 COPY --chown=1001:1001 src/ ./src/
 COPY --chown=1001:1001 gunicorn.conf.py ./
@@ -243,70 +345,169 @@ USER 1001
 
 EXPOSE 8000
 
-CMD ["python", "-m", "gunicorn", \
+CMD ["python3", "-m", "gunicorn", \
      "--config", "gunicorn.conf.py", \
      "src.main:app"]
 EOF
 ----
 
+=== Step 8: Build and Test
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/python-gunicorn
+podman build -t hummingbird-python-gunicorn:v1 .
+
+podman run -d --name python-gunicorn-demo -p 8083:8000 hummingbird-python-gunicorn:v1
+sleep 3
+curl http://localhost:8083/
+curl http://localhost:8083/health
+
+podman images | grep hummingbird-python-gunicorn
+----
+
+.*Expected output:*
+----
+{"message":"Hello from Hummingbird!","runtime":"Python 3.11...","platform":"Linux","timestamp":"..."}
+{"status":"healthy"}
+
+localhost/hummingbird-python-gunicorn  v1  ...  ~123 MB
+----
+
+Cleanup:
+
+[source,bash,role=execute]
+----
+podman stop python-gunicorn-demo && podman rm python-gunicorn-demo
+----
+
 .*Key Points:*
 
-* `--prefix=/install` isolates pip packages into a directory that can be copied cleanly to the runtime stage
-* `gcc`, `python3-devel`, and `libpq-devel` exist only in the builder -- the runtime image has no compiler
+* `--prefix=/opt/app-root/install` isolates pip packages into a directory that can be copied cleanly to the runtime stage
+* The UBI Python builder runs as user 1001 -- use `/opt/app-root/src` as WORKDIR and `--chown=1001:1001`
+* The Hummingbird `python:3.11` image uses `python3` (not `python`) as the binary name
 * gunicorn is the production WSGI server (never use Flask's dev server in production)
-* The Hummingbird `python-311` image has the Python interpreter but no pip, no gcc, no headers
+* The Hummingbird Python runtime has the interpreter but no pip, no gcc, no headers
 
 [[python-fastapi]]
 == Exercise 4: Python FastAPI with Pre-Compiled Wheels
 
 The **wheel pattern** is an alternative to `--prefix` that pre-compiles all dependencies into wheel archives, then installs them in the runtime stage without needing a compiler.
 
-=== Step 6: Create the Containerfile
+=== Step 9: Create the Application
 
 [source,bash,role=execute]
 ----
-mkdir -p ~/hummingbird-lab/python-fastapi
-cat > ~/hummingbird-lab/python-fastapi/Containerfile << 'EOF'
+mkdir -p ~/hummingbird-lab/python-fastapi/app
+cd ~/hummingbird-lab/python-fastapi
+
+cat > requirements.txt << 'EOF'
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+EOF
+
+cat > app/__init__.py << 'EOF'
+EOF
+
+cat > app/main.py << 'EOF'
+from fastapi import FastAPI
+import platform
+import sys
+from datetime import datetime, timezone
+
+app = FastAPI(title="Hummingbird FastAPI Demo")
+
+@app.get("/")
+def hello():
+    return {
+        "message": "Hello from Hummingbird!",
+        "runtime": f"Python {sys.version}",
+        "platform": platform.system(),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+EOF
+----
+
+=== Step 10: Create the Containerfile
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/python-fastapi
+
+cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 
 # Stage 1: Build wheels
 FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
 
-WORKDIR /build
-
-USER root
-RUN dnf install -y gcc python3-devel && dnf clean all
-USER 1001
+WORKDIR /opt/app-root/src
 
 COPY --chown=1001:1001 requirements.txt .
 
-RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /opt/app-root/wheels -r requirements.txt
 
 # Stage 2: Runtime on Hummingbird Python
-FROM ${RUNTIME_REGISTRY}/python-311:latest
+FROM ${RUNTIME_REGISTRY}/python:3.11
 
 WORKDIR /app
 
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* \
-    && rm -rf /wheels
+COPY --from=builder /opt/app-root/wheels /opt/app-root/wheels
+RUN python3 -m pip install --user --no-cache-dir --no-index \
+    --find-links=/opt/app-root/wheels /opt/app-root/wheels/*
 
 COPY --chown=1001:1001 app/ ./app/
 
 USER 1001
 
+ENV PATH="/tmp/.local/bin:${PATH}"
+
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 EOF
+----
+
+=== Step 11: Build and Test
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/python-fastapi
+podman build -t hummingbird-python-fastapi:v1 .
+
+podman run -d --name fastapi-demo -p 8084:8000 hummingbird-python-fastapi:v1
+sleep 3
+curl http://localhost:8084/
+curl http://localhost:8084/health
+
+podman images | grep hummingbird-python-fastapi
+----
+
+.*Expected output:*
+----
+{"message":"Hello from Hummingbird!","runtime":"Python 3.11...","platform":"Linux","timestamp":"..."}
+{"status":"healthy"}
+
+localhost/hummingbird-python-fastapi  v1  ...  ~162 MB
+----
+
+Cleanup:
+
+[source,bash,role=execute]
+----
+podman stop fastapi-demo && podman rm fastapi-demo
 ----
 
 .*Key Points:*
 
 * `pip wheel` compiles all dependencies into `.whl` files in the builder stage
-* `--no-index --find-links=/wheels` installs from local wheels only -- no network access needed in the runtime stage
-* The wheels are deleted after install (`rm -rf /wheels`) to keep the final image small
+* `--no-index --find-links=` installs from local wheels only -- no network access needed in the runtime stage
+* The Hummingbird Python image's `site-packages` is read-only; use `pip install --user` which installs to `/tmp/.local`
+* Add `/tmp/.local/bin` to `PATH` so `uvicorn` and other scripts are found
 * uvicorn is the production ASGI server for FastAPI
 
 [NOTE]
@@ -322,7 +523,7 @@ EOF
 
 Go compiles to a **single static binary** with no runtime dependencies. Combined with `ubi-micro`, this produces the smallest possible Hummingbird image -- just the binary on a near-empty base.
 
-=== Step 7: Create a Sample Go App
+=== Step 12: Create a Sample Go App
 
 [source,bash,role=execute]
 ----
@@ -379,32 +580,32 @@ go 1.21
 GOMOD
 ----
 
-=== Step 8: Create the Containerfile
+=== Step 13: Create the Containerfile
 
 [source,bash,role=execute]
 ----
 cat > ~/hummingbird-lab/go-app/Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/ubi9
 
 # Stage 1: Build with UBI Go toolset
 FROM ${BUILDER_REGISTRY}/go-toolset:latest AS builder
 
-WORKDIR /build
+WORKDIR /opt/app-root/src
 
-COPY go.mod go.sum* ./
+COPY --chown=1001:1001 go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 
-COPY . .
+COPY --chown=1001:1001 . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /app .
+    go build -ldflags="-s -w" -o /opt/app-root/app .
 
-# Stage 2: Runtime on Hummingbird ubi-micro
+# Stage 2: Runtime on ubi-micro (minimal base for static binaries)
 FROM ${RUNTIME_REGISTRY}/ubi-micro:latest
 
 WORKDIR /app
 
-COPY --from=builder --chown=1001:1001 /app ./application
+COPY --from=builder --chown=1001:1001 /opt/app-root/app ./application
 
 USER 1001
 
@@ -414,7 +615,7 @@ ENTRYPOINT ["./application"]
 EOF
 ----
 
-=== Step 9: Build and Test
+=== Step 14: Build and Test
 
 [source,bash,role=execute]
 ----
@@ -447,7 +648,7 @@ podman images | grep hummingbird-go-demo
 
 .*Expected output:*
 ----
-localhost/hummingbird-go-demo  v1  ...  ~15-25 MB
+localhost/hummingbird-go-demo  v1  ...  ~29 MB
 ----
 
 Cleanup:
@@ -474,29 +675,34 @@ The table below shows approximate final image sizes when using Hummingbird runti
 | Language / Scenario | Full UBI | Hummingbird | Reduction
 
 | Node.js (Express app)
-| ~420 MB
-| ~95 MB
-| 77%
-
-| Quarkus JVM (OpenJDK 21) -- Sub-Module 1.1
-| ~450 MB
-| ~185 MB
+| ~614 MB
+| ~246 MB
 | 60%
 
-| Quarkus Native (GraalVM)
-| ~400 MB
-| ~35 MB
-| 91%
+| Quarkus JVM (OpenJDK 21) -- Sub-Module 1.1
+| ~621 MB
+| ~272 MB
+| 56%
 
-| Python (gunicorn/FastAPI)
-| ~350 MB
-| ~90 MB
-| 74%
+| Quarkus Native (Mandrel)
+| ~621 MB
+| ~79 MB
+| 87%
+
+| Python gunicorn (Flask)
+| ~1.1 GB
+| ~123 MB
+| 89%
+
+| Python FastAPI (uvicorn)
+| ~1.1 GB
+| ~162 MB
+| 85%
 
 | Go (static binary)
-| ~350 MB
-| ~15 MB
-| 96%
+| ~1.14 GB
+| ~29 MB
+| 97%
 |===
 
 [NOTE]
@@ -532,9 +738,9 @@ CMD [<entrypoint>]
 
 The only things that change between languages are:
 
-* **Builder image**: `nodejs-20`, `openjdk-21`, `python-311`, `go-toolset`, `graalvm-ce`
-* **Runtime image**: `nodejs-20`, `openjdk-21-runtime`, `python-311`, `ubi-micro`
-* **Dependency install**: `npm ci`, `mvn dependency:go-offline`, `pip install`, `go mod download`
+* **Builder image**: `nodejs-20`, `openjdk-21`, `python-311`, `go-toolset`, `graalvm-ce` (UBI builders run as user 1001 -- use `--chown=1001:1001` on COPY and `/opt/app-root/src` as WORKDIR)
+* **Runtime image**: `nodejs:20`, `openjdk:21-runtime`, `python:3.11`, `ubi-micro` (Hummingbird images use `<name>:<version>` format)
+* **Dependency install**: `npm install --omit=dev`, `mvn dependency:go-offline`, `pip install`, `go mod download`
 * **Build command**: (none for Node.js), `mvn package`, `pip wheel`, `go build`
 * **Artifact copied**: `node_modules + source`, `.jar files`, `wheel packages`, `static binary`
 
@@ -550,17 +756,20 @@ rm -rf ~/hummingbird-lab/quarkus-native
 rm -rf ~/hummingbird-lab/python-gunicorn
 rm -rf ~/hummingbird-lab/python-fastapi
 rm -rf ~/hummingbird-lab/go-app
-podman rmi hummingbird-node-demo:v1 hummingbird-go-demo:v1 2>/dev/null || true
+podman rmi hummingbird-node-demo:v1 hummingbird-quarkus-native:v1 \
+    hummingbird-python-gunicorn:v1 hummingbird-python-fastapi:v1 \
+    hummingbird-go-demo:v1 2>/dev/null || true
 ----
 
 [[summary]]
 == Summary
 
 .*What You've Accomplished*
-✅ Built a Node.js Express application with the Hummingbird multi-stage pattern +
-✅ Reviewed a Quarkus native Containerfile for the smallest possible Java image +
-✅ Learned the `--prefix` and `pip wheel` patterns for Python C extensions +
-✅ Built and tested a Go static binary on `ubi-micro` (~15 MB final image) +
+✅ Built a Node.js Express application on Hummingbird `nodejs:20` (~246 MB) +
+✅ Built a Quarkus native binary with Mandrel on `ubi-micro` (~79 MB, starts in 36ms) +
+✅ Built a Flask+gunicorn application on Hummingbird `python:3.11` (~123 MB) +
+✅ Built a FastAPI+uvicorn application using the `pip wheel` pattern (~162 MB) +
+✅ Built a Go static binary on `ubi-micro` (~29 MB) +
 ✅ Compared image sizes across all languages +
 ✅ Identified the universal multi-stage build pattern with registry ARGs
 
@@ -574,9 +783,9 @@ podman rmi hummingbird-node-demo:v1 hummingbird-go-demo:v1 2>/dev/null || true
 
 **Choose Your Runtime:**
 * `ubi-micro` -- for static binaries (Go, Quarkus Native) and the smallest possible images
-* `openjdk-21-runtime` -- for JVM applications
-* `python-311` -- for Python applications
-* `nodejs-20` -- for Node.js applications
+* `openjdk:21-runtime` -- for JVM applications
+* `python:3.11` -- for Python applications
+* `nodejs:20` -- for Node.js applications
 
 **Production Patterns:**
 * Pre-compile C extensions as wheels (Python)
