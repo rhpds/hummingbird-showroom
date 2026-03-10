@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # OpenShift Pipelines (Tekton) -- from gitops-catalog
+  - https://github.com/tosin2013/gitops-catalog/openshift-pipelines-operator/overlays/latest?ref=main
+  # Builds for Red Hat OpenShift (Shipwright) -- local
+  - openshift-builds-operator
+  # Red Hat Quay operator -- local (Appendix B uses 'quay' namespace)
+  - quay-operator
+  # Red Hat Advanced Cluster Security operator -- from gitops-catalog
+  - https://github.com/tosin2013/gitops-catalog/advanced-cluster-security-operator/operator/overlays/stable?ref=main
