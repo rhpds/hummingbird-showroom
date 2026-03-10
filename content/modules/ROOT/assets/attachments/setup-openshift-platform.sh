@@ -93,9 +93,7 @@ kind: OperatorGroup
 metadata:
   name: openshift-builds-operator-group
   namespace: openshift-builds
-spec:
-  targetNamespaces:
-  - openshift-builds
+spec: {}
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -103,7 +101,7 @@ metadata:
   name: openshift-builds-operator
   namespace: openshift-builds
 spec:
-  channel: stable
+  channel: latest
   name: openshift-builds-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace

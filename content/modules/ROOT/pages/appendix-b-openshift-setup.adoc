@@ -154,9 +154,7 @@ kind: OperatorGroup
 metadata:
   name: openshift-builds-operator-group
   namespace: openshift-builds
-spec:
-  targetNamespaces:
-  - openshift-builds
+spec: {}
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -164,7 +162,7 @@ metadata:
   name: openshift-builds-operator
   namespace: openshift-builds
 spec:
-  channel: stable
+  channel: latest
   name: openshift-builds-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
@@ -214,6 +212,25 @@ echo ""
 echo "Proceed to Module 2 to start the workshop labs."
 SETUP_SCRIPT
 ----
+
+[[option-2b-kustomize]]
+== Option 2b: Kustomize Bootstrap (Full Stack)
+
+The `bootstrap/` directory in this repository contains Kustomize overlays that install **all** operators (Pipelines, Builds/Shipwright, Quay, ACS), deploy Quay with Clair, deploy ACS with admission control, and configure registry credentials -- all in one run.
+
+[NOTE]
+====
+Option 2 above only installs the Pipelines and Builds operators. This option covers the complete setup including Quay registry and ACS.
+====
+
+[source,bash,role=execute]
+----
+git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
+cd zero-cve-hummingbird-showroom
+./bootstrap/setup-all.sh
+----
+
+The script applies Kustomize overlays in order, waits for each component to become ready, then runs post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation, `roxctl` install). This is equivalent to running all of Option 3's manual steps plus the Quay and ACS setup sections below.
 
 [[option-3-manual]]
 == Option 3: Manual Steps
@@ -323,9 +340,7 @@ kind: OperatorGroup
 metadata:
   name: openshift-builds-operator-group
   namespace: openshift-builds
-spec:
-  targetNamespaces:
-  - openshift-builds
+spec: {}
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -333,7 +348,7 @@ metadata:
   name: openshift-builds-operator
   namespace: openshift-builds
 spec:
-  channel: stable
+  channel: latest
   name: openshift-builds-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
@@ -353,8 +368,8 @@ subscription.operators.coreos.com/openshift-builds-operator created
 **What these resources do:**
 
 * **Namespace**: Dedicated namespace for the operator
-* **OperatorGroup**: Defines which namespaces the operator watches
-* **Subscription**: Tells OpenShift to install and manage the operator from the `stable` channel
+* **OperatorGroup**: Allows the operator to watch all namespaces (`spec: {}` is required because this operator only supports the `AllNamespaces` install mode)
+* **Subscription**: Tells OpenShift to install and manage the operator from the `latest` channel
 ====
 
 ==== Alternative: Install via Web Console
@@ -382,8 +397,8 @@ oc get csv -n openshift-builds -w
 .*Expected output:*
 ----
 NAME                              DISPLAY                          VERSION   PHASE
-openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Installing
-openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Succeeded
+openshift-builds-operator.v1.7.0  Builds for Red Hat OpenShift Operator  1.7.0     Installing
+openshift-builds-operator.v1.7.0  Builds for Red Hat OpenShift Operator  1.7.0     Succeeded
 ----
 
 Press `Ctrl+C` to stop watching once you see `Succeeded`.
@@ -664,9 +679,41 @@ for i in $(seq 1 60); do
 done
 ----
 
-=== Step 2: Deploy QuayRegistry Instance
+=== Step 2: Create Quay Configuration Bundle
 
-Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle all dependencies (PostgreSQL, Redis, object storage, Clair) automatically:
+Create a configuration secret that tells Quay to use local storage for the registry. This avoids requiring OpenShift Data Foundation (ODF/NooBaa) for the workshop:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-config-bundle
+  namespace: quay
+stringData:
+  config.yaml: |
+    FEATURE_USER_INITIALIZE: true
+    SUPER_USERS:
+      - workshopuser
+    DISTRIBUTED_STORAGE_CONFIG:
+      default:
+        - LocalStorage
+        - storage_path: /datastorage/registry
+    DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+    DISTRIBUTED_STORAGE_PREFERENCE:
+      - default
+EOF
+----
+
+[NOTE]
+====
+In production, you would set `objectstorage: managed: true` in the QuayRegistry CR, which auto-provisions S3-compatible storage via NooBaa (requires the ODF operator). For this workshop, `LocalStorage` is sufficient and avoids the ODF dependency.
+====
+
+=== Step 3: Deploy QuayRegistry Instance
+
+Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle dependencies (PostgreSQL, Redis, Clair) automatically:
 
 [source,yaml,role=execute]
 ----
@@ -686,13 +733,13 @@ spec:
     - kind: redis
       managed: true
     - kind: objectstorage
-      managed: true
+      managed: false
     - kind: route
       managed: true
     - kind: tls
       managed: true
     - kind: horizontalpodautoscaler
-      managed: true
+      managed: false
     - kind: mirror
       managed: false
     - kind: monitoring
@@ -714,7 +761,7 @@ oc wait --for=condition=Available deployment -l quay-operator/quayregistry=quay-
   echo "Still starting -- check: oc get pods -n quay"
 ----
 
-=== Step 3: Get the Quay Registry Route
+=== Step 4: Get the Quay Registry Route
 
 [source,bash,role=execute,subs="attributes"]
 ----
@@ -729,7 +776,7 @@ echo "Quay console:  https://$QUAY_ROUTE"
 Bookmark the Quay console URL. You will use it throughout Module 2 to browse repositories, inspect image tags, and view Clair vulnerability scan results.
 ====
 
-=== Step 4: Create a Workshop User and Organisation
+=== Step 5: Create a Workshop User and Organisation
 
 Create a Quay user account for the workshop via the API:
 
@@ -752,7 +799,7 @@ curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
 The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns an error, the first user was already created. Log in to the Quay console to create additional users or organisations manually.
 ====
 
-=== Step 5: Create Registry Credentials Secret
+=== Step 6: Create Registry Credentials Secret
 
 Create the `registry-credentials` secret that all Module 2 labs reference for pushing images:
 
@@ -772,7 +819,7 @@ oc create secret docker-registry registry-credentials \
 secret/registry-credentials created
 ----
 
-=== Step 6: Link Secret to Pipeline ServiceAccount
+=== Step 7: Link Secret to Pipeline ServiceAccount
 
 [source,bash,role=execute]
 ----
@@ -784,7 +831,7 @@ oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-bu
 The `pipeline` ServiceAccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns. Linking the secret allows builds to push images to the on-cluster Quay registry.
 ====
 
-=== Step 7: Verify Registry Access
+=== Step 8: Verify Registry Access
 
 Confirm you can authenticate to the on-cluster Quay registry:
 
@@ -958,23 +1005,40 @@ echo "ACS Central URL: https://$ACS_ROUTE"
 
 Open the URL in your browser and log in with username `admin` and the password from Step 3.
 
-=== Step 5: Deploy the Secured Cluster Services
+=== Step 5: Generate Cluster Init Bundle
 
-The Secured Cluster bundle connects your OpenShift cluster to ACS Central for runtime monitoring and admission control:
-
-. In ACS Central, navigate to *Platform Configuration* -> *Clusters*
-. Click *New Cluster*
-. Name: `workshop-cluster`
-. Set the Central API Endpoint to `central.stackrox.svc:443`
-. Click *Next* and download the YAML bundle
-. Apply the bundle:
+The SecuredCluster requires TLS secrets (an init bundle) to authenticate with Central. Generate and apply the bundle via the Central API:
 
 [source,bash,role=execute]
 ----
-oc apply -R -f sensor-bundle/
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+
+curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/v1/cluster-init/init-bundles" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"name": "workshop-cluster-init-bundle"}' \
+  | python3 -c "import json,base64,sys; d=json.load(sys.stdin); open('/tmp/init-bundle.yaml','w').write(base64.b64decode(d['kubectlBundle']).decode())"
+
+oc apply -f /tmp/init-bundle.yaml -n stackrox
+rm -f /tmp/init-bundle.yaml
 ----
 
-Alternatively, create the SecuredCluster CR directly:
+.*Expected output:*
+----
+secret/collector-tls created
+secret/sensor-tls created
+secret/admission-control-tls created
+----
+
+[IMPORTANT]
+====
+Without the init bundle, the SecuredCluster will remain stuck in an `Irreconcilable` state with the message "init-bundle secrets missing". This step must be completed before deploying the SecuredCluster.
+====
+
+=== Step 6: Deploy the Secured Cluster Services
+
+Create the SecuredCluster CR:
 
 [source,yaml,role=execute]
 ----
@@ -1008,7 +1072,7 @@ Wait for the admission controller to start:
 oc wait --for=condition=Available deployment/admission-control -n stackrox --timeout=300s
 ----
 
-=== Step 6: Install the roxctl CLI
+=== Step 7: Install the roxctl CLI
 
 [source,bash,role=execute]
 ----
@@ -1021,7 +1085,7 @@ sudo mv roxctl /usr/local/bin/
 roxctl version
 ----
 
-=== Step 7: Verify ACS Installation
+=== Step 8: Verify ACS Installation
 
 [source,bash,role=execute]
 ----
