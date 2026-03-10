@@ -500,17 +500,28 @@ Both images should be in the 200-270 MB range (JRE + Tomcat + your WAR). Compare
 [[push-zstd]]
 == Push with zstd:chunked
 
-=== Step 12: Push the Image
+=== Step 12: Push the Image to a Local Registry
 
-[source,bash,role=execute,subs="attributes"]
+Start a local registry and push the image with `zstd:chunked` compression to observe the layer structure:
+
+[source,bash,role=execute]
 ----
-IMAGE=quay.io/{registry-user}/my-tomcat-app:v1
+podman run -d --name registry -p 5000:5000 --replace registry:2
 
 buildah push \
   --compression-format zstd:chunked \
   --compression-level 3 \
+  --tls-verify=false \
   localhost/my-tomcat-app:v1 \
-  docker://$IMAGE
+  docker://localhost:5000/my-tomcat-app:v1
+----
+
+Verify the push and inspect the layer structure:
+
+[source,bash,role=execute]
+----
+skopeo inspect --tls-verify=false docker://localhost:5000/my-tomcat-app:v1 \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')"
 ----
 
 Because of the `xattr` tagging in the Containerfile, what you get on a subsequent code-only push:
