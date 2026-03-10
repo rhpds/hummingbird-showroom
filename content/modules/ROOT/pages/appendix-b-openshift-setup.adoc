@@ -9,14 +9,16 @@
 
 *What gets configured:*
 
-* OpenShift cluster access verified
+* OpenShift HA cluster access verified (3+ nodes required)
 * `hummingbird-builds` namespace created
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
-* Red Hat Quay operator installed (on-cluster registry with Clair)
+* OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
+* Red Hat Quay operator installed (on-cluster registry with Clair, ODF-backed storage)
 * Red Hat Advanced Cluster Security (ACS) operator installed (for Sub-Module 2.7)
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
 * Red Hat Quay on-cluster registry with Clair vulnerability scanning
+* Configurable multi-user workshop support (`NUM_USERS` environment variable)
 * Registry credentials and pipeline ServiceAccount linkage
 * ACS Central, SecuredCluster, and admission control configured
 --
@@ -58,13 +60,25 @@ oc auth can-i create clusterrole
 [[option-2-kustomize]]
 == Option 2: Kustomize Bootstrap (Full Stack)
 
-The `bootstrap/` directory in this repository contains Kustomize overlays that install **all** operators (Pipelines, Builds/Shipwright, Quay, ACS), deploy Quay with Clair, deploy ACS with admission control, and configure registry credentials -- all in one run.
+The `bootstrap/` directory in this repository contains Kustomize overlays that install **all** operators (Pipelines, Builds/Shipwright, Quay, ODF, ACS), deploy NooBaa for S3 object storage, deploy Quay with Clair and ODF-backed storage, deploy ACS with admission control, and configure registry credentials -- all in one run.
+
+[IMPORTANT]
+====
+An **HA cluster with 3+ nodes** is required. ODF (OpenShift Data Foundation) provides S3-compatible object storage via NooBaa, which Quay uses for image blob storage. This does not work on Single Node OpenShift (SNO).
+====
 
 [source,bash,role=execute]
 ----
 git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
 cd zero-cve-hummingbird-showroom
 ./bootstrap/setup-all.sh
+----
+
+For multi-user workshops, set the `NUM_USERS` environment variable to create multiple Quay accounts and registry credential secrets:
+
+[source,bash,role=execute]
+----
+NUM_USERS=10 ./bootstrap/setup-all.sh
 ----
 
 The script applies Kustomize overlays in order, waits for each component to become ready, then runs post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation, `roxctl` install). This is equivalent to running all of Option 3's manual steps.
@@ -160,7 +174,7 @@ In production, you might use separate namespaces for different teams or environm
 [[operator-install]]
 === Operator Installation
 
-Install all four operators (OpenShift Pipelines, Builds/Shipwright, Quay, ACS) using the Kustomize overlays from the workshop repository.
+Install all five operators (OpenShift Pipelines, Builds/Shipwright, Quay, ODF, ACS) using the Kustomize overlays from the workshop repository.
 
 ==== Step 5: Install All Operators via Kustomize
 
@@ -182,6 +196,8 @@ namespace/quay created
 operatorgroup.operators.coreos.com/quay-operator-group created
 subscription.operators.coreos.com/quay-operator created
 subscription.operators.coreos.com/openshift-pipelines-operator-rh created
+namespace/openshift-storage created
+subscription.operators.coreos.com/odf-operator created
 namespace/rhacs-operator created
 operatorgroup.operators.coreos.com/rhacs-operator created
 subscription.operators.coreos.com/rhacs-operator created
@@ -189,14 +205,15 @@ subscription.operators.coreos.com/rhacs-operator created
 
 [NOTE]
 ====
-This single command installs four operators:
+This single command installs five operators:
 
 * **OpenShift Pipelines** (Tekton): CI/CD pipeline engine
 * **Builds for Red Hat OpenShift** (Shipwright): Container image build system
 * **Red Hat Quay**: On-cluster container registry with Clair vulnerability scanning
+* **OpenShift Data Foundation** (ODF): S3-compatible object storage via NooBaa for Quay
 * **Red Hat Advanced Cluster Security** (ACS): Vulnerability scanning and admission control
 
-The Kustomize overlays reference the https://github.com/tosin2013/gitops-catalog[gitops-catalog] for Pipelines and ACS, and use local manifests for Builds and Quay.
+The Kustomize overlays reference the https://github.com/tosin2013/gitops-catalog[gitops-catalog] for Pipelines, ODF, and ACS, and use local manifests for Builds and Quay.
 ====
 
 ==== Step 6: Verify All Operators
@@ -369,9 +386,32 @@ All Module 2 labs push built images to an on-cluster Quay registry. Quay provide
 The Quay operator was already installed in Step 5. The following steps deploy and configure the Quay registry instance.
 ====
 
-==== Step 10: Create Quay Configuration Bundle
+==== Step 10: Deploy NooBaa for Quay Object Storage
 
-Create a configuration secret that tells Quay to use local storage for the registry. This avoids requiring OpenShift Data Foundation (ODF/NooBaa) for the workshop:
+ODF provides S3-compatible object storage via NooBaa. Deploy a standalone NooBaa instance that Quay will use for image blob storage:
+
+[source,bash,role=execute]
+----
+oc create namespace openshift-storage 2>/dev/null || true
+oc apply -k bootstrap/02a-odf-noobaa/
+----
+
+Wait for NooBaa to become ready:
+
+[source,bash,role=execute]
+----
+echo "Waiting for NooBaa..."
+for i in $(seq 1 60); do
+    PHASE=$(oc get noobaa noobaa -n openshift-storage -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Ready" ]; then echo "NooBaa: Ready"; break; fi
+    echo "  Phase: ${PHASE} (${i}/60)"
+    sleep 5
+done
+----
+
+==== Step 11: Create Quay Configuration Bundle
+
+Create a configuration secret for the Quay registry. With ODF providing object storage, no manual storage configuration is needed:
 
 [source,yaml,role=execute]
 ----
@@ -384,26 +424,21 @@ metadata:
 stringData:
   config.yaml: |
     FEATURE_USER_INITIALIZE: true
+    CREATE_PRIVATE_REPO_ON_PUSH: true
+    CREATE_NAMESPACE_ON_PUSH: true
     SUPER_USERS:
       - workshopuser
-    DISTRIBUTED_STORAGE_CONFIG:
-      default:
-        - LocalStorage
-        - storage_path: /datastorage/registry
-    DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
-    DISTRIBUTED_STORAGE_PREFERENCE:
-      - default
 EOF
 ----
 
 [NOTE]
 ====
-In production, you would set `objectstorage: managed: true` in the QuayRegistry CR, which auto-provisions S3-compatible storage via NooBaa (requires the ODF operator). For this workshop, `LocalStorage` is sufficient and avoids the ODF dependency.
+`CREATE_PRIVATE_REPO_ON_PUSH` and `CREATE_NAMESPACE_ON_PUSH` allow Shipwright builds to push images without manually pre-creating repositories in Quay. Storage is handled automatically by ODF/NooBaa via the `objectstorage: managed: true` setting in the QuayRegistry CR.
 ====
 
-==== Step 11: Deploy QuayRegistry Instance
+==== Step 12: Deploy QuayRegistry Instance
 
-Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle dependencies (PostgreSQL, Redis, Clair) automatically:
+Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle dependencies (PostgreSQL, Redis, Clair, object storage via ODF) automatically:
 
 [source,yaml,role=execute]
 ----
@@ -423,7 +458,7 @@ spec:
     - kind: redis
       managed: true
     - kind: objectstorage
-      managed: false
+      managed: true
     - kind: route
       managed: true
     - kind: tls
@@ -439,7 +474,7 @@ EOF
 
 [NOTE]
 ====
-Setting `tls: managed: true` means OpenShift provisions TLS certificates via the cluster ingress CA. All clients that trust the cluster CA (including pods running inside the cluster) can push and pull over HTTPS without `--tls-verify=false`.
+Setting `objectstorage: managed: true` tells the Quay operator to automatically create an `ObjectBucketClaim` using ODF/NooBaa for S3-compatible blob storage. This eliminates the LocalStorage limitations (single-replica requirement, ephemeral data). Setting `tls: managed: true` means OpenShift provisions TLS certificates via the cluster ingress CA. All clients that trust the cluster CA (including pods running inside the cluster) can push and pull over HTTPS without `--tls-verify=false`.
 ====
 
 Wait for Quay to become ready (this typically takes 3-5 minutes):

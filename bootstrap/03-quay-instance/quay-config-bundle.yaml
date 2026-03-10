@@ -6,12 +6,7 @@ metadata:
 stringData:
   config.yaml: |
     FEATURE_USER_INITIALIZE: true
+    CREATE_PRIVATE_REPO_ON_PUSH: true
+    CREATE_NAMESPACE_ON_PUSH: true
     SUPER_USERS:
       - workshopuser
-    DISTRIBUTED_STORAGE_CONFIG:
-      default:
-        - LocalStorage
-        - storage_path: /datastorage/registry
-    DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
-    DISTRIBUTED_STORAGE_PREFERENCE:
-      - default

@@ -8,5 +8,7 @@ resources:
   - openshift-builds-operator
   # Red Hat Quay operator -- local (Appendix B uses 'quay' namespace)
   - quay-operator
+  # OpenShift Data Foundation (ODF) -- provides S3 via NooBaa for Quay object storage
+  - openshift-data-foundation
   # Red Hat Advanced Cluster Security operator -- from gitops-catalog
   - https://github.com/tosin2013/gitops-catalog/advanced-cluster-security-operator/operator/overlays/stable?ref=main

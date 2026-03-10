@@ -13,7 +13,7 @@ spec:
     - kind: redis
       managed: true
     - kind: objectstorage
-      managed: false
+      managed: true
     - kind: route
       managed: true
     - kind: tls

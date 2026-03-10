@@ -61,14 +61,12 @@ metadata:
   name: buildpacks-hummingbird
 spec:
   parameters:
-  - name: APP_IMAGE
-    description: The name of the application image to be built
   - name: BUILDER_IMAGE
     description: The Buildpacks builder image
     default: "paketobuildpacks/builder-jammy-base:latest"
   - name: RUN_IMAGE
-    description: The Hummingbird runtime image
-    default: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+    description: The runtime image for the final container
+    default: "paketobuildpacks/run-jammy-base:latest"
   - name: SOURCE_SUBPATH
     description: A subpath within the source directory
     default: "."
@@ -76,32 +74,78 @@ spec:
     description: Environment variables for the build
     type: array
     defaults: []
-
-  buildSteps:
+  volumes:
+  - name: layers-dir
+    emptyDir: {}
+  - name: cache-dir
+    emptyDir: {}
+  - name: home-dir
+    emptyDir: {}
+  steps:
+  - name: prepare
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+      set -e
+      chown -R 1000:1000 /tekton/home /layers /cache
+    volumeMounts:
+    - name: layers-dir
+      mountPath: /layers
+    - name: cache-dir
+      mountPath: /cache
+    - name: home-dir
+      mountPath: /tekton/home
   - name: build-and-push
     image: $(params.BUILDER_IMAGE)
     imagePullPolicy: Always
-    workingDir: $(params.shp-source-root)
     command:
     - /cnb/lifecycle/creator
     args:
     - -app=$(params.shp-source-root)/$(params.SOURCE_SUBPATH)
     - -run-image=$(params.RUN_IMAGE)
-    - $(params.APP_IMAGE)
+    - -cache-dir=/cache
+    - -layers=/layers
+    - -report=/layers/report.toml
+    - -uid=1000
+    - -gid=1000
+    - $(params.shp-output-image)
     env:
     - name: CNB_PLATFORM_API
       value: "0.13"
-    - name: DOCKER_CONFIG
-      value: /workspace/.docker
+    - name: HOME
+      value: /tekton/home
     volumeMounts:
-    - name: $(params.shp-output-directory)
-      mountPath: /workspace
-      readOnly: false
+    - name: layers-dir
+      mountPath: /layers
+    - name: cache-dir
+      mountPath: /cache
+    - name: home-dir
+      mountPath: /tekton/home
     securityContext:
       runAsUser: 1000
       runAsGroup: 1000
+  - name: results
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+      set -e
+      cat /layers/report.toml | grep "digest" | cut -d'"' -f2 | cut -d'"' -f2 | tr -d '\n' > $(results.shp-image-digest.path)
+    volumeMounts:
+    - name: layers-dir
+      mountPath: /layers
 EOF
 ----
+
+[NOTE]
+====
+The default `RUN_IMAGE` is the Paketo run image. When a Hummingbird Node.js runtime becomes available in the https://quay.io/organization/hummingbird-hatchling[hummingbird-hatchling] organization, override this parameter to use it (e.g., `quay.io/hummingbird-hatchling/nodejs-20:latest`).
+====
 
 .*Expected output:*
 ----
@@ -111,9 +155,10 @@ clusterbuildstrategy.shipwright.io/buildpacks-hummingbird created
 .*What this strategy does:*
 
 * Uses **Paketo Buildpacks** builder image to auto-detect application type
-* Configures **Hummingbird runtime images** for the final container via `RUN_IMAGE` parameter
-* Runs builds as **non-root user** (1000)
-* Outputs directly to specified registry
+* Configures runtime images for the final container via `RUN_IMAGE` parameter (swap to Hummingbird when available)
+* Runs builds as **non-root user** (1000) with a `prepare` step to set directory ownership
+* Sets `HOME=/tekton/home` so Tekton credential injection works for the non-root build user
+* Extracts image digest via a `results` step for traceability
 
 [NOTE]
 ====
@@ -164,7 +209,9 @@ spec:
     kind: ClusterBuildStrategy
   paramValues:
   - name: RUN_IMAGE
-    value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+    value: "paketobuildpacks/run-jammy-base:latest"
+  - name: SOURCE_SUBPATH
+    value: "source-build"
   output:
     image: {workshop-registry}/{registry-user}/sample-nodejs:latest
     credentials:
@@ -179,9 +226,9 @@ build.shipwright.io/sample-nodejs-app created
 
 .*What this Build defines:*
 
-* **Source**: Git repository with Node.js application
+* **Source**: Git repository with Node.js application (app is under `source-build/` subdirectory)
 * **Strategy**: Use `buildpacks-hummingbird` ClusterBuildStrategy
-* **Runtime**: Hummingbird Node.js 20 image
+* **Runtime**: Paketo run image (swap to Hummingbird runtime when available)
 * **Output**: Push to `{workshop-registry}/{registry-user}/sample-nodejs:latest`
 * **Credentials**: Use `registry-credentials` secret for push
 
@@ -397,29 +444,24 @@ oc logs -l app=sample-nodejs
 ----
 ====
 
-[[verify-hummingbird-runtime]]
-== Verify Hummingbird Runtime
+[[verify-runtime]]
+== Verify Runtime Image
 
 === Step 14: Confirm Image Size
 
-Verify the built image uses the Hummingbird runtime:
+Verify the built image in the Quay console:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-# Pull and inspect image size
-podman pull {workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null || echo "Note: Run on a machine with podman to verify size"
-
-# Alternative: Check in Quay console
-echo "Check image size at: {workshop-registry-console}/repository/{registry-user}/sample-nodejs"
+echo "Check image at: {workshop-registry-console}/repository/{registry-user}/sample-nodejs"
 ----
-
-.*Expected size:* ~95-120 MB (vs 400MB+ for full UBI Node.js)
 
 [NOTE]
 ====
-The image size is dramatically reduced because:
+With the default Paketo run image, the image size will be ~200-250 MB. When a Hummingbird Node.js runtime image becomes available, swapping it in via the `RUN_IMAGE` parameter will reduce this to ~95-120 MB because:
+
 1. Buildpacks detected Node.js and installed only production dependencies
-2. The `RUN_IMAGE` parameter swapped in the Hummingbird runtime
+2. The `RUN_IMAGE` parameter swaps in the minimal Hummingbird runtime
 3. No build tools or package managers in the final image
 ====
 
