@@ -1,0 +1,643 @@
+= Sub-Module 1.5: Content-Based Layer Splitting with chunkah (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~15 minutes +
+*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Status:* Optional exercise -- not required for Module 1 completion +
+*Learning Objectives:*
+
+* Understand what chunkah does and how it complements `zstd:chunked`
+* Split an existing Hummingbird image into content-based layers
+* Use the `FROM oci-archive:` trick in multi-stage builds
+* Split arbitrary images with `Containerfile.splitter`
+* Control layer assignment with custom `user.component` xattrs
+* Push optimised images with `zstd:chunked` compression
+--
+
+[[introduction]]
+== Introduction
+
+When you update a single RPM or Maven dependency in a traditional container image, the entire layer containing that package must be re-pulled by every node in the cluster. **chunkah** solves this by restructuring layers at build time so that content which changes together lives together.
+
+=== What chunkah Is
+
+chunkah is a **post-processor**. You build your image normally, then chunkah restructures the resulting layers using component awareness -- by default it reads RPM database metadata to know which files belong to which package and groups those components into layers intelligently.
+
+=== chunkah vs zstd:chunked
+
+These two tools are complementary, not competing:
+
+[cols="1,2,2",options="header"]
+|===
+| | chunkah | zstd:chunked
+
+| *When it runs*
+| Build time
+| Pull time
+
+| *What it optimises*
+| Layer structure (which files are grouped together)
+| Wire transfer (only fetch changed chunks within a layer)
+
+| *Registry support needed?*
+| No -- standard OCI
+| Yes -- registry must support HTTP range requests
+
+| *Client support needed?*
+| No
+| Yes -- Podman/Buildah with `enable_partial_images = true`
+
+| *Works with Docker?*
+| Yes (with skopeo conversion step)
+| Partial -- Docker supports zstd but not partial pulls
+|===
+
+**Used together:** chunkah ensures that when you update a single package, only the layer for that package changes. `zstd:chunked` then ensures that within that layer, only the changed file chunks are downloaded. Together they minimise both *what needs to be re-pulled* and *how much of each layer is transferred*.
+
+=== Why Hummingbird Is the Perfect Input for chunkah
+
+Hummingbird images are built entirely from RPM packages via the Red Hat trusted build pipeline. Every single file in the image -- whether it's a glibc shared library, the Java runtime binary, or a system certificate -- was installed by an RPM and recorded in the RPM database.
+
+chunkah reads that RPM database and uses it as a map of "which files belong together." It then restructures the image so each RPM package (or logical group of packages) lives in its own layer. Because Hummingbird's RPM metadata is already perfect and complete, chunkah can make extremely precise layer decisions with **zero extra configuration** from you.
+
+.*Without chunkah* -- a typical Hummingbird-based image:
+----
+Layer 1 — everything the Hummingbird base ships (glibc, openssl,
+           JRE runtime, all their deps) — one huge blob
+Layer 2 — your app dependencies
+Layer 3 — your app code
+----
+
+.*With chunkah* -- the same image after content-based splitting:
+----
+Layer 1  — glibc + ld-linux
+Layer 2  — openssl + crypto libs
+Layer 3  — libstdc++ + libgcc
+Layer 4  — ca-certificates
+Layer 5  — JRE runtime binaries
+Layer 6  — JRE standard library
+Layer 7  — zlib, libuv, other shared deps
+...up to your --max-layers setting
+Layer N  — your app dependencies
+Layer N+1 — your app code
+----
+
+The practical consequence: when Hummingbird ships a security rebuild that updates openssl, **only Layer 2 changes**. Every other layer -- including your entire application -- is already cached on every node in your cluster and doesn't need to be re-pulled.
+
+[TIP]
+====
+This is why Hummingbird + chunkah is a stronger combination than arbitrary base images + chunkah. Images built from tarballs or custom `COPY` commands have no RPM metadata for chunkah to read, so you'd need to manually tag every file with `user.component` xattrs. With Hummingbird, the component map is free.
+====
+
+[[verify-chunkah]]
+== Verify chunkah
+
+chunkah is distributed as a container image -- no native install required:
+
+[source,bash,role=execute]
+----
+podman run --rm quay.io/jlebon/chunkah --help
+----
+
+.*Expected output (excerpt):*
+----
+chunkah - Content-based layer splitting for container images
+
+Usage: chunkah <COMMAND>
+
+Commands:
+  build    Build content-based layers from an image
+  help     Print this message or the help of the given subcommand(s)
+----
+
+[[exercise-1-split-existing]]
+== Exercise 1: Split an Existing Hummingbird Image
+
+This is the simplest approach. Take the `hummingbird-demo:v1` image you built in Sub-Module 1.1 and run chunkah against it.
+
+=== Step 1: Check Original Layer Count
+
+[source,bash,role=execute]
+----
+podman inspect hummingbird-demo:v1 \
+  --format '{{len .RootFS.Layers}} layers'
+----
+
+.*Expected output:*
+----
+3 layers
+----
+
+=== Step 2: Run chunkah
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect hummingbird-demo:v1)"
+
+podman run --rm \
+  --mount=type=image,src=hummingbird-demo:v1,dest=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah build \
+  | podman load
+----
+
+.*Expected output:*
+----
+Getting image source signatures
+...
+Loaded image: ...
+----
+
+=== Step 3: Compare Layer Structure
+
+[source,bash,role=execute]
+----
+echo "=== Original ==="
+podman inspect hummingbird-demo:v1 \
+  --format '{{len .RootFS.Layers}} layers'
+
+echo ""
+echo "=== After chunkah ==="
+podman image history hummingbird-demo:v1
+----
+
+The layer count will increase significantly (from 3-4 to 20-48), but this is by design -- each layer now maps to a logical component (an RPM package, a set of related files). When you update a single package, only that package's layer changes.
+
+[NOTE]
+====
+The total image size remains essentially the same. chunkah rearranges content across layers; it does not compress or remove anything. The benefit comes at pull time when only changed layers need to be fetched.
+====
+
+[[exercise-2-oci-archive]]
+== Exercise 2: The FROM oci-archive: Trick
+
+This is the most elegant approach for Hummingbird-based multi-stage builds. chunkah runs as a build stage and its OCI archive output is consumed directly by the final `FROM` instruction.
+
+[IMPORTANT]
+====
+This requires `--skip-unused-stages=false` and works only with **Podman/Buildah**, not Docker.
+====
+
+=== Step 4: Create the Containerfile
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/chunkah-demo/src/main/java/com/example
+mkdir -p ~/hummingbird-lab/chunkah-demo/src/main/resources
+cat > ~/hummingbird-lab/chunkah-demo/Containerfile << 'CFILE'
+# Stage 1: Build the Quarkus application
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+
+# Stage 2: Apply content-based layer splitting
+FROM quay.io/jlebon/chunkah AS chunkah
+
+RUN --mount=from=builder,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build \
+          --max-layers 32 \
+        > /run/src/out.ociarchive
+
+# Stage 3: Final image sourced from chunkah's OCI archive
+FROM oci-archive:out.ociarchive
+
+LABEL org.opencontainers.image.title="chunkah-demo"
+USER 1001
+EXPOSE 8080
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+CFILE
+----
+
+Create a minimal Quarkus app to build:
+
+[source,bash,role=execute]
+----
+# Reuse pom.xml and Maven wrapper from the sample-app
+cp ~/hummingbird-lab/sample-app/pom.xml ~/hummingbird-lab/chunkah-demo/
+cp ~/hummingbird-lab/sample-app/mvnw ~/hummingbird-lab/chunkah-demo/
+cp -r ~/hummingbird-lab/sample-app/.mvn ~/hummingbird-lab/chunkah-demo/
+
+cat > ~/hummingbird-lab/chunkah-demo/src/main/java/com/example/GreetingResource.java << 'SRV'
+package com.example;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import java.util.Map;
+
+@Path("/")
+public class GreetingResource {
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, String> hello() {
+        return Map.of("message", "Hello from chunkah-split Hummingbird!");
+    }
+}
+SRV
+
+cat > ~/hummingbird-lab/chunkah-demo/src/main/resources/application.properties << 'PROPS'
+quarkus.http.host=0.0.0.0
+quarkus.http.port=8080
+PROPS
+----
+
+=== Step 5: Build with chunkah Splitting
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag chunkah-demo:v1 \
+  ~/hummingbird-lab/chunkah-demo/
+----
+
+[NOTE]
+====
+`--skip-unused-stages=false` is **required**. Without it, Buildah skips the chunkah stage because it is not directly referenced by name in a `FROM` instruction -- only its output file is consumed.
+====
+
+=== Step 6: Verify the Result
+
+[source,bash,role=execute]
+----
+echo "=== Layer count ==="
+podman inspect chunkah-demo:v1 \
+  --format '{{len .RootFS.Layers}} layers'
+
+echo ""
+echo "=== Layer history ==="
+podman image history chunkah-demo:v1
+----
+
+[[exercise-3-splitter]]
+== Exercise 3: Containerfile.splitter
+
+chunkah ships a ready-made `Containerfile.splitter` for splitting **any** existing image without writing your own Containerfile.
+
+=== Step 7: Split a Hummingbird Python Image
+
+[source,bash,role=execute]
+----
+IMG="quay.io/hummingbird-hatchling/python-311:latest"
+TAG="python-311-chunked"
+
+podman pull "$IMG"
+
+echo "=== Original ==="
+podman inspect "$IMG" --format '{{len .RootFS.Layers}} layers'
+
+buildah build \
+  --skip-unused-stages=false \
+  --from "$IMG" \
+  --build-arg CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")" \
+  --build-arg CHUNKAH_ARGS="--max-layers 48" \
+  --tag "$TAG" \
+  https://github.com/jlebon/chunkah/releases/download/v0.2.0/Containerfile.splitter
+
+echo ""
+echo "=== After chunkah ==="
+podman inspect "$TAG" --format '{{len .RootFS.Layers}} layers'
+----
+
+[TIP]
+====
+The `Containerfile.splitter` is fetched directly from the chunkah GitHub release. This makes it easy to split any image in a single command without maintaining a local Containerfile.
+====
+
+[[exercise-4-custom-xattr]]
+== Exercise 4: Custom Components via xattr
+
+By default chunkah groups files by RPM package. For application code that isn't part of any RPM, use the `user.component` extended attribute to control which layer files end up in.
+
+=== Step 8: Build with Custom Component Labels
+
+[source,bash,role=execute]
+----
+cat > ~/hummingbird-lab/chunkah-demo/Containerfile.xattr << 'CFILE'
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+
+WORKDIR /build
+
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+
+# Tag files with custom component names.
+# chunkah will group these into separate layers.
+USER root
+RUN dnf install -y attr && dnf clean all \
+ && setfattr -n user.component -v "app-code"   /build/target/quarkus-app/app \
+ && setfattr -n user.component -v "app-deps"   /build/target/quarkus-app/lib \
+ && setfattr -n user.component -v "app-runtime" /build/target/quarkus-app/quarkus
+USER 1001
+
+# chunkah splitting stage
+FROM quay.io/jlebon/chunkah AS chunkah
+
+RUN --mount=from=builder,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build \
+          --max-layers 32 \
+        > /run/src/out.ociarchive
+
+# Final image
+FROM oci-archive:out.ociarchive
+
+USER 1001
+EXPOSE 8080
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+CFILE
+
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag chunkah-xattr-demo:v1 \
+  -f ~/hummingbird-lab/chunkah-demo/Containerfile.xattr \
+  ~/hummingbird-lab/chunkah-demo/
+----
+
+=== Step 9: Inspect Layer Structure
+
+[source,bash,role=execute]
+----
+podman image history chunkah-xattr-demo:v1
+----
+
+.*Expected layer structure (conceptual):*
+----
+Layer 1 — OS base (ubi9 packages)                  <- changes only on RHSA updates
+Layer 2 — lib/ (app-deps: Quarkus + Maven deps)    <- changes when pom.xml changes
+Layer 3 — quarkus/ (app-runtime: Quarkus runtime)   <- changes when Quarkus version changes
+Layer 4 — app/ (app-code: your classes)              <- changes on every app build
+----
+
+A pure application code change now only invalidates the `app-code` layer. Dependency updates only invalidate `app-deps`. Quarkus runtime updates have their own layer. OS patches only touch the base layers. Compare this to a traditional Containerfile where a dependency bump at the top invalidates everything below it.
+
+[[shell-helpers]]
+== Shell Helpers
+
+Add these functions to `~/.bashrc` for convenient chunkah usage:
+
+[source,bash,role=execute]
+----
+cat >> ~/.bashrc << 'BASHRC'
+
+# --- chunkah helpers ---
+
+# Split any image with chunkah
+hb-chunk() {
+  local img="${1:?Usage: hb-chunk <image> [output-tag] [max-layers]}"
+  local output="${2:-${img}-chunked}"
+  local max_layers="${3:-48}"
+
+  echo "=== hb-chunk: splitting $img ==="
+  podman pull "$img" 2>/dev/null || true
+
+  export CHUNKAH_CONFIG_STR="$(podman inspect "$img")"
+  podman run --rm \
+    --mount=type=image,src="$img",dest=/chunkah \
+    -e CHUNKAH_CONFIG_STR \
+    quay.io/jlebon/chunkah build \
+      --max-layers "$max_layers" \
+    | podman load
+
+  podman tag "$img" "$output"
+
+  ORIG=$(podman inspect "$img" --format '{{len .RootFS.Layers}}')
+  SPLIT=$(podman inspect "$output" --format '{{len .RootFS.Layers}}')
+  echo "  Original: $ORIG layers"
+  echo "  Chunked:  $SPLIT layers"
+  echo "Result: $output"
+}
+
+# Split and push with zstd:chunked compression
+hb-chunk-push() {
+  local img="${1:?Usage: hb-chunk-push <image> <registry-dest>}"
+  local dest="${2:?}"
+  local tmp_tag="localhost/chunkah-tmp:$(date +%s)"
+
+  hb-chunk "$img" "$tmp_tag"
+
+  echo "=== Pushing $tmp_tag -> $dest (zstd:chunked) ==="
+  buildah push \
+    --compression-format zstd:chunked \
+    --compression-level 3 \
+    "$tmp_tag" \
+    "docker://$dest"
+
+  podman rmi "$tmp_tag" 2>/dev/null || true
+  echo "Done: $dest"
+}
+BASHRC
+
+source ~/.bashrc
+echo "Shell helpers added: hb-chunk, hb-chunk-push"
+----
+
+[[push-zstd-chunked]]
+== Push with zstd:chunked
+
+For maximum pull-time efficiency, push chunkah-split images with `zstd:chunked` compression. This embeds chunk-level metadata in the zstd stream so that Podman (with `enable_partial_images=true`) can fetch only the changed file chunks within each layer via HTTP range requests.
+
+[source,bash,role=execute]
+----
+echo "=== Example: push with zstd:chunked ==="
+echo "buildah push \\"
+echo "  --compression-format zstd:chunked \\"
+echo "  --compression-level 3 \\"
+echo "  chunkah-demo:v1 \\"
+echo "  docker://registry.example.com/apps/chunkah-demo:v1"
+echo ""
+echo "To enable partial pulls on the client side:"
+echo "  Add 'enable_partial_images = true' to containers.conf"
+----
+
+[NOTE]
+====
+`zstd:chunked` requires registry support for HTTP range requests. Quay.io and most modern registries support this. The `--compression-level 3` provides a good balance between compression ratio and speed.
+====
+
+[[how-it-fits-together]]
+== How It All Fits Together
+
+----
+buildah build (UBI builder -> Hummingbird runtime)
+    |
+    |   Traditional result: 3-4 large layers structured
+    |   by Containerfile instructions, not by content
+    |
+    v
+chunkah build (content-based layer split)
+    |
+    |   Reads RPM database + user.component xattrs
+    |   Groups files by which package/component they belong to
+    |   Produces up to N layers (default 64)
+    |
+    |   Result: 20-48 smaller layers structured by content
+    |
+    v
+buildah push --compression-format zstd:chunked
+    |
+    |   Layers pushed with chunk-level metadata
+    |
+    v
+Registry (quay.io, internal registry, etc.)
+    |
+    v
+podman pull (with enable_partial_images=true)
+    |
+    |   chunkah effect:  only layers for changed packages
+    |                    need to be pulled at all
+    |
+    |   zstd:chunked effect: within those changed layers,
+    |                        only changed file chunks are fetched
+    |
+    v
+Running container -- same content, dramatically less
+network traffic on every image update
+----
+
+[[best-practices]]
+== Best Practices
+
+[arabic]
+. **Always use `--squash-all` before chunkah on your app image**
++
+Without squashing, your image has layers from each Containerfile instruction. chunkah works best starting from a single flat layer representing the complete final filesystem. Squashing first lets chunkah make all the layer decisions from scratch based on content, not build history.
++
+[source,bash]
+----
+buildah build --squash-all -t my-app:flat .
+# Then run chunkah on the squashed image
+----
+
+. **Set `--max-layers` thoughtfully**
++
+The default is 64. For a typical Hummingbird-based app image, that's a good starting point.
++
+* **16-32**: Small images or registries with high per-layer overhead
+* **64** (default): Most Hummingbird-based application images
+* **Up to 448**: Large system images where you want fine-grained RPM isolation
++
+The trade-off: fewer layers means coarser grouping but fewer HTTP round trips on pull; more layers means finer grouping (better deduplication) but more layer overhead.
+
+. **Use `user.component` xattrs for your own app files**
++
+chunkah understands RPM packages automatically but knows nothing about your application files. Without xattrs, your app code and dependencies might end up packed into the same layer. Tagging them explicitly (as shown in Exercise 4) keeps them isolated so that a code change doesn't invalidate the dependency layer.
+
+. **Combine with `zstd:chunked` on push**
++
+chunkah is a build-time optimisation (which layers change). `zstd:chunked` is a pull-time optimisation (how much of a changed layer to download). They stack -- always use both for production images:
++
+[source,bash]
+----
+buildah push --compression-format zstd:chunked --compression-level 3 \
+  my-app:latest docker://registry.example.com/apps/my-app:latest
+----
+
+. **Pin the chunkah image version in pipelines**
++
+chunkah is pre-1.0 and moving fast. Use a specific version tag, not `latest`:
++
+[source,bash]
+----
+# Good
+podman run --rm quay.io/jlebon/chunkah:v0.2.0 build ...
+
+# Risky — breaking changes may land at any time
+podman run --rm quay.io/jlebon/chunkah:latest build ...
+----
+
+[[cleanup]]
+== Cleanup
+
+[source,bash,role=execute]
+----
+podman rmi chunkah-demo:v1 chunkah-xattr-demo:v1 python-311-chunked 2>/dev/null || true
+rm -rf ~/hummingbird-lab/chunkah-demo/
+----
+
+[[summary]]
+== Summary
+
+.*What You've Accomplished*
+✅ Understood chunkah's role: content-based layer splitting at build time +
+✅ Split an existing Hummingbird image and compared layer counts +
+✅ Used the `FROM oci-archive:` trick in multi-stage builds +
+✅ Split an arbitrary image with `Containerfile.splitter` +
+✅ Controlled layer assignment with custom `user.component` xattrs +
+✅ Added `hb-chunk` and `hb-chunk-push` shell helpers +
+✅ Understood how chunkah + `zstd:chunked` work together
+
+.*Key Takeaways*
+
+**chunkah + zstd:chunked = Minimal Pull Traffic:**
+
+* **chunkah** (build time): Restructures layers so each package lives in its own layer
+* **zstd:chunked** (pull time): Within each layer, only changed file chunks are fetched
+* **Together**: A single-package update triggers a tiny delta pull instead of a full layer re-download
+
+**When to Use chunkah:**
+
+* Production images that are updated frequently (Renovate, Dependabot)
+* Clusters with many nodes pulling the same images
+* Air-gapped environments where bandwidth is constrained
+* Any Hummingbird image where incremental update efficiency matters
+
+=== Additional Resources
+
+* https://github.com/coreos/chunkah[chunkah GitHub Repository^]
+* Container image: `quay.io/jlebon/chunkah`
+* https://www.redhat.com/en/blog/zstdchunked-nested-layers-and-oci-partial-pull-support[zstd:chunked and Partial Pulls^]
+
+=== Troubleshooting
+
+**Issue: chunkah container fails to start**
+[source,bash]
+----
+podman pull quay.io/jlebon/chunkah:latest
+
+podman run --rm quay.io/jlebon/chunkah --help
+----
+
+**Issue: `FROM oci-archive:` not found**
+[source,bash]
+----
+buildah build --skip-unused-stages=false ...
+----
+
+**Issue: `Containerfile.splitter` download fails**
+[source,bash]
+----
+curl -LO https://github.com/jlebon/chunkah/releases/download/v0.2.0/Containerfile.splitter
+
+buildah build \
+  --skip-unused-stages=false \
+  --from "$IMG" \
+  --build-arg CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")" \
+  -f Containerfile.splitter \
+  --tag "$TAG" .
+----
+
+**Issue: xattr not supported**
+[source,bash]
+----
+sudo dnf install -y attr
+
+getfattr -d /path/to/file
+----

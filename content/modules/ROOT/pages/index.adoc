@@ -1,94 +1,237 @@
-= What is Showroom?
-:navtitle: What is Showroom?
+= {workshop-title}
 
-Showroom is a web-based lab instruction platform for the https://demo.redhat.com[Red Hat Demo Platform].
-It combines rendered AsciiDoc content with embedded terminals, consoles, and interactive tools -- giving workshop and demo participants everything they need in a single browser tab.
+== Welcome to Project Hummingbird
 
-== What Users See
+Welcome to the **Project Hummingbird Environment Workshop**! This comprehensive two-module workshop is designed to help you master the skills needed to build, deploy, and manage minimal, hardened container environments using Red Hat's innovative Project Hummingbird initiative.
 
-When a participant opens their Showroom URL they get a split-pane interface:
+**Project Hummingbird** represents Red Hat's strategic approach to delivering "zero-CVE" container base images built from Fedora components. Launched in November 2025, Hummingbird addresses critical challenges in modern software supply chains by providing micro-sized, hardened runtime images with complete transparency through SBOMs (Software Bill of Materials).
 
-* **Left pane** -- step-by-step lab instructions rendered from an https://antora.org[Antora] site you author in AsciiDoc.
-* **Right pane** -- one or more tabs such as:
-** A web terminal (SSH to a bastion, containerised CLI tools, or both).
-** The OpenShift web console embedded in an iframe.
-** A VS Code editor (Code Server).
-** A VNC desktop (noVNC).
-** Any external URL you choose.
+.*Workshop Duration*
+* **Total Time**: {workshop-duration}
+* **Module 1**: {lab1-duration}
+* **Module 2**: {lab2-duration}
 
-The UI layout, tab names, and tab URLs are all controlled by a simple `ui-config.yml` file that lives in your content repository.
+.*Delivery Format*
+* Flexible delivery (in-person or virtual)
+* Hands-on labs with pre-provisioned AWS environments
+* Independent modules (can be taken standalone)
 
-== How It Gets Deployed
+== Why Hummingbird Matters
 
-This Ansible collection -- `agnosticd.showroom` -- is the primary way Showroom instances are deployed on the Red Hat Demo Platform.
-Depending on the environment type, you use one of two roles:
+Traditional container base images, even minimal variants like UBI Minimal, include packages that aren't needed at runtime. These unnecessary components create:
 
-[cols="1,3",options="header"]
-|===
-|Role |Use when...
+* **Larger attack surfaces** with more CVEs to patch
+* **Slower deployments** due to image size
+* **Compliance challenges** for supply chain security
+* **Higher infrastructure costs** from bloated images
 
-|`ocp4_workload_showroom`
-|Your lab runs on an OpenShift 4 cluster.
-The role deploys Showroom as a pod using a Helm chart, complete with content rendering, terminals, and an OpenShift `Route`.
+**Hummingbird's Solution:**
 
-|`vm_workload_showroom`
-|Your lab runs on a VM (RHEL, Fedora, etc.).
-The role deploys Showroom with rootless Podman, Traefik for TLS, and systemd for lifecycle management.
-|===
+* **Zero-CVE at Ship Time**: Images delivered free of known vulnerabilities
+* **Micro-Sized**: JRE runtime ~185MB, Node.js < 100MB, Go < 25MB (vs ~400MB+ for full UBI)
+* **Enterprise Grade**: Built on Fedora/RHEL foundation with Red Hat support
+* **Complete Transparency**: Every image ships with SBOMs for compliance
+* **Production Ready**: Runtime images for .NET, Go, Java, Node.js, Python, databases, and web servers
 
-Both roles follow the same basic flow:
+== Who Should Attend?
 
-. Clone your Antora content repository.
-. Inject runtime variables (credentials, hostnames, GUIDs) as AsciiDoc attributes.
-. Render the content to HTML.
-. Serve the content alongside the terminal and tab services you configured.
-. Publish the final URL back to the user.
+This workshop is designed for intermediate to advanced technical professionals:
 
-== Key Concepts
+**Module 1 - Developers ({lab1-audience})**
 
-Content repository::
-A Git repo containing your AsciiDoc lab instructions, structured as an Antora component.
-You typically fork https://github.com/rhpds/showroom_template_nookbag[showroom_template_nookbag] and add your own pages.
-See xref:content-repo.adoc[].
+Software developers who want to:
 
-AgnosticV catalog item::
-The YAML configuration in the https://github.com/rhpds/agnosticv[agnosticv] repository that ties your content repo to an environment on the Red Hat Demo Platform.
-See xref:agnosticv-config.adoc[].
+* Set up local container development environments with Podman Desktop
+* Build secure, minimal container images using Hummingbird runtimes
+* Implement security scanning and image signing workflows
+* Understand multi-stage builds for production-ready containers
+* Work with rootless Podman on RHEL 9/10 or Fedora {fedora-version}
 
-User data::
-A set of key-value pairs (hostnames, passwords, URLs) written by infrastructure roles during provisioning and automatically injected into your content as Antora attributes.
-See xref:user-data.adoc[].
+**Module 2 - Platform Engineers ({lab2-audience})**
 
-UI configuration::
-A `ui-config.yml` file in your content repo that defines the tabs, layout width, and dynamic URLs shown alongside your lab instructions.
-See xref:ui-config.adoc[].
+DevOps, SRE, and platform engineering teams who need to:
 
-== Where to Start
+* Deploy Shipwright Builds on OpenShift {openshift-version}
+* Implement Cloud Native Buildpacks with Hummingbird runtimes
+* Create reusable BuildStrategy patterns for development teams
+* Integrate automated security scanning and SBOM generation
+* Establish GitOps-driven build and deployment pipelines
 
-[cols="1,3",options="header"]
-|===
-|Goal |Page
+== What You'll Learn
 
-|Get a Showroom lab running quickly
-|xref:quick-start.adoc[]
+=== Module 1: Container Development Environment with Hummingbird
 
-|Create or structure a content repo
-|xref:content-repo.adoc[]
+In this hands-on module, you'll build and secure container images using a pre-configured developer environment:
 
-|Wire up an AgnosticV catalog item
-|xref:agnosticv-config.adoc[]
+* **Multi-Stage Builds**: Build production images using UBI builder + Hummingbird runtime
+* **Security Tools**: Use cosign, syft, and grype for image signing and scanning
+* **Security Workflow**: Scan for CVEs, generate SBOMs, sign and verify images
+* **Size Optimization**: Compare image sizes and vulnerability counts
+* **SELinux Hardening**: Generate custom SELinux policies with udica for Hummingbird containers
+* **Advanced SELinux**: Device access policies, iteration workflows, and policy distribution patterns
+* **Optional -- chunkah**: Content-based layer splitting for optimised image pulls
+* **Optional -- Multi-Language Builds**: Production Containerfiles for Node.js, Quarkus Native, Python, and Go
+* **Optional -- The Aha Moment**: Demonstrating chunkah value with CVE simulations and layer digest diffs
+* **Optional -- Tomcat on Hummingbird**: Multi-stage Tomcat builds with RPM and upstream approaches, production hardening, and chunkah layer tagging
 
-|Understand the full architecture
-|xref:architecture.adoc[]
+.*Expected Outcomes*
+By the end of Module 1, you'll be able to build, scan, sign, and harden Hummingbird-based container images locally with production-ready SELinux policies.
 
-|Contribute to Showroom itself
-|xref:contributing.adoc[]
-|===
+=== Module 2: Building Hummingbird Images with Shipwright on OpenShift
 
-== Related Projects
+This module focuses on platform-level image building and deployment:
 
-* https://github.com/agnosticd/showroom[agnosticd.showroom collection] -- this Ansible collection (you are here).
-* https://github.com/rhpds/showroom_template_nookbag[showroom_template_nookbag] -- the recommended content repo template.
-* https://github.com/rhpds/showroom-deployer[showroom-deployer] -- Helm charts that power OCP deployments.
-* https://github.com/rhpds/showroom-images[showroom-images] -- container images (content server, terminals, Antora, etc.).
-* https://github.com/rhpds/nookbag[nookbag] -- the zero-touch UI bundle.
+* **Cloud Native Buildpacks**: Implement source-to-image builds without Dockerfiles
+* **Hummingbird Integration**: Configure Buildpacks to use Hummingbird runtime images
+* **Custom Strategies**: Create multi-language BuildStrategy patterns for development teams
+* **Security Pipeline**: Integrate SBOM generation, scanning, and signing into builds
+* **Production Deployment**: Deploy built images to OpenShift namespaces
+* **SELinux CI/CD**: Automate udica policy generation with Tekton and distribute via MachineConfig
+* **Optional -- chunkah Pipeline**: Automated content-based layer splitting in CI/CD
+* **Optional -- RHTAS**: Keyless image signing and SBOM attestation with Red Hat Trusted Artifact Signer
+
+.*Expected Outcomes*
+By the end of Module 2, you'll have working Shipwright builds deploying Hummingbird-based applications with automated security controls and SELinux policies.
+
+== Workshop Structure
+
+Both modules are designed to function **independently**. You can:
+
+* Take only Module 1 (developer focus)
+* Take only Module 2 (platform focus)
+* Take both modules for end-to-end understanding
+
+Each module includes:
+
+* Brief conceptual overview (5-10 minutes)
+* Hands-on labs (30-35 minutes)
+* Verification and summary (5 minutes)
+
+== Environment Setup
+
+[IMPORTANT]
+====
+**Before starting the labs**, you need a prepared environment for the module(s) you plan to complete. The fastest option is to use pre-provisioned environments from the **Red Hat Demo Platform (RHDP)** -- no manual installation required.
+
+**For Module 1** (Developer Environment): +
+https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/sandboxes-gpte.rhel9-desktop.prod&utm_source=webapp&utm_medium=share-link[Deploy RHEL 9 Desktop via RHDP^] +
+See xref:appendix-a-rhel-setup.adoc[Appendix A] for RHDP details, automation scripts, or manual setup steps.
+
+**For Module 2** (OpenShift Platform): +
+https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[Deploy OpenShift Cluster (AWS) via RHDP^] +
+See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automation scripts, or manual setup steps.
+====
+
+=== Lab Environment Access
+
+[NOTE]
+====
+If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
+====
+
+==== OpenShift Console (Module 2)
+
+Your OpenShift console is available at: {openshift-console}
+
+*Credentials:*
+
+* *Username:* `{openshift-user}`
+* *Password:* `{openshift-password}`
+
+==== Registry Credentials
+
+For pushing images to registries:
+
+* *Registry User:* `{registry-user}`
+* *Registry Password:* `{registry-password}`
+
+==== GUID Information
+
+Your unique lab environment identifier: `{guid}`
+
+== Key Technologies Covered
+
+*Container Tools:*
+
+* Podman {podman-version} (rootless container runtime)
+* Buildah (container image building)
+* Skopeo (image inspection and distribution)
+* Podman Desktop (GUI for container workflows)
+
+*Security Tools:*
+
+* cosign (image signing and verification)
+* syft (SBOM generation)
+* grype (vulnerability scanning)
+
+*Platform Technologies:*
+
+* OpenShift {openshift-version}
+* {shipwright-operator}
+* Cloud Native Buildpacks
+* Tekton Pipelines
+
+*Registries:*
+
+* Hummingbird Registry: `{hummingbird-registry}`
+* UBI Registry: `{ubi-registry}`
+
+== Getting Started
+
+Ready to begin? Make sure your environment is prepared (see <<Environment Setup>> above), then choose your starting module:
+
+* **Module 1: Developer Environment** - Build and secure Hummingbird container images
+  - xref:module-01-01-building.adoc[1.1: Building with Hummingbird]
+  - xref:module-01-02-security.adoc[1.2: Security Scanning & SBOMs]
+  - xref:module-01-03-selinux.adoc[1.3: SELinux Fundamentals with udica]
+  - xref:module-01-04-selinux-advanced.adoc[1.4: Advanced SELinux Hardening]
+
+* **Module 2: Shipwright and Buildpacks** - Deploy platform-level builds on OpenShift
+  - xref:module-02-01-buildpacks.adoc[2.1: Cloud Native Buildpacks]
+  - xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
+  - xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
+  - xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
+
+* **Optional Exercises** - Additional hands-on labs for image optimisation
+  - xref:module-01-05-chunkah.adoc[1.5: Content-Based Layer Splitting with chunkah (~15 min)]
+  - xref:module-01-06-multi-lang-builds.adoc[1.6: Multi-Language Builds with Hummingbird (~15 min)]
+  - xref:module-01-07-chunkah-value.adoc[1.7: The Aha Moment — Demonstrating chunkah Value (~20 min)]
+  - xref:module-01-08-tomcat-hummingbird.adoc[1.8: Layering Tomcat on Hummingbird (~15 min)]
+  - xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines (~12 min)]
+  - xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS (~20 min)]
+
+* **Appendix: Environment Setup** - Setup instructions if your environment is not pre-configured
+  - xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]
+  - xref:appendix-b-openshift-setup.adoc[Appendix B: OpenShift Platform Environment]
+
+Each sub-module is self-contained with clear learning objectives, hands-on activities, and verification steps.
+
+== Additional Resources
+
+*Project Hummingbird:*
+
+* https://www.redhat.com/en/about/press-releases/red-hat-introduces-project-hummingbird-zero-cve-strategies[Red Hat Press Release: Project Hummingbird^]
+* https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/hummingbird[Official Hummingbird Page^]
+* https://thenewstack.io/hummingbird-red-hats-answer-to-alpine-ubuntu-chiseled-wolfi/[Analysis: Hummingbird vs Alpine/Chiseled/Wolfi^]
+
+*Shipwright and Buildpacks:*
+
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/builds_using_shipwright/index[OpenShift Builds Documentation^]
+* https://github.com/shipwright-io/build[Shipwright GitHub Repository^]
+* https://www.redhat.com/en/blog/builds-red-hat-openshift-now-generally-available[Builds for OpenShift GA Announcement^]
+
+*Container Tools:*
+
+* https://podman-desktop.io/[Podman Desktop^]
+* https://developers.redhat.com/products/rhel/ubi[Red Hat Universal Base Images^]
+
+== Support and Feedback
+
+If you encounter issues during the workshop:
+
+1. Review the verification sections in each module
+2. Check the troubleshooting tips in lab steps
+3. Consult the additional resources listed above
+4. Reach out to workshop facilitators (if in instructor-led session)
+
+Let's get started building secure, minimal container images with Project Hummingbird!

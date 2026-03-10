@@ -1,0 +1,1053 @@
+= Sub-Module 2.6: Keyless Signing with RHTAS (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~20 minutes +
+*Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline) and Sub-Module 2.5 (chunkah Pipeline) +
+*Status:* Optional exercise -- not required for Module 2 completion +
+*Learning Objectives:*
+
+* Understand why keyless signing replaces long-lived key management
+* Install the RHTAS operator via OLM and deploy the Securesign stack on OpenShift
+* Configure Tekton ServiceAccounts with OIDC token projection for Fulcio
+* Create Tekton Tasks for SBOM generation, keyless signing, and SBOM attestation
+* Verify image signatures and attestations against the Rekor transparency log
+* Enforce supply chain policy with Conforma (Enterprise Contract)
+--
+
+[[introduction]]
+== Introduction
+
+In Sub-Module 2.3, the signing step was left as a framework: `cosign sign` was demonstrated but not executed in-cluster because it requires either long-lived key files or an enterprise signing infrastructure. This sub-module fills that gap with **Red Hat Trusted Artifact Signer (RHTAS)**.
+
+With standalone cosign you manage long-lived private keys. With RHTAS you get **keyless signing**: Tekton tasks authenticate via their Kubernetes service account OIDC token, Fulcio issues a short-lived certificate for that identity, the signature goes into Rekor's tamper-evident log, and TUF distributes the trust root. No key files to rotate or leak.
+
+=== What RHTAS Actually Is
+
+RHTAS is a production-ready deployment of the Sigstore project within an enterprise. Sigstore has become the de-facto signing system for containers -- Kubernetes standardised on it, and multiple Red Hat products adopt it including Podman, Quay, and Red Hat Trusted Content.
+
+The operator deploys four services, each a trusted root target in TUF:
+
+* **Fulcio** -- the certificate authority (issues short-lived signing certs)
+* **Rekor** -- the transparency log (append-only, tamper-evident)
+* **CTlog** -- the certificate transparency log
+* **TSA** -- the timestamp authority
+
+Client software like `cosign` uses these trust root targets to sign and verify artifact signatures.
+
+----
+[Developer / Tekton SA]
+  |
+  |  OIDC token (projected)
+  v
+[Fulcio] -- issues short-lived certificate
+  |
+  v
+[cosign sign] -- keyless, cert-based
+  |
+  v
+[Rekor] -- records signature in transparency log
+  |
+  v
+[TUF] -- distributes trust root to verifiers
+----
+
+[NOTE]
+====
+**No key files anywhere in this workflow.** The signing identity for a Tekton task is a URI -- `https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-signing-sa` -- not a key. You can see which pipeline run signed which image directly in the Rekor log.
+====
+
+=== Prerequisites
+
+* Red Hat OpenShift Container Platform 4.16 or later
+* A workstation with the `oc` binary installed
+* Access to the OpenShift web console with the `cluster-admin` role
+* An OIDC provider configured (Red Hat build of Keycloak, Google, Amazon STS, Microsoft Entra ID, or GitHub)
+* `cosign` version 2.2 or later (downloadable from the OpenShift cluster after installation)
+
+.*Resource recommendations for the Trillian database:*
+
+[cols="1,1,1,1",options="header"]
+|===
+| Mode | Storage | RAM | CPU
+
+| Dedicated (production)
+| 5 GB
+| 1 GB
+| 2 cores
+
+| Managed (non-production)
+| 10 GB
+| 2 GB
+| 4 cores
+|===
+
+[[install-operator]]
+== Exercise 1: Install the Operator and Deploy the Stack
+
+=== Step 1: Install the RHTAS Operator via OperatorHub
+
+The supported installation path on OpenShift is through the Operator Lifecycle Manager (OLM):
+
+1. Log in to the OpenShift web console with `cluster-admin` privileges
+2. Navigate to *Operators* -> *OperatorHub*
+3. Search for **Red Hat Trusted Artifact Signer**
+4. Accept the default values and click *Install*
+5. Wait for the installation to finish
+
+[IMPORTANT]
+====
+The RHTAS operator installs into the `openshift-operators` namespace. Once installation finishes, a new project called `trusted-artifact-signer` is **automatically created** for you -- you do not need to create it manually. All dependencies are automatically installed.
+====
+
+=== Step 2: Download the CLI Tools
+
+After the operator is installed, download the `cosign`, `rekor-cli`, and `ec` binaries from the OpenShift cluster:
+
+1. In the OpenShift web console, click the *?* icon, then click *Command line tools*
+2. Download `cosign`, `rekor-cli`, and `ec` for your platform
+
+[source,bash,role=execute]
+----
+gunzip cosign-amd64.gz && chmod +x cosign-amd64
+sudo mv cosign-amd64 /usr/local/bin/cosign
+
+gunzip rekor-cli-amd64.gz && chmod +x rekor-cli-amd64
+sudo mv rekor-cli-amd64 /usr/local/bin/rekor-cli
+
+gunzip ec-amd64.gz && chmod +x ec-amd64
+sudo mv ec-amd64 /usr/local/bin/ec
+----
+
+[NOTE]
+====
+For RHTAS, you must use `cosign` version 2.2 or later. The binaries served from the OpenShift cluster are always the correct version for your RHTAS installation.
+====
+
+=== Step 3: Deploy the Securesign Stack
+
+Deploy the full Sigstore stack by creating a Securesign custom resource. Navigate to *Operators* -> *Installed Operators* -> *Red Hat Trusted Artifact Signer*, select the `trusted-artifact-signer` project, click the *Securesign* tab, then click *Create Securesign* and switch to *YAML view*.
+
+The Securesign CR configures Fulcio with two OIDC issuers: one for human users (Keycloak/RHBK) and one for Kubernetes service accounts (enabling keyless pipeline signing). Under the `spec.fulcio.config.OIDCIssuers` section, edit the issuer URLs and `ClientID` for your environment:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: rhtas.redhat.com/v1alpha1
+kind: Securesign
+metadata:
+  name: securesign-sample
+  namespace: trusted-artifact-signer
+spec:
+  rekor:
+    externalAccess:
+      enabled: true
+    monitoring:
+      enabled: true
+      tlog:
+        enabled: true
+        interval: 1m
+    trillian:
+      database:
+        create: true
+
+  fulcio:
+    externalAccess:
+      enabled: true
+    config:
+      OIDCIssuers:
+        - ClientID: "trusted-artifact-signer"
+          IssuerURL: "https://keycloak-keycloak-system.apps.example.com/auth/realms/trusted-artifact-signer"
+          Issuer:    "https://keycloak-keycloak-system.apps.example.com/auth/realms/trusted-artifact-signer"
+          Type: "email"
+        - ClientID: "trusted-artifact-signer"
+          IssuerURL: "https://kubernetes.default.svc"
+          Issuer:    "https://kubernetes.default.svc"
+          Type: "kubernetes"
+    certificate:
+      organizationName: Example Corp
+      organizationEmail: platform@example.com
+      commonName: fulcio.apps.example.com
+    monitoring:
+      enabled: true
+
+  tuf:
+    externalAccess:
+      enabled: true
+
+  ctlog: {}
+EOF
+----
+
+[TIP]
+====
+You can define several different OIDC providers in the same configuration. If you do not need an OIDC provider for human users, you can remove the Keycloak issuer and keep only the Kubernetes issuer for pipeline signing.
+
+If you prefer a different database rather than the default, set `spec.trillian.database.create` to `false` and provide a `databaseSecretRef`:
+
+[source,yaml]
+----
+trillian:
+  database:
+    create: false
+    databaseSecretRef:
+      name: trillian-mysql
+----
+====
+
+=== Step 4: Watch Until All Components Are Ready
+
+Click the *All instances* tab in the operator view to watch deployment status, or use the CLI:
+
+[source,bash,role=execute]
+----
+oc get fulcio,rekor,tuf,ctlog \
+  -n trusted-artifact-signer
+----
+
+.*Expected output (when ready):*
+----
+NAME                                       STATUS
+fulcio.rhtas.redhat.com/securesign-sample   Ready
+
+NAME                                      STATUS
+rekor.rhtas.redhat.com/securesign-sample   Ready
+
+NAME                                    STATUS
+tuf.rhtas.redhat.com/securesign-sample   Ready
+
+NAME                                      STATUS
+ctlog.rhtas.redhat.com/securesign-sample   Ready
+----
+
+[NOTE]
+====
+The Securesign instance itself does not report a status. Watch for the individual component CRs (Fulcio, Rekor, TUF, CTlog) to reach `Ready`.
+====
+
+=== Step 5: Configure Shell Environment
+
+Set up the environment variables that cosign and other tools need. These use `oc get` to pull the live URLs from the operator-managed resources:
+
+[source,bash,role=execute]
+----
+export TUF_URL=$(oc get tuf -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_FULCIO_URL=$(oc get fulcio -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_REKOR_URL=$(oc get rekor -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_MIRROR=$TUF_URL
+export COSIGN_ROOT=$TUF_URL/root.json
+export COSIGN_OIDC_CLIENT_ID="trusted-artifact-signer"
+export COSIGN_OIDC_ISSUER="https://kubernetes.default.svc"
+export COSIGN_CERTIFICATE_OIDC_ISSUER="https://kubernetes.default.svc"
+export COSIGN_YES="true"
+export SIGSTORE_FULCIO_URL=$COSIGN_FULCIO_URL
+export SIGSTORE_OIDC_ISSUER=$COSIGN_OIDC_ISSUER
+export SIGSTORE_REKOR_URL=$COSIGN_REKOR_URL
+export REKOR_REKOR_SERVER=$COSIGN_REKOR_URL
+----
+
+Initialise The Update Framework (TUF) system:
+
+[source,bash,role=execute]
+----
+cosign initialize
+----
+
+[IMPORTANT]
+====
+**Two OIDC issuers in the Fulcio config serve different purposes:**
+
+* The **Keycloak** issuer (`Type: "email"`) handles human users signing from their workstations.
+* The **Kubernetes** issuer (`Type: "kubernetes"`) handles Tekton tasks signing automatically via projected service account tokens.
+
+Both identities appear in the Fulcio-issued certificate's Subject Alternative Name (SAN), providing full audit trail in Rekor.
+====
+
+[[configure-tekton]]
+== Exercise 2: Configure Tekton for Keyless Signing
+
+=== Step 6: Create the Signing ServiceAccount
+
+Tekton tasks need a service account whose projected OIDC token Fulcio will accept as an identity:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tekton-signing-sa
+  namespace: tekton-pipelines
+  annotations:
+    signing-identity: "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-signing-sa"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tekton-signing-sa-binding
+  namespace: tekton-pipelines
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-aggregate-edit
+subjects:
+  - kind: ServiceAccount
+    name: tekton-signing-sa
+    namespace: tekton-pipelines
+EOF
+----
+
+.*Expected output:*
+----
+serviceaccount/tekton-signing-sa created
+rolebinding.rbac.authorization.k8s.io/tekton-signing-sa-binding created
+----
+
+The `signing-identity` annotation defines the URI that will appear in the signing certificate's SAN -- it is what you verify against later. The OIDC token gets projected into the task pod automatically by Kubernetes; no manual token handling is needed in your Task scripts.
+
+=== Step 7: Create the RHTAS Endpoints ConfigMap
+
+This ConfigMap is created once and referenced by every signing Task via `envFrom`. Pull the URLs dynamically from the operator-managed resources:
+
+[source,bash,role=execute]
+----
+NS=trusted-artifact-signer
+
+FULCIO_URL=$(oc get fulcio -n $NS -o jsonpath='{.items[0].status.url}')
+REKOR_URL=$(oc get rekor -n $NS -o jsonpath='{.items[0].status.url}')
+TUF_URL=$(oc get tuf -n $NS -o jsonpath='{.items[0].status.url}')
+
+oc create configmap rhtas-config \
+  -n tekton-pipelines \
+  --from-literal=COSIGN_FULCIO_URL="$FULCIO_URL" \
+  --from-literal=COSIGN_REKOR_URL="$REKOR_URL" \
+  --from-literal=TUF_URL="$TUF_URL" \
+  --from-literal=COSIGN_MIRROR="$TUF_URL" \
+  --from-literal=COSIGN_ROOT="$TUF_URL/root.json" \
+  --from-literal=COSIGN_YES="true" \
+  --from-literal=COSIGN_OIDC_CLIENT_ID="trusted-artifact-signer" \
+  --from-literal=COSIGN_OIDC_ISSUER="https://kubernetes.default.svc" \
+  --from-literal=COSIGN_CERTIFICATE_OIDC_ISSUER="https://kubernetes.default.svc" \
+  --from-literal=SIGSTORE_FULCIO_URL="$FULCIO_URL" \
+  --from-literal=SIGSTORE_OIDC_ISSUER="https://kubernetes.default.svc" \
+  --from-literal=SIGSTORE_REKOR_URL="$REKOR_URL" \
+  --from-literal=REKOR_REKOR_SERVER="$REKOR_URL" \
+  --dry-run=client -o yaml | oc apply -f -
+----
+
+.*Expected output:*
+----
+configmap/rhtas-config created
+----
+
+[TIP]
+====
+Re-run this command any time you redeploy the Securesign stack. It always captures the live URLs from the operator-managed routes.
+====
+
+[[signing-tasks]]
+== Exercise 3: The Signing Tasks
+
+This exercise creates three Tekton Tasks that form the signing portion of the pipeline: SBOM generation, keyless signing with attestation, and policy verification.
+
+=== Step 8: Task 1 -- Generate SBOM with Syft
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: generate-sbom
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      description: Fully qualified image reference (registry/name:tag)
+    - name: OUTPUT_FORMAT
+      default: cyclonedx-json
+  results:
+    - name: SBOM_PATH
+    - name: SBOM_DIGEST
+  workspaces:
+    - name: output
+  steps:
+    - name: generate
+      image: ghcr.io/anchore/syft:latest
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        SBOM_PATH="$(workspaces.output.path)/sbom.cyclonedx.json"
+
+        syft scan \
+          "$(params.IMAGE)" \
+          --output "cyclonedx-json=${SBOM_PATH}"
+
+        if [ -d "$(workspaces.output.path)/source" ]; then
+          syft scan \
+            "dir:$(workspaces.output.path)/source" \
+            --output "cyclonedx-json=$(workspaces.output.path)/sbom-source.cyclonedx.json"
+        fi
+
+        DIGEST=$(sha256sum "$SBOM_PATH" | cut -d' ' -f1)
+
+        echo -n "$SBOM_PATH"      > $(results.SBOM_PATH.path)
+        echo -n "sha256:$DIGEST"   > $(results.SBOM_DIGEST.path)
+
+        echo "SBOM generated: $SBOM_PATH"
+        echo "Components: $(jq '.components | length' "$SBOM_PATH")"
+EOF
+----
+
+.*Expected output:*
+----
+task.tekton.dev/generate-sbom created
+----
+
+The Task scans the built image via OCI and also scans the source workspace (if present) to catch lockfile dependencies not visible in the final image layers. Both SBOM path and digest are exported as Task results.
+
+=== Step 9: Task 2 -- Sign Image and Attest SBOM (Keyless)
+
+This is the core RHTAS Task. It initialises the enterprise TUF root, signs the image keylessly, attaches the SBOM as an OCI referrer, creates a signed in-toto attestation in Rekor, and captures the Fulcio certificate for audit:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: rhtas-sign-and-attest
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      description: Fully qualified image with digest (name@sha256:...)
+    - name: SBOM_PATH
+      description: Path to the CycloneDX SBOM JSON file
+  results:
+    - name: REKOR_UUID
+      description: UUID of the entry in the Rekor transparency log
+    - name: SIGNING_CERT
+      description: Base64-encoded short-lived cert issued by Fulcio
+  workspaces:
+    - name: artifacts
+  volumes:
+    - name: oidc-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: oidc-token
+              expirationSeconds: 600
+              audience: "trusted-artifact-signer"
+  steps:
+    - name: initialize-tuf
+      image: gcr.io/projectsigstore/cosign:latest
+      envFrom:
+        - configMapRef:
+            name: rhtas-config
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        cosign initialize \
+          --mirror="${TUF_URL}" \
+          --root="${TUF_URL}/root.json"
+        echo "TUF initialized against ${TUF_URL}"
+
+    - name: sign-image
+      image: gcr.io/projectsigstore/cosign:latest
+      envFrom:
+        - configMapRef:
+            name: rhtas-config
+      env:
+        - name: COSIGN_EXPERIMENTAL
+          value: "1"
+      volumeMounts:
+        - name: oidc-token
+          mountPath: /var/run/secrets/oidc
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        cosign sign \
+          --fulcio-url="${COSIGN_FULCIO_URL}" \
+          --rekor-url="${COSIGN_REKOR_URL}" \
+          --identity-token="$(cat /var/run/secrets/oidc/oidc-token)" \
+          "$(params.IMAGE)"
+
+        echo "Image signed: $(params.IMAGE)"
+
+    - name: attest-sbom
+      image: gcr.io/projectsigstore/cosign:latest
+      envFrom:
+        - configMapRef:
+            name: rhtas-config
+      volumeMounts:
+        - name: oidc-token
+          mountPath: /var/run/secrets/oidc
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        SBOM_FILE="$(params.SBOM_PATH)"
+
+        cosign attach sbom \
+          --sbom "$SBOM_FILE" \
+          --type cyclonedx \
+          "$(params.IMAGE)"
+
+        REKOR_OUTPUT=$(cosign attest \
+          --fulcio-url="${COSIGN_FULCIO_URL}" \
+          --rekor-url="${COSIGN_REKOR_URL}" \
+          --identity-token="$(cat /var/run/secrets/oidc/oidc-token)" \
+          --predicate "$SBOM_FILE" \
+          --type cyclonedx \
+          "$(params.IMAGE)" 2>&1)
+
+        echo "$REKOR_OUTPUT"
+
+        REKOR_UUID=$(echo "$REKOR_OUTPUT" \
+          | grep -oP 'tlog entry created with index: \K[0-9]+' \
+          || echo "see-rekor-log")
+
+        echo -n "$REKOR_UUID" > $(results.REKOR_UUID.path)
+
+    - name: capture-cert
+      image: gcr.io/projectsigstore/cosign:latest
+      envFrom:
+        - configMapRef:
+            name: rhtas-config
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        CERT=$(cosign verify \
+          --rekor-url="${COSIGN_REKOR_URL}" \
+          --certificate-oidc-issuer="https://kubernetes.default.svc" \
+          --certificate-identity-regexp=".*tekton-signing-sa.*" \
+          "$(params.IMAGE)" 2>/dev/null \
+          | jq -r '.[0].optional.Bundle.Payload.body' \
+          | base64 -d \
+          | jq -r '.spec.signature.publicKey.content' \
+          || echo "")
+
+        echo -n "${CERT:-not-captured}" > $(results.SIGNING_CERT.path)
+EOF
+----
+
+.*Expected output:*
+----
+task.tekton.dev/rhtas-sign-and-attest created
+----
+
+.*What each step does:*
+
+* **initialize-tuf** -- Points cosign at the enterprise TUF root instead of the public sigstore.dev
+* **sign-image** -- Keyless sign using the projected OIDC token; Fulcio issues a short-lived certificate bound to the service account identity
+* **attest-sbom** -- Attaches the SBOM as an OCI referrer, then creates a signed in-toto attestation linking the SBOM to the image by digest, recorded in Rekor
+* **capture-cert** -- Retrieves the Fulcio certificate used for signing (useful for audit: proves which SA signed, at what time)
+
+[NOTE]
+====
+**The OIDC token volume projection** is the key mechanism. Kubernetes projects a short-lived service account token with the `trusted-artifact-signer` audience into the pod at `/var/run/secrets/oidc/oidc-token`. Fulcio validates this token and issues a certificate whose SAN contains the service account identity URI. No secrets, no key files -- just Kubernetes-native identity.
+====
+
+=== Step 10: Task 3 -- Verify with Conforma (Enterprise Contract)
+
+Conforma (formerly Enterprise Contract) is a tool for maintaining the security of software supply chains. You can use the `ec` binary to verify the attestation and signature of container images that use the RHTAS signing framework. It generates a pass-fail report with details on any security violations, and when you add the `--info` flag, the report includes more details and possible solutions for any violations:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: conforma-verify
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+    - name: POLICY_SOURCE
+      default: "github.com/enterprise-contract/ec-policies//policy/release?ref=main"
+  results:
+    - name: EC_RESULT
+    - name: VIOLATIONS
+  workspaces:
+    - name: output
+  steps:
+    - name: verify
+      image: quay.io/enterprise-contract/ec-cli:latest
+      envFrom:
+        - configMapRef:
+            name: rhtas-config
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        RESULT_FILE="$(workspaces.output.path)/ec-result.yaml"
+
+        ec validate image \
+          --image "$(params.IMAGE)" \
+          --policy "$(params.POLICY_SOURCE)" \
+          --certificate-oidc-issuer="https://kubernetes.default.svc" \
+          --certificate-identity-regexp=".*tekton-signing-sa.*" \
+          --rekor-url="${COSIGN_REKOR_URL}" \
+          --output yaml \
+          --show-successes \
+          > "$RESULT_FILE" 2>&1
+
+        EC_SUCCESS=$(grep "^success:" "$RESULT_FILE" | awk '{print $2}')
+
+        echo -n "$EC_SUCCESS" > $(results.EC_RESULT.path)
+
+        if [ "$EC_SUCCESS" != "true" ]; then
+          VIOLATIONS=$(grep "msg:" "$RESULT_FILE" | head -10)
+          echo -n "$VIOLATIONS" > $(results.VIOLATIONS.path)
+          echo "Conforma verification FAILED:"
+          cat "$RESULT_FILE"
+          exit 1
+        fi
+
+        echo "Conforma verification PASSED"
+        echo -n "" > $(results.VIOLATIONS.path)
+EOF
+----
+
+.*Expected output:*
+----
+task.tekton.dev/conforma-verify created
+----
+
+.*Expected Conforma output on success:*
+----
+success: true
+successes:
+  - metadata:
+      code: builtin.attestation.signature_check
+    msg: Pass
+  - metadata:
+      code: builtin.attestation.syntax_check
+    msg: Pass
+  - metadata:
+      code: builtin.image.signature_check
+    msg: Pass
+----
+
+[IMPORTANT]
+====
+**Conforma is the policy gate.** It verifies that:
+
+* The image signature is valid and recorded in Rekor
+* The SBOM attestation is present and signed
+* The signing identity matches your policy (only `tekton-signing-sa` is allowed)
+* SLSA provenance requirements are met (if configured)
+
+If Conforma fails, the pipeline fails -- the image never gets promoted to production.
+====
+
+=== Step 11: Verify All Tasks Are Created
+
+[source,bash,role=execute]
+----
+oc get tasks -n tekton-pipelines
+----
+
+.*Expected output:*
+----
+NAME                     AGE
+generate-sbom            2m
+rhtas-sign-and-attest    1m
+conforma-verify          30s
+----
+
+[[complete-pipeline]]
+== Exercise 4: The Complete Pipeline
+
+This pipeline ties together every stage: clone, build, chunkah layer splitting, SBOM generation, RHTAS keyless signing, and Conforma verification.
+
+=== Step 12: Apply the Pipeline
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: hummingbird-rhtas-pipeline
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+    - name: GIT_URL
+    - name: GIT_REVISION
+      default: main
+
+  workspaces:
+    - name: source
+    - name: artifacts
+
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      params:
+        - name: url
+          value: $(params.GIT_URL)
+        - name: revision
+          value: $(params.GIT_REVISION)
+      workspaces:
+        - name: output
+          workspace: source
+
+    - name: buildah-build
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter: [git-clone]
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+        - name: DOCKERFILE
+          value: ./Containerfile
+        - name: BUILD_EXTRA_ARGS
+          value: "--format oci --skip-unused-stages=false"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: chunkah-split
+      taskRef:
+        name: chunkah-split-task
+      runAfter: [buildah-build]
+      params:
+        - name: SOURCE_IMAGE
+          value: $(params.IMAGE)
+        - name: OUTPUT_IMAGE
+          value: $(params.IMAGE)
+        - name: MAX_LAYERS
+          value: "48"
+
+    - name: generate-sbom
+      taskRef:
+        name: generate-sbom
+      runAfter: [chunkah-split]
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+      workspaces:
+        - name: output
+          workspace: artifacts
+
+    - name: rhtas-sign
+      taskRef:
+        name: rhtas-sign-and-attest
+      runAfter: [generate-sbom]
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+        - name: SBOM_PATH
+          value: $(tasks.generate-sbom.results.SBOM_PATH)
+      workspaces:
+        - name: artifacts
+          workspace: artifacts
+
+    - name: conforma-verify
+      taskRef:
+        name: conforma-verify
+      runAfter: [rhtas-sign]
+      params:
+        - name: IMAGE
+          value: $(params.IMAGE)
+      workspaces:
+        - name: output
+          workspace: artifacts
+
+  finally:
+    - name: report-rekor-entry
+      taskRef:
+        name: send-to-slack
+      params:
+        - name: MESSAGE
+          value: |
+            Build complete: $(params.IMAGE)
+            Rekor UUID: $(tasks.rhtas-sign.results.REKOR_UUID)
+            Conforma result: $(tasks.conforma-verify.results.EC_RESULT)
+EOF
+----
+
+.*Expected output:*
+----
+pipeline.tekton.dev/hummingbird-rhtas-pipeline created
+----
+
+=== Pipeline Flow
+
+----
+[Git Clone] -> [Buildah Build] -> [chunkah Split]
+  |
+  v
+[Generate SBOM] -> [RHTAS Sign + Attest] -> [Conforma Verify]
+  |
+  v
+[finally: Notify]
+----
+
+[NOTE]
+====
+**The `finally` block** runs regardless of success or failure. Replace `send-to-slack` with whatever notification Task your cluster uses. The Rekor UUID and Conforma result are passed through so the notification includes full audit context.
+====
+
+[[verify-signed-image]]
+== Verifying a Signed Image
+
+After a pipeline run, verification from any workstation that has TUF initialised:
+
+=== Step 13: Initialise the Trust Root and Configure Environment
+
+[source,bash,role=execute]
+----
+export TUF_URL=$(oc get tuf -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_FULCIO_URL=$(oc get fulcio -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_REKOR_URL=$(oc get rekor -o jsonpath='{.items[0].status.url}' -n trusted-artifact-signer)
+export COSIGN_MIRROR=$TUF_URL
+export COSIGN_ROOT=$TUF_URL/root.json
+export COSIGN_OIDC_CLIENT_ID="trusted-artifact-signer"
+export COSIGN_YES="true"
+
+cosign initialize
+----
+
+=== Step 14: Verify the Image Signature
+
+[source,bash,role=execute]
+----
+IMAGE=registry.internal.example.com/apps/my-app:v1.2.0
+
+cosign verify \
+  --certificate-identity-regexp=".*tekton-signing-sa.*" \
+  --certificate-oidc-issuer="https://kubernetes.default.svc" \
+  "$IMAGE" | jq .
+----
+
+.*Expected output (excerpt):*
+----
+[
+  {
+    "critical": {
+      "identity": { "docker-reference": "registry.internal.example.com/apps/my-app" },
+      "image": { "docker-manifest-digest": "sha256:abc123..." }
+    },
+    "optional": {
+      "Bundle": { ... },
+      "Issuer": "https://kubernetes.default.svc",
+      "Subject": "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-signing-sa"
+    }
+  }
+]
+----
+
+[NOTE]
+====
+You can also use `--certificate-identity` for an exact match instead of `--certificate-identity-regexp`. Both `--certificate-identity-regexp` and `--certificate-oidc-issuer-regexp` support regular expressions for flexible matching.
+====
+
+=== Step 15: View Supply Chain Artifacts
+
+Use `cosign tree` to see the full supply chain artifact tree for an image -- signatures and attestations:
+
+[source,bash,role=execute]
+----
+cosign tree "$IMAGE"
+----
+
+.*Expected output:*
+----
+📦 Supply Chain Security Related artifacts for an image: registry.internal.example.com/apps/my-app@sha256:abc123...
+└── 💾 Attestations for an image tag: ...sha256-abc123.att
+   └── 🍒 sha256:def456...
+└── 🔐 Signatures for an image tag: ...sha256-abc123.sig
+   └── 🍒 sha256:ghi789...
+----
+
+=== Step 16: Inspect the SBOM Attestation
+
+[source,bash,role=execute]
+----
+cosign verify-attestation \
+  --certificate-oidc-issuer="https://kubernetes.default.svc" \
+  --certificate-identity-regexp=".*tekton-signing-sa.*" \
+  --type cyclonedx \
+  "$IMAGE" \
+  | jq '.payload | @base64d | fromjson | .predicate.components[].name'
+----
+
+.*Expected output (excerpt):*
+----
+"express"
+"accepts"
+"nodejs"
+...
+----
+
+=== Step 17: Query Rekor Directly
+
+[source,bash,role=execute]
+----
+rekor-cli search \
+  --sha "$(skopeo inspect --format '{{.Digest}}' docker://$IMAGE)" \
+  --rekor_server "$COSIGN_REKOR_URL" \
+  --format json | jq
+----
+
+This returns every transparency log entry related to the image -- signatures, attestations, and timestamps -- providing a complete audit trail.
+
+=== Step 18: Verify with Conforma from the Command Line
+
+[source,bash,role=execute]
+----
+ec validate image \
+  --image "$IMAGE" \
+  --certificate-identity-regexp=".*tekton-signing-sa.*" \
+  --certificate-oidc-issuer-regexp="kubernetes" \
+  --output yaml \
+  --show-successes
+----
+
+.*Expected output:*
+----
+success: true
+successes:
+  - metadata:
+      code: builtin.attestation.signature_check
+    msg: Pass
+  - metadata:
+      code: builtin.attestation.syntax_check
+    msg: Pass
+  - metadata:
+      code: builtin.image.signature_check
+    msg: Pass
+----
+
+[[comparison-table]]
+== Bare cosign vs RHTAS Operator
+
+[cols="2,3,3",options="header"]
+|===
+| Concern
+| Bare cosign
+| RHTAS operator
+
+| Key management
+| You manage `cosign.key` / `cosign.pub`
+| No keys -- Fulcio issues short-lived certs
+
+| Identity
+| Key-based (who has the key?)
+| OIDC-based (which SA, which user?)
+
+| Audit trail
+| Your registry only
+| Rekor transparency log -- append-only, auditable
+
+| Trust distribution
+| Share `cosign.pub` out of band
+| TUF root -- clients auto-update trust material
+
+| Air-gap
+| Works -- self-contained
+| Works -- RHTAS runs fully on-cluster
+
+| Policy enforcement
+| Manual `cosign verify` scripts
+| Conforma with OPA/Rego policies
+
+| Certificate rotation
+| Manual key rotation
+| Automatic -- each signing event gets a fresh cert
+|===
+
+Managing private keys is difficult, revoking them in a controlled fashion even more so, and integrating them into DevSecOps pipelines can become a pain. RHTAS resolves this by letting developers focus on development rather than key management.
+
+[[summary]]
+== Summary
+
+.*What You've Accomplished*
+✅ Installed the RHTAS operator via OLM and deployed the Securesign stack (Fulcio, Rekor, TUF, CTlog) +
+✅ Downloaded `cosign`, `rekor-cli`, and `ec` binaries from the OpenShift cluster +
+✅ Configured shell environment with dynamically resolved RHTAS endpoints +
+✅ Created a Tekton ServiceAccount with OIDC token projection for Fulcio +
+✅ Created the `rhtas-config` ConfigMap from live operator state +
+✅ Created a Tekton Task to generate CycloneDX SBOMs with Syft +
+✅ Created a keyless signing Task that uses Fulcio certs and Rekor transparency logging +
+✅ Created a Conforma Task for supply chain policy enforcement +
+✅ Assembled the complete `hummingbird-rhtas-pipeline` with all stages +
+✅ Verified image signatures and SBOM attestations against Rekor +
+✅ Verified the supply chain artifact tree with `cosign tree` +
+✅ Understood the key differences between bare cosign and RHTAS
+
+.*Key Takeaways*
+
+**Keyless Signing:**
+* No key files to generate, rotate, distribute, or revoke
+* Each signing event gets a fresh short-lived Fulcio certificate
+* The signing identity is a Kubernetes SA URI, not a cryptographic key
+* Every signature is recorded in Rekor's tamper-evident transparency log
+
+**Conforma (Enterprise Contract):**
+* Policy-as-code verification for your supply chain
+* Validates signatures, attestations, and provenance in one step
+* Blocks non-compliant images from reaching production
+* Integrates naturally into the Tekton pipeline as a gate
+
+**Production Benefits:**
+* Full audit trail: which SA signed which image, when, with what SBOM
+* TUF auto-distributes trust material -- no manual `cosign.pub` sharing
+* Air-gap compatible -- the entire RHTAS stack runs on-cluster
+* Combines with chunkah (Sub-Module 2.5) for optimised, signed, attested images
+
+=== Additional Resources
+
+* https://docs.redhat.com/en/documentation/red_hat_trusted_artifact_signer/1/html-single/deployment_guide/index[Red Hat Trusted Artifact Signer Deployment Guide^]
+* https://docs.redhat.com/en/documentation/red_hat_trusted_artifact_signer/1/html-single/administration_guide/index[Red Hat Trusted Artifact Signer Administration Guide^]
+* https://www.sigstore.dev/[Sigstore Project^]
+* https://github.com/securesign/secure-sign-operator[Secure Sign Operator GitHub^]
+* https://enterprisecontract.dev/[Conforma (Enterprise Contract)^]
+* https://slsa.dev/[SLSA Framework^]
+
+=== Troubleshooting
+
+**Issue: Securesign components not reaching Ready**
+[source,bash]
+----
+oc describe securesign securesign-sample -n trusted-artifact-signer
+oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: Fulcio rejects the OIDC token**
+[source,bash]
+----
+oc get sa tekton-signing-sa -n tekton-pipelines -o yaml
+
+oc logs -l app.kubernetes.io/component=fulcio -n trusted-artifact-signer
+----
+
+**Issue: cosign sign fails with certificate errors**
+[source,bash]
+----
+cosign initialize --mirror="$TUF_URL" --root="$TUF_URL/root.json"
+
+oc get configmap rhtas-config -n tekton-pipelines -o yaml
+----
+
+**Issue: Conforma reports violations**
+[source,bash]
+----
+ec validate image \
+  --image "$IMAGE" \
+  --policy "$POLICY_SOURCE" \
+  --rekor-url="$COSIGN_REKOR_URL" \
+  --output yaml \
+  --info
+----

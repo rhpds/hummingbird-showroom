@@ -1,0 +1,631 @@
+= Sub-Module 1.7: The Aha Moment — Demonstrating chunkah Value (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~20 minutes +
+*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) and Sub-Module 1.5 (chunkah) +
+*Status:* Optional exercise -- not required for Module 1 completion +
+*Learning Objectives:*
+
+* See the concrete before-and-after impact of chunkah on a Hummingbird image
+* Simulate a CVE security update and measure what needs to be re-pulled
+* Isolate application code from OS and dependency layers using xattrs
+* Apply the chunkah pattern to both Node.js and Python Hummingbird images
+* Combine chunkah with `zstd:chunked` for the full optimisation stack
+--
+
+[[introduction]]
+== Introduction
+
+Sub-Module 1.5 taught you *how* chunkah works -- the commands, the multi-stage patterns, and the xattr controls. This module is about *why* it matters: five concrete demonstrations that make the value proposition measurable.
+
+You will pull real Hummingbird images, split them, simulate security updates, diff layer digests, and calculate exactly how much network traffic you save. By the end, the value of content-based layer splitting will be self-evident from the numbers.
+
+=== Setup
+
+Before starting, verify that podman is current and pull the chunkah image:
+
+[source,bash,role=execute]
+----
+podman --version
+----
+
+[source,bash,role=execute]
+----
+podman pull quay.io/jlebon/chunkah:v0.2.0
+----
+
+Ensure you have access to the Hummingbird registry:
+
+[source,bash,role=execute]
+----
+podman pull quay.io/hummingbird-hatchling/nodejs-20:latest
+podman pull quay.io/hummingbird-hatchling/python-311:latest
+----
+
+[NOTE]
+====
+If you haven't already logged in to `quay.io`, run `podman login quay.io` first. Pulling Hummingbird images requires a Red Hat subscription.
+====
+
+[[exercise-1-before-after]]
+== Exercise 1: Layer Count Before and After
+
+This is the simplest demonstration. Pull a raw Hummingbird base image -- no application code -- and run chunkah against it to see how the layer structure changes.
+
+=== Step 1: Inspect the Original Image
+
+[source,bash,role=execute]
+----
+IMG="quay.io/hummingbird-hatchling/nodejs-20:latest"
+
+echo "======================================================"
+echo " BEFORE chunkah"
+echo "======================================================"
+
+BEFORE_LAYERS=$(podman inspect "$IMG" --format '{{len .RootFS.Layers}}')
+echo "Layer count: $BEFORE_LAYERS"
+echo ""
+echo "Layer history:"
+podman history "$IMG" --format "{{.Size}}\t{{.Comment}}" | head -20
+----
+
+.*Expected output (excerpt):*
+----
+Layer count: 1
+...
+----
+
+=== Step 2: Run chunkah with Verbose Output
+
+The `-v` flag produces a debug log that shows exactly which RPM packages chunkah discovered and how it assigned them to layers.
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect "$IMG")"
+
+podman run --rm \
+  --mount=type=image,src="$IMG",dest=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 64 \
+    -v \
+  2>chunkah-debug.log \
+  | podman load
+----
+
+=== Step 3: Compare Results
+
+[source,bash,role=execute]
+----
+AFTER_LAYERS=$(podman inspect "$IMG" --format '{{len .RootFS.Layers}}')
+echo "Layer count: $AFTER_LAYERS"
+echo ""
+echo "Layer history:"
+podman history "$IMG" --format "{{.Size}}\t{{.Comment}}"
+
+echo ""
+echo "Before: $BEFORE_LAYERS layers  →  After: $AFTER_LAYERS layers"
+echo ""
+echo "Each layer now corresponds to a real RPM package group."
+----
+
+=== Step 4: Read the Debug Log
+
+[source,bash,role=execute]
+----
+head -80 chunkah-debug.log
+----
+
+[TIP]
+====
+The debug log is genuinely interesting to read. It lists every RPM package in the Hummingbird image -- `glibc-2.38`, `nodejs-20.x`, `openssl-3.x`, `libstdc++-13.x` -- and shows chunkah's packing decisions. For Hummingbird images this log is very clean because the RPM database is complete and accurate, which validates why this pairing is particularly effective.
+====
+
+[[exercise-2-cve-simulation]]
+== Exercise 2: Simulating a CVE Update
+
+This is the core argument for chunkah. When Hummingbird ships a security rebuild that updates one package (say openssl gets a CVE fix), without chunkah you re-pull a large undifferentiated layer. With chunkah, only the openssl layer changes.
+
+=== Step 5: Build an App Image on the Current Hummingbird Base
+
+[source,bash,role=execute]
+----
+mkdir -p /tmp/chunkah-cve-demo
+
+cat > /tmp/chunkah-cve-demo/Containerfile << 'EOF'
+ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest
+FROM $RUNTIME
+
+WORKDIR /app
+COPY --chown=1001:1001 server.js .
+USER 1001
+EXPOSE 3000
+CMD ["node", "server.js"]
+EOF
+
+cat > /tmp/chunkah-cve-demo/server.js << 'EOF'
+const http = require('http');
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Hello from Hummingbird\n');
+});
+server.listen(3000, () => console.log('Listening on :3000'));
+EOF
+----
+
+=== Step 6: Build the Standard (Squashed) Image
+
+[source,bash,role=execute]
+----
+buildah build \
+  --squash-all \
+  --format oci \
+  --build-arg RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest \
+  --tag localhost/cve-demo:v1-standard \
+  --file /tmp/chunkah-cve-demo/Containerfile \
+  /tmp/chunkah-cve-demo
+
+V1_LAYERS=$(podman inspect localhost/cve-demo:v1-standard \
+  --format '{{len .RootFS.Layers}}')
+echo "v1 standard layers: $V1_LAYERS"
+----
+
+.*Expected output:*
+----
+v1 standard layers: 1
+----
+
+=== Step 7: Run chunkah on the Same Image
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect localhost/cve-demo:v1-standard)"
+
+podman run --rm \
+  --mount=type=image,src=localhost/cve-demo:v1-standard,dest=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 48 \
+  | podman load
+
+podman tag localhost/cve-demo:v1-standard localhost/cve-demo:v1-chunked
+
+V1_CHUNKED_LAYERS=$(podman inspect localhost/cve-demo:v1-chunked \
+  --format '{{len .RootFS.Layers}}')
+echo "v1 chunked layers: $V1_CHUNKED_LAYERS"
+----
+
+=== Step 8: Compare the Two Approaches
+
+[source,bash,role=execute]
+----
+echo "======================================================"
+echo " Layer comparison"
+echo "======================================================"
+echo "Standard build: $V1_LAYERS layers (everything squashed — any change = full re-pull)"
+echo "Chunked build:  $V1_CHUNKED_LAYERS layers (each RPM package isolated)"
+echo ""
+echo "When Hummingbird ships a CVE fix for openssl:"
+echo "  Standard: nodes re-pull the ENTIRE squashed layer"
+echo "  Chunked:  nodes re-pull ONLY the openssl layer"
+echo ""
+
+echo "Layer sizes in chunked image:"
+podman history localhost/cve-demo:v1-chunked \
+  --format "table {{.Size}}\t{{.CreatedBy}}" \
+  | sort -h \
+  | tail -20
+----
+
+[IMPORTANT]
+====
+This is the fundamental trade-off. A squashed image is one opaque blob -- any change, no matter how small, forces a full re-pull. After chunkah, each RPM package lives in its own layer. A CVE fix to openssl means re-pulling only the openssl layer while every other layer (glibc, Node.js runtime, your app code) is already cached on every node.
+====
+
+[[exercise-3-app-isolation]]
+== Exercise 3: App Code Isolation with xattrs (Node.js)
+
+This shows the other half of the value proposition: isolating your application code into its own layer so that code changes never invalidate OS and dependency layers. As you learned in xref:module-01-05-chunkah.adoc#exercise-4-custom-xattr[Sub-Module 1.5 Exercise 4], the `user.component` xattr tells chunkah which files to group together.
+
+=== Step 9: Create a Node.js Application
+
+[source,bash,role=execute]
+----
+mkdir -p /tmp/chunkah-nodeapp/src
+
+cat > /tmp/chunkah-nodeapp/package.json << 'EOF'
+{
+  "name": "hummingbird-demo",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.18.0",
+    "pino": "^9.0.0"
+  }
+}
+EOF
+
+cat > /tmp/chunkah-nodeapp/src/server.js << 'EOF'
+const express = require('express');
+const pino = require('pino');
+
+const log = pino();
+const app = express();
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', version: process.env.APP_VERSION || '1.0.0' });
+});
+
+app.get('/', (req, res) => {
+  log.info('request received');
+  res.json({ message: 'Hello from Hummingbird + chunkah' });
+});
+
+app.listen(3000, () => log.info('listening on :3000'));
+EOF
+----
+
+=== Step 10: Create the Containerfile with xattr Tagging
+
+[source,bash,role=execute]
+----
+cat > /tmp/chunkah-nodeapp/Containerfile.chunkah-demo << 'CFILE'
+ARG BUILDER=registry.access.redhat.com/ubi9/nodejs-20:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs-20:latest
+
+# Stage 1: Build
+FROM $BUILDER AS builder
+
+WORKDIR /app
+USER root
+
+RUN dnf install -y attr && dnf clean all
+
+COPY --chown=1001:1001 package.json ./
+USER 1001
+
+RUN npm ci --omit=dev
+
+COPY --chown=1001:1001 src/ ./src/
+
+# Tag each directory with a component name.
+# chunkah will put each tagged component in its own dedicated layer.
+#
+#   node_modules -> "app-deps" layer (changes when package.json changes)
+#   src/         -> "app-src"  layer (changes on every code commit)
+USER root
+RUN setfattr -n user.component -v "app-deps" /app/node_modules && \
+    setfattr -n user.component -v "app-src"  /app/src
+USER 1001
+
+# Stage 2: chunkah layer splitting
+FROM quay.io/jlebon/chunkah:v0.2.0 AS chunkah
+
+RUN --mount=from=builder,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build \
+          --max-layers 48 \
+        > /run/src/out.ociarchive
+
+# Stage 3: Final image from OCI archive
+FROM oci-archive:out.ociarchive
+
+LABEL org.opencontainers.image.title="hummingbird-chunkah-demo"
+LABEL com.example.base="quay.io/hummingbird-hatchling/nodejs-20"
+
+USER 1001
+WORKDIR /app
+EXPOSE 3000
+ENV NODE_ENV=production
+CMD ["node", "src/server.js"]
+CFILE
+----
+
+=== Step 11: Build and Inspect
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag localhost/hummingbird-demo:latest \
+  --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
+  /tmp/chunkah-nodeapp
+
+echo "=== Final layer structure ==="
+podman history localhost/hummingbird-demo:latest
+
+echo ""
+echo "=== Layer digests ==="
+podman inspect localhost/hummingbird-demo:latest \
+  --format '{{range .RootFS.Layers}}{{println .}}{{end}}'
+----
+
+You should see distinct small layers for `app-src` and `app-deps` alongside the larger RPM-based layers from the Hummingbird base.
+
+=== Step 12: Simulate a Code-Only Change and Diff
+
+This is the payoff. Change one line of application code, rebuild, and compare layer digests.
+
+[source,bash,role=execute]
+----
+sed -i 's/Hello from Hummingbird + chunkah/Hello from Hummingbird + chunkah v2/' \
+  /tmp/chunkah-nodeapp/src/server.js
+
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag localhost/hummingbird-demo:v2 \
+  --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
+  /tmp/chunkah-nodeapp
+----
+
+[source,bash,role=execute]
+----
+echo "=== Layer digest comparison v1 vs v2 ==="
+echo "v1:"
+podman inspect localhost/hummingbird-demo:latest \
+  --format '{{range .RootFS.Layers}}{{println .}}{{end}}'
+
+echo ""
+echo "v2:"
+podman inspect localhost/hummingbird-demo:v2 \
+  --format '{{range .RootFS.Layers}}{{println .}}{{end}}'
+
+echo ""
+echo "Layers that match (unchanged) vs differ (changed):"
+diff \
+  <(podman inspect localhost/hummingbird-demo:latest \
+      --format '{{range .RootFS.Layers}}{{println .}}{{end}}') \
+  <(podman inspect localhost/hummingbird-demo:v2 \
+      --format '{{range .RootFS.Layers}}{{println .}}{{end}}') \
+  && echo "All layers identical" \
+  || echo "^ These lines show which layers changed"
+----
+
+Almost all layer digests will be identical between v1 and v2. Only the `app-src` layer digest changes. That is the entire value proposition in a `diff` output.
+
+[[exercise-4-python]]
+== Exercise 4: Python App with Hummingbird + chunkah
+
+The same concept applies to Python, another strong Hummingbird pairing since the Python images are also fully RPM-based.
+
+=== Step 13: Create the Containerfile
+
+[source,bash,role=execute]
+----
+mkdir -p /tmp/chunkah-python/src
+
+cat > /tmp/chunkah-python/requirements.txt << 'EOF'
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+EOF
+
+cat > /tmp/chunkah-python/src/main.py << 'EOF'
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.get("/")
+def root():
+    return {"message": "Hello from Hummingbird + chunkah (Python)"}
+EOF
+
+cat > /tmp/chunkah-python/Containerfile.python-chunkah << 'CFILE'
+ARG BUILDER=registry.access.redhat.com/ubi9/python-311:latest
+ARG RUNTIME=quay.io/hummingbird-hatchling/python-311:latest
+
+FROM $BUILDER AS builder
+
+WORKDIR /app
+USER root
+RUN dnf install -y attr gcc python3-devel && dnf clean all
+
+COPY --chown=1001:1001 requirements.txt ./
+USER 1001
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+COPY --chown=1001:1001 src/ ./src/
+
+USER root
+RUN setfattr -n user.component -v "python-site-pkgs" /install && \
+    setfattr -n user.component -v "app-src"           /app/src
+USER 1001
+
+# chunkah stage
+FROM quay.io/jlebon/chunkah:v0.2.0 AS chunkah
+
+RUN --mount=from=builder,src=/,target=/chunkah,ro \
+    --mount=type=bind,target=/run/src,rw \
+        chunkah build \
+          --max-layers 48 \
+        > /run/src/out.ociarchive
+
+FROM oci-archive:out.ociarchive
+
+USER 1001
+WORKDIR /app
+EXPOSE 8000
+ENV PYTHONPATH=/install/lib/python3.11/site-packages
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CFILE
+----
+
+=== Step 14: Build and Inspect
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --format oci \
+  --tag localhost/hummingbird-python-demo:latest \
+  --file /tmp/chunkah-python/Containerfile.python-chunkah \
+  /tmp/chunkah-python
+
+echo "=== Layer count ==="
+podman inspect localhost/hummingbird-python-demo:latest \
+  --format '{{len .RootFS.Layers}} layers'
+
+echo ""
+echo "=== Layer history ==="
+podman history localhost/hummingbird-python-demo:latest
+
+echo ""
+echo "=== Layer digests ==="
+podman inspect localhost/hummingbird-python-demo:latest \
+  --format '{{range .RootFS.Layers}}{{println .}}{{end}}'
+----
+
+You will see the same pattern: RPM-based layers for the Hummingbird Python base, a `python-site-pkgs` layer for pip dependencies, and an `app-src` layer for your application code -- each independently cacheable and updateable.
+
+[[exercise-5-full-stack]]
+== Exercise 5: The Full Value Stack — chunkah + zstd:chunked
+
+This wraps everything together, showing how chunkah and `zstd:chunked` compound. Build it, split it, push it with `zstd:chunked`, then see what a node would actually download on an update.
+
+[NOTE]
+====
+This exercise demonstrates the push command and calculates theoretical savings. To actually push, you need a registry you can write to. The commands below use a placeholder registry -- replace it with your own if you want to run the push step.
+====
+
+=== Step 15: Standard Build
+
+[source,bash,role=execute]
+----
+buildah build \
+  --skip-unused-stages=false \
+  --squash-all \
+  --format oci \
+  --tag localhost/full-stack-demo:v1-pre-chunk \
+  --file /tmp/chunkah-nodeapp/Containerfile.chunkah-demo \
+  /tmp/chunkah-nodeapp
+----
+
+=== Step 16: chunkah Split
+
+[source,bash,role=execute]
+----
+export CHUNKAH_CONFIG_STR="$(podman inspect localhost/full-stack-demo:v1-pre-chunk)"
+
+podman run --rm \
+  --mount=type=image,src=localhost/full-stack-demo:v1-pre-chunk,dest=/chunkah \
+  -e CHUNKAH_CONFIG_STR \
+  quay.io/jlebon/chunkah:v0.2.0 build \
+    --max-layers 48 \
+  | podman load
+
+podman tag localhost/full-stack-demo:v1-pre-chunk localhost/full-stack-demo:v1
+----
+
+=== Step 17: Examine the Push Command
+
+`zstd:chunked` adds file-level chunk metadata inside the compression stream. On pull, nodes only fetch chunks that are not already in local storage. Combined with chunkah's layer isolation:
+
+* **chunkah** -- fewer layers change on any given update
+* **zstd:chunked** -- within changed layers, only changed chunks are downloaded
+
+[source,bash,role=execute]
+----
+echo "=== Push command (replace registry with your own) ==="
+echo ""
+echo "buildah push \\"
+echo "  --compression-format zstd:chunked \\"
+echo "  --compression-level 3 \\"
+echo "  localhost/full-stack-demo:v1 \\"
+echo "  docker://registry.example.com/apps/full-stack-demo:v1"
+----
+
+=== Step 18: Calculate the Savings
+
+[source,bash,role=execute]
+----
+echo "=== What a node downloads on a code-only update ==="
+echo ""
+
+TOTAL_SIZE=$(podman inspect localhost/full-stack-demo:v1 \
+  --format '{{.Size}}')
+
+echo "Without chunkah + zstd:chunked:"
+echo "  Re-download: ~$(( TOTAL_SIZE / 1024 / 1024 ))MB (entire image)"
+echo ""
+echo "With chunkah + zstd:chunked:"
+echo "  Re-download: only the app-src layer (typically <1MB)"
+echo "  All Hummingbird RPM layers: already cached, skipped entirely"
+echo "  node_modules layer: already cached, skipped entirely"
+echo ""
+echo "Scenario: only src/server.js changed"
+echo "  Standard: every node re-pulls ~$(( TOTAL_SIZE / 1024 / 1024 ))MB"
+echo "  Chunked:  every node re-pulls <1MB"
+echo ""
+echo "At 100 nodes, that is ~$(( TOTAL_SIZE / 1024 / 1024 * 100 ))MB vs <100MB total cluster traffic."
+----
+
+[[what-youll-observe]]
+== What You'll Observe Across All Exercises
+
+Running through these exercises you will concretely see:
+
+. A standard `buildah build --squash-all` of a Hummingbird Node.js app gives you 1-4 layers. After chunkah it becomes 20-40 layers depending on how many RPM packages the Hummingbird base contains and your `--max-layers` setting.
+. The layer digest diff between two builds that only changed application code will show every single RPM-based layer digest as identical -- those are cache hits on every node. Only the `app-src` digest changes.
+. The debug log from `-v` is worth reading once to understand what chunkah found -- it lists every RPM it discovered in the Hummingbird image (`nodejs`, `npm`, `libuv`, `openssl`, `glibc`, etc.) and shows its packing decisions. For Hummingbird images this log is very clean because the RPM database is complete and accurate.
+
+[[cleanup]]
+== Cleanup
+
+[source,bash,role=execute]
+----
+podman rmi \
+  localhost/cve-demo:v1-standard \
+  localhost/cve-demo:v1-chunked \
+  localhost/hummingbird-demo:latest \
+  localhost/hummingbird-demo:v2 \
+  localhost/hummingbird-python-demo:latest \
+  localhost/full-stack-demo:v1-pre-chunk \
+  localhost/full-stack-demo:v1 \
+  2>/dev/null || true
+
+rm -rf /tmp/chunkah-cve-demo /tmp/chunkah-nodeapp /tmp/chunkah-python
+rm -f chunkah-debug.log
+----
+
+[[summary]]
+== Summary
+
+.*What You've Accomplished*
+✅ Compared layer counts before and after chunkah on a raw Hummingbird image +
+✅ Read the chunkah debug log to see RPM-based packing decisions +
+✅ Simulated a CVE security update and measured the re-pull impact +
+✅ Isolated application code with `user.component` xattrs (Node.js) +
+✅ Verified that a code-only change affects only the `app-src` layer via digest diff +
+✅ Applied the chunkah pattern to a Python Hummingbird image +
+✅ Calculated the concrete bandwidth savings of chunkah + `zstd:chunked`
+
+.*Key Takeaways*
+
+**The Numbers Tell the Story:**
+
+* A single-package CVE fix in a squashed image forces every node to re-pull the entire base layer
+* After chunkah, only the affected package's layer changes -- typically a few MB instead of hundreds
+* At cluster scale (tens or hundreds of nodes), the bandwidth savings compound dramatically
+
+**chunkah + zstd:chunked = Minimal Pull Traffic:**
+
+* **chunkah** (build time): restructures layers so each package lives in its own layer
+* **zstd:chunked** (pull time): within each layer, only changed file chunks are fetched
+* **Together**: a single-package update triggers a tiny delta pull instead of a full layer re-download
+
+**Why Hummingbird Is the Ideal Input:**
+
+* Every file is installed by an RPM and recorded in the RPM database
+* chunkah reads that database as a perfect component map -- zero extra configuration needed
+* The debug log confirms: clean RPM metadata means clean layer decisions
+
+=== Next Steps
+
+* xref:module-02-05-chunkah-pipeline.adoc[Sub-Module 2.5: chunkah in CI/CD Pipelines] -- automate these workflows in Tekton/Shipwright
+* xref:module-01-05-chunkah.adoc[Sub-Module 1.5: Content-Based Layer Splitting] -- revisit the mechanics and best practices

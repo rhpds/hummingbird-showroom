@@ -1,0 +1,556 @@
+= Sub-Module 2.1: Cloud Native Buildpacks with Hummingbird
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~12 minutes +
+*Prerequisites:* Environment setup complete (see xref:appendix-b-openshift-setup.adoc[Appendix B]) +
+*Learning Objectives:*
+
+* Create registry secrets for pushing built images
+* Define ClusterBuildStrategy using Buildpacks with Hummingbird runtimes
+* Build Node.js application from git using Buildpacks
+* Monitor build execution and verify pushed image
+* Deploy built image to OpenShift
+--
+
+[[introduction]]
+== Introduction
+
+**Cloud Native Buildpacks** provide "source-to-image" capabilities without requiring Dockerfiles. They auto-detect application types (Node.js, Python, Java, Go, etc.) and build optimized images using best practices.
+
+In this sub-module, you'll create a ClusterBuildStrategy that combines Buildpacks' convenience with Hummingbird's minimal, hardened runtime images, getting the best of both worlds: zero-config builds with production-grade security.
+
+[[registry-secret]]
+== Registry Configuration
+
+=== Step 1: Create Registry Secret
+
+Create a secret for pushing built images to a container registry:
+
+[source,bash,role=execute,subs="attributes"]
+----
+# Using quay.io as example - adjust for your registry
+oc create secret docker-registry registry-credentials \
+  --docker-server=quay.io \
+  --docker-username={registry-user} \
+  --docker-password={registry-password} \
+  -n hummingbird-builds
+----
+
+.*Expected output:*
+----
+secret/registry-credentials created
+----
+
+[TIP]
+====
+**For quay.io:**
+1. Log in to https://quay.io
+2. Navigate to **Account Settings** → **Robot Accounts**
+3. Create a robot account with push permissions to your repositories
+4. Use the robot account credentials for `{registry-user}` and `{registry-password}`
+
+**For other registries:**
+- **OpenShift Internal Registry**: No credentials needed within the same cluster
+- **Docker Hub**: Use your Docker Hub username and password or access token
+- **Harbor/Artifactory**: Use your registry-specific credentials
+====
+
+=== Step 2: Link Secret to Pipeline ServiceAccount
+
+Link the secret to the `pipeline` serviceaccount used by Shipwright:
+
+[source,bash,role=execute]
+----
+oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
+----
+
+[NOTE]
+====
+The `pipeline` serviceaccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns.
+====
+
+[[buildpacks-strategy]]
+== Create Hummingbird Buildpacks Strategy
+
+=== Step 3: Create ClusterBuildStrategy
+
+Create a custom ClusterBuildStrategy that uses Buildpacks with Hummingbird runtimes:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: ClusterBuildStrategy
+metadata:
+  name: buildpacks-hummingbird
+spec:
+  parameters:
+  - name: APP_IMAGE
+    description: The name of the application image to be built
+  - name: BUILDER_IMAGE
+    description: The Buildpacks builder image
+    default: "paketobuildpacks/builder-jammy-base:latest"
+  - name: RUN_IMAGE
+    description: The Hummingbird runtime image
+    default: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+  - name: SOURCE_SUBPATH
+    description: A subpath within the source directory
+    default: "."
+  - name: ENV_VARS
+    description: Environment variables for the build
+    type: array
+    defaults: []
+
+  buildSteps:
+  - name: build-and-push
+    image: $(params.BUILDER_IMAGE)
+    imagePullPolicy: Always
+    workingDir: $(params.shp-source-root)
+    command:
+    - /cnb/lifecycle/creator
+    args:
+    - -app=$(params.shp-source-root)/$(params.SOURCE_SUBPATH)
+    - -run-image=$(params.RUN_IMAGE)
+    - $(params.APP_IMAGE)
+    env:
+    - name: CNB_PLATFORM_API
+      value: "0.13"
+    - name: DOCKER_CONFIG
+      value: /workspace/.docker
+    volumeMounts:
+    - name: $(params.shp-output-directory)
+      mountPath: /workspace
+      readOnly: false
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+EOF
+----
+
+.*Expected output:*
+----
+clusterbuildstrategy.shipwright.io/buildpacks-hummingbird created
+----
+
+.*What this strategy does:*
+
+* Uses **Paketo Buildpacks** builder image to auto-detect application type
+* Configures **Hummingbird runtime images** for the final container via `RUN_IMAGE` parameter
+* Runs builds as **non-root user** (1000)
+* Outputs directly to specified registry
+
+[NOTE]
+====
+**Buildpacks Lifecycle Phases:**
+
+1. **DETECTING**: Identifies application type (Node.js, Python, Java, etc.)
+2. **ANALYZING**: Checks for cached layers from previous builds
+3. **BUILDING**: Installs dependencies, compiles code
+4. **EXPORTING**: Creates final image layers with Hummingbird runtime
+====
+
+=== Step 4: Verify ClusterBuildStrategy
+
+[source,bash,role=execute]
+----
+oc get clusterbuildstrategy buildpacks-hummingbird
+----
+
+.*Expected output:*
+----
+NAME                      AGE
+buildpacks-hummingbird    30s
+----
+
+[[create-build]]
+== Create Build Resource
+
+=== Step 5: Create Build
+
+Create a Build resource pointing to a sample Node.js application:
+
+[source,yaml,role=execute,subs="attributes"]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  name: sample-nodejs-app
+  namespace: hummingbird-builds
+spec:
+  source:
+    type: Git
+    git:
+      url: https://github.com/shipwright-io/sample-nodejs
+      revision: main
+  strategy:
+    name: buildpacks-hummingbird
+    kind: ClusterBuildStrategy
+  paramValues:
+  - name: RUN_IMAGE
+    value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+  output:
+    image: quay.io/{registry-user}/sample-nodejs:latest
+    credentials:
+      name: registry-credentials
+EOF
+----
+
+[IMPORTANT]
+====
+Replace `{registry-user}` with your actual registry username/organization. For example:
+- quay.io/myuser/sample-nodejs:latest
+- quay.io/myorg/sample-nodejs:latest
+====
+
+.*Expected output:*
+----
+build.shipwright.io/sample-nodejs-app created
+----
+
+.*What this Build defines:*
+
+* **Source**: Git repository with Node.js application
+* **Strategy**: Use `buildpacks-hummingbird` ClusterBuildStrategy
+* **Runtime**: Hummingbird Node.js 20 image
+* **Output**: Push to `quay.io/{registry-user}/sample-nodejs:latest`
+* **Credentials**: Use `registry-credentials` secret for push
+
+[[execute-build]]
+== Execute BuildRun
+
+=== Step 6: Trigger a BuildRun
+
+Execute the build by creating a BuildRun resource:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  name: sample-nodejs-app-run-1
+  namespace: hummingbird-builds
+spec:
+  build:
+    name: sample-nodejs-app
+EOF
+----
+
+.*Expected output:*
+----
+buildrun.shipwright.io/sample-nodejs-app-run-1 created
+----
+
+=== Step 7: Monitor BuildRun Progress
+
+Watch the build execution:
+
+[source,bash,role=execute]
+----
+oc get buildrun sample-nodejs-app-run-1 -w
+----
+
+.*Expected output:*
+----
+NAME                        SUCCEEDED   REASON      STARTTIME   COMPLETIONTIME
+sample-nodejs-app-run-1     Unknown     Pending     2s
+sample-nodejs-app-run-1     Unknown     Running     15s
+sample-nodejs-app-run-1     True        Succeeded   2m30s       5s
+----
+
+Press `Ctrl+C` once you see `Succeeded`.
+
+[TIP]
+====
+Typical build times:
+- **First build**: 2-4 minutes (pulls builder and runtime images, no cache)
+- **Subsequent builds**: 1-2 minutes (leverages cached layers)
+====
+
+[[view-build-logs]]
+== View Build Logs
+
+=== Step 8: View Detailed Build Logs
+
+Check detailed build logs:
+
+[source,bash,role=execute]
+----
+# Get the TaskRun created by BuildRun
+TASKRUN=$(oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.taskRunName}')
+
+# View logs
+oc logs -f $TASKRUN --all-containers
+----
+
+.*Expected log excerpts:*
+----
+===> DETECTING
+...
+[detector] ======== Results ========
+[detector] pass: paketo-buildpacks/node-engine@2.0.0
+[detector] pass: paketo-buildpacks/npm-install@1.2.0
+...
+===> ANALYZING
+...
+===> RESTORING
+...
+===> BUILDING
+[builder] Paketo Buildpack for Node Engine 2.0.0
+[builder]   Resolving Node Engine version
+[builder]     Candidate version sources (in priority order):
+[builder]       package.json -> ">=20.0.0"
+[builder]     Selected Node Engine version: 20.18.0
+...
+[builder] Paketo Buildpack for NPM Install 1.2.0
+[builder]   Installing node_modules
+[builder]     Running 'npm ci --only=production'
+...
+===> EXPORTING
+[exporter] Adding layer 'paketo-buildpacks/node-engine:nodejs'
+[exporter] Reusing layer 'paketo-buildpacks/npm-install:modules'
+...
+[exporter] Successfully built image quay.io/.../sample-nodejs:latest
+----
+
+[NOTE]
+====
+**Key Buildpacks Phases:**
+
+* **DETECTING**: Auto-detects Node.js via `package.json`
+* **BUILDING**: Runs `npm ci` to install dependencies
+* **EXPORTING**: Creates final image layers with **Hummingbird runtime**
+
+The runtime image is swapped out automatically thanks to the `RUN_IMAGE` parameter!
+====
+
+[[verify-image]]
+== Verify Built Image
+
+=== Step 9: Get Image Digest
+
+Confirm the image was pushed successfully:
+
+[source,bash,role=execute]
+----
+# Get the image digest
+oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.output.digest}'
+echo ""
+----
+
+.*Expected output:*
+----
+sha256:abc123def456789...
+----
+
+[TIP]
+====
+You can also check your registry UI (quay.io) to confirm the image is present:
+1. Log in to quay.io
+2. Navigate to your repository: `quay.io/{registry-user}/sample-nodejs`
+3. You should see the `latest` tag with a recent push timestamp
+====
+
+=== Step 10: Inspect Image Layers and Labels
+
+Use `skopeo` to examine the built image and confirm it uses the Hummingbird runtime:
+
+[source,bash,role=execute,subs="attributes"]
+----
+skopeo inspect docker://quay.io/{registry-user}/sample-nodejs:latest 2>/dev/null \
+  | head -40 \
+  || echo "Note: skopeo not available in cluster - check quay.io UI"
+----
+
+[NOTE]
+====
+The image labels should reference the Hummingbird runtime. The layer count will be lower than a typical UBI-based image because Hummingbird strips unnecessary packages. This is the same `skopeo inspect` workflow you'd use in Module 1 to verify local builds.
+====
+
+[[deploy-application]]
+== Deploy Built Image
+
+=== Step 11: Deploy to OpenShift
+
+Deploy your Hummingbird-built application:
+
+[source,bash,role=execute,subs="attributes"]
+----
+# Create deployment
+oc create deployment sample-nodejs \
+  --image=quay.io/{registry-user}/sample-nodejs:latest \
+  -n hummingbird-builds
+
+# Expose service
+oc expose deployment sample-nodejs --port=8080 -n hummingbird-builds
+
+# Create route
+oc expose service sample-nodejs -n hummingbird-builds
+----
+
+=== Step 12: Get Route URL
+
+[source,bash,role=execute]
+----
+oc get route sample-nodejs -o jsonpath='{.spec.host}'
+echo ""
+----
+
+.*Expected output:*
+----
+sample-nodejs-hummingbird-builds.apps.cluster-abc123.example.com
+----
+
+=== Step 13: Test the Application
+
+Test your deployed application:
+
+[source,bash,role=execute]
+----
+ROUTE=$(oc get route sample-nodejs -o jsonpath='{.spec.host}')
+curl http://$ROUTE
+----
+
+.*Expected output:*
+----
+Hello World from Node.js!
+----
+
+[TIP]
+====
+If you get a timeout, the application may still be starting. Check pod status:
+
+[source,bash]
+----
+oc get pods -l app=sample-nodejs
+oc logs -l app=sample-nodejs
+----
+====
+
+[[verify-hummingbird-runtime]]
+== Verify Hummingbird Runtime
+
+=== Step 14: Confirm Image Size
+
+Verify the built image uses the Hummingbird runtime:
+
+[source,bash,role=execute,subs="attributes"]
+----
+# Pull and inspect image size (requires podman on your local machine)
+podman pull quay.io/{registry-user}/sample-nodejs:latest 2>/dev/null || echo "Note: Run on a machine with podman to verify size"
+
+# Alternative: Check in quay.io UI
+echo "Check image size at: https://quay.io/repository/{registry-user}/sample-nodejs"
+----
+
+.*Expected size:* ~95-120 MB (vs 400MB+ for full UBI Node.js)
+
+[NOTE]
+====
+The image size is dramatically reduced because:
+1. Buildpacks detected Node.js and installed only production dependencies
+2. The `RUN_IMAGE` parameter swapped in the Hummingbird runtime
+3. No build tools or package managers in the final image
+====
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 2.1 and built your first application with Buildpacks and Hummingbird!
+
+.*What You've Accomplished*
+✅ Created registry secret and linked to pipeline serviceaccount +
+✅ Created ClusterBuildStrategy using Buildpacks with Hummingbird +
+✅ Created Build resource pointing to git repository +
+✅ Executed BuildRun and monitored progress +
+✅ Viewed detailed build logs showing Buildpacks phases +
+✅ Verified image pushed to registry +
+✅ Inspected image layers and labels with skopeo +
+✅ Deployed built image to OpenShift +
+✅ Tested running application via Route +
+✅ Confirmed Hummingbird runtime usage (95-120MB image)
+
+.*Key Takeaways*
+
+**Buildpacks + Hummingbird = Best of Both Worlds:**
+* **Zero-config builds**: No Dockerfile needed, auto-detects language
+* **Minimal runtime**: Hummingbird reduces image size by 70-80%
+* **Production-ready**: Proper security, non-root user, optimized layers
+
+**Developer Experience:**
+* Simple YAML to trigger builds
+* No CI/CD expertise required
+* Builds run securely within cluster
+* Automatic dependency installation
+
+**Platform Engineering:**
+* ClusterBuildStrategy enforces organizational standards
+* All teams get Hummingbird benefits automatically
+* Centralized build configuration
+
+=== Next Sub-Module
+
+Ready for advanced strategies? Proceed to:
+
+**xref:module-02-02-custom-strategies.adoc[Sub-Module 2.2: Custom Multi-Language Strategies]**
+
+Create a ClusterBuildStrategy with language auto-detection, conditional Hummingbird runtime selection, and integration with internal registries.
+
+=== Additional Resources
+
+*Cloud Native Buildpacks:*
+* https://buildpacks.io/[Cloud Native Buildpacks Official Site^]
+* https://paketo.io/[Paketo Buildpacks^]
+* https://buildpacks.io/docs/concepts/[Buildpacks Concepts^]
+
+*Shipwright Builds:*
+* https://shipwright.io/docs/build/buildstrategies/[BuildStrategy Documentation^]
+* https://github.com/redhat-openshift-builds/strategy-catalog[OpenShift Build Strategy Catalog^]
+
+=== Troubleshooting
+
+**Issue: BuildRun fails with registry push error**
+[source,bash]
+----
+# Verify secret exists and is linked
+oc get secret registry-credentials -n hummingbird-builds
+oc describe sa pipeline -n hummingbird-builds | grep registry-credentials
+
+# Recreate secret if needed
+oc delete secret registry-credentials -n hummingbird-builds
+oc create secret docker-registry registry-credentials \
+  --docker-server=quay.io \
+  --docker-username=YOUR_USER \
+  --docker-password=YOUR_PASSWORD \
+  -n hummingbird-builds
+oc secrets link pipeline registry-credentials -n hummingbird-builds
+----
+
+**Issue: BuildRun stuck in Pending**
+[source,bash]
+----
+# Check Tekton pipeline pods
+oc get pods -n openshift-pipelines
+
+# Check events
+oc get events -n hummingbird-builds --sort-by=.metadata.creationTimestamp
+
+# Describe buildrun for details
+oc describe buildrun sample-nodejs-app-run-1 -n hummingbird-builds
+----
+
+**Issue: Application not responding**
+[source,bash]
+----
+# Check pod status
+oc get pods -l app=sample-nodejs -n hummingbird-builds
+
+# View pod logs
+oc logs -l app=sample-nodejs -n hummingbird-builds
+
+# Check route
+oc get route sample-nodejs -n hummingbird-builds
+----
