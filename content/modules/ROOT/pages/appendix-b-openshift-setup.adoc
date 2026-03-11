@@ -81,7 +81,12 @@ For multi-user workshops, set the `NUM_USERS` environment variable to create mul
 NUM_USERS=10 ./bootstrap/setup-all.sh
 ----
 
-The script applies Kustomize overlays in order, waits for each component to become ready, then runs post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation, `roxctl` install). This is equivalent to running all of Option 3's manual steps.
+The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
+
+[TIP]
+====
+If the Quay user initialization fails (e.g., on a cluster where Quay was previously deployed), the script will attempt to create the account via the Quay user creation API. If that also fails, open the Quay console URL shown at the end of the script, click **Create Account**, and register with username `workshopuser` and password `workshoppass123`.
+====
 
 [[option-3-manual]]
 == Option 3: Manual Steps (Full Stack)
@@ -521,7 +526,18 @@ curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
 
 [NOTE]
 ====
-The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns an error, the first user was already created. Log in to the Quay console to create additional users or organisations manually.
+The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns `"Cannot initialize user in a non-empty database"`, the first user was already created. In that case, open the Quay console in your browser:
+
+[source,bash,role=execute,subs="attributes"]
+----
+echo "https://$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')"
+----
+
+Click **Create Account** at the bottom of the login page and register with:
+
+* **Username:** `{registry-user}`
+* **Password:** `{registry-password}`
+* **Email:** `workshop@example.com`
 ====
 
 ==== Step 14: Create Registry Credentials Secret

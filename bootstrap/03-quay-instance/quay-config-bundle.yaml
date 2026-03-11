@@ -8,6 +8,7 @@ metadata:
 stringData:
   config.yaml: |
     FEATURE_USER_INITIALIZE: true
+    FEATURE_USER_CREATION: true
     CREATE_PRIVATE_REPO_ON_PUSH: true
     CREATE_NAMESPACE_ON_PUSH: true
     SUPER_USERS:

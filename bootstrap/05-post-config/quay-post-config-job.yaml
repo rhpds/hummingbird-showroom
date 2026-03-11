@@ -103,8 +103,11 @@ spec:
                   sleep 10
               done
 
-              # Initialize first user
-              echo "[2/4] Initializing Quay first user (${REGISTRY_USER})..."
+              # Initialize first user (or create via fallback)
+              echo "[2/5] Initializing Quay user (${REGISTRY_USER})..."
+              USER_READY=false
+
+              # Attempt 1: Try the first-user initialize endpoint (works on empty DB only)
               INIT_RESPONSE=$(curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
                   -H 'Content-Type: application/json' \
                   -d "{
@@ -115,15 +118,62 @@ spec:
                   }" 2>/dev/null || true)
 
               if echo "$INIT_RESPONSE" | grep -q "access_token"; then
-                  echo "  First user created successfully."
-              elif echo "$INIT_RESPONSE" | grep -q "already been initialized"; then
-                  echo "  Quay already initialized."
+                  echo "  First user created successfully via initialize endpoint."
+                  USER_READY=true
+              elif echo "$INIT_RESPONSE" | grep -q "non-empty database\|already been initialized"; then
+                  echo "  Database already initialized, checking if user exists..."
               else
-                  echo "  WARNING: Unexpected Quay init response: $INIT_RESPONSE"
+                  echo "  Initialize returned: $INIT_RESPONSE"
+              fi
+
+              # Attempt 2: Verify user can log in (basic auth to v2 registry endpoint)
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  Verifying registry login for ${REGISTRY_USER}..."
+                  AUTH_HEADER=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
+                  LOGIN_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                      "https://${QUAY_ROUTE}/v2/" \
+                      -H "Authorization: Basic ${AUTH_HEADER}" 2>/dev/null || echo "000")
+                  if [ "$LOGIN_CODE" = "200" ] || [ "$LOGIN_CODE" = "401" ]; then
+                      # 401 from /v2/ with basic auth means we need to check token endpoint
+                      TOKEN_RESP=$(curl -sk -u "${REGISTRY_USER}:${REGISTRY_PASSWORD}" \
+                          "https://${QUAY_ROUTE}/v2/auth?service=quay-registry-quay-quay&scope=repository:test/test:pull" 2>/dev/null || true)
+                      if echo "$TOKEN_RESP" | grep -q "token"; then
+                          echo "  User ${REGISTRY_USER} already exists and login works."
+                          USER_READY=true
+                      fi
+                  fi
+              fi
+
+              # Attempt 3: Create user via the user creation API (requires FEATURE_USER_CREATION: true)
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  Attempting to create user via Quay user creation API..."
+                  CREATE_RESPONSE=$(curl -sk "https://${QUAY_ROUTE}/api/v1/user/" \
+                      -H 'Content-Type: application/json' \
+                      -d "{
+                          \"username\": \"${REGISTRY_USER}\",
+                          \"password\": \"${REGISTRY_PASSWORD}\",
+                          \"email\": \"${REGISTRY_EMAIL}\"
+                      }" 2>/dev/null || true)
+
+                  if echo "$CREATE_RESPONSE" | grep -q "username\|encrypted_password"; then
+                      echo "  User created successfully via user creation API."
+                      USER_READY=true
+                  elif echo "$CREATE_RESPONSE" | grep -q "already exists\|already taken"; then
+                      echo "  User already exists (may have a different password)."
+                      USER_READY=true
+                  else
+                      echo "  WARNING: User creation response: $CREATE_RESPONSE"
+                  fi
+              fi
+
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  WARNING: Could not verify or create user ${REGISTRY_USER}."
+                  echo "  You may need to create the account manually at https://${QUAY_ROUTE}"
+                  echo "  Click 'Create Account' and use: ${REGISTRY_USER} / ${REGISTRY_PASSWORD}"
               fi
 
               # Create registry-credentials secret
-              echo "[3/4] Creating registry-credentials secret..."
+              echo "[3/5] Creating registry-credentials secret..."
               oc delete secret registry-credentials -n "${BUILDS_NAMESPACE}" 2>/dev/null || true
               oc create secret docker-registry registry-credentials \
                   --docker-server="${QUAY_ROUTE}" \
@@ -133,7 +183,7 @@ spec:
               echo "  Secret created."
 
               # Link secret to pipeline ServiceAccount
-              echo "[4/4] Linking secret to pipeline ServiceAccount..."
+              echo "[4/5] Linking secret to pipeline ServiceAccount..."
               for i in $(seq 1 24); do
                   if oc get sa pipeline -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
                       oc secrets link pipeline registry-credentials --for=pull,mount -n "${BUILDS_NAMESPACE}"
@@ -143,6 +193,20 @@ spec:
                   echo "  Waiting for pipeline ServiceAccount... (${i}/24)"
                   sleep 10
               done
+
+              # Final verification
+              echo "[5/5] Verifying registry credentials..."
+              AUTH_CHECK=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
+              VERIFY_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                  "https://${QUAY_ROUTE}/v2/" \
+                  -H "Authorization: Basic ${AUTH_CHECK}" 2>/dev/null || echo "000")
+              if [ "$VERIFY_CODE" = "200" ]; then
+                  echo "  Registry login verified successfully."
+              else
+                  echo "  NOTE: Could not fully verify registry login (HTTP ${VERIFY_CODE})."
+                  echo "  If login fails, visit https://${QUAY_ROUTE} and click 'Create Account'."
+                  echo "  Use: username=${REGISTRY_USER}  password=${REGISTRY_PASSWORD}"
+              fi
 
               echo "=== Quay Post-Configuration Complete ==="
               echo "  Registry: ${QUAY_ROUTE}"

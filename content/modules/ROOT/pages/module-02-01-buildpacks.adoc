@@ -45,6 +45,11 @@ Mountable secrets:   registry-credentials
 If the secret does not exist, return to xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B: Quay Setup] and complete Steps 5-6 to create the secret and link it to the `pipeline` ServiceAccount.
 ====
 
+[TIP]
+====
+To browse images in the Quay web console, log in at `https://<quay-route>` with username `workshopuser` and password `workshoppass123`. If the account does not exist, click **Create Account** on the login page and register with those credentials.
+====
+
 [[buildpacks-strategy]]
 == Create Hummingbird Buildpacks Strategy
 
