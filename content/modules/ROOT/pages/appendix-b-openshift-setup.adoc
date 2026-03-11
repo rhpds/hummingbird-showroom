@@ -538,6 +538,12 @@ Click **Create Account** at the bottom of the login page and register with:
 * **Username:** `{registry-user}`
 * **Password:** `{registry-password}`
 * **Email:** `workshop@example.com`
+
+image::module-02/quay-create-account.png[Quay Create Account page,500,align="center"]
+
+After creating the account you will be logged in and see the Repositories dashboard:
+
+image::module-02/quay-repositories-dashboard.png[Quay Repositories dashboard,700,align="center"]
 ====
 
 ==== Step 14: Create Registry Credentials Secret
