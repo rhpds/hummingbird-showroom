@@ -7,7 +7,8 @@
 *Prerequisites:* Environment setup complete (see xref:appendix-a-rhel-setup.adoc[Appendix A]) +
 *Learning Objectives:*
 
-* Install security tools (cosign, syft, grype)
+* Basics of hardened images
+* Comparison with existing images
 * Create a sample Quarkus REST application
 * Write multi-stage Containerfiles with UBI builder + Hummingbird runtime
 * Build minimal container images using Podman and Buildah
@@ -20,96 +21,198 @@
 
 In this sub-module, you'll move from running pre-built images to creating your own Hummingbird-based containers. You'll learn the multi-stage build pattern that uses full UBI images for compilation and Hummingbird images for runtime, achieving dramatic size reductions while maintaining functionality.
 
-We'll also install the security tools (cosign, syft, grype) that you'll use extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
+[[types]]
+== Available types of hardened images
 
-[[security-tools]]
-== Security Tools Installation
+There are three main categories of images provided in the collection of hardend images: runtimes, services, and tools. Each of these are built in the same fashion but provide different capabitliies.  Runtimes include various langagues like `java`, `python`, and `dotnet` and also have `-builder` variants to allow for complex application tasks. Services include network based applications like `caddy`, `memcached`, and `haproxy` for depoying minimal versions of common services. Tools include things like `git`, `curl`, and `jq` for running a known containerized version in an isolated manner like within a CI pipeline.
 
-Security is a critical part of modern container workflows. Install tools for image signing, SBOM generation, and vulnerability scanning.
 
-=== Step 1: Install Cosign (Image Signing)
+[[services]]
+=== Services and tools
+Let's start by looking at a simple web service with `caddy`.
 
-Cosign is used to sign and verify container images:
-
-[source,bash,role=execute]
-----
-# Install cosign from GitHub releases
-COSIGN_VERSION=v2.4.1
-curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
-sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
-rm cosign-linux-amd64
-
-# Verify installation
-cosign version
-----
-
-.*Expected output:*
-----
-cosign version v2.4.1
-----
-
-[TIP]
-====
-**Cosign in Production:**
-
-* **Development**: Generate key pairs locally (as we'll do in this workshop)
-* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
-* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
-====
-
-=== Step 2: Install Syft (SBOM Generation)
-
-Syft generates Software Bill of Materials (SBOMs) from container images:
+=== Step 1: Create a simple index.html
 
 [source,bash,role=execute]
 ----
-# Install syft
-SYFT_VERSION=v1.17.0
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
+mkdir -p ~/webserver
+cat  > ~/webserver/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Hummingbird</title>
+    <!-- Load Tailwind CSS from CDN for instant styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+    <div class="text-center">
+        <h1 class="text-6xl md:text-8xl font-extrabold text-indigo-700 
+                   hover:scale-105 transition duration-300 ease-in-out">
+            Welcome to Red Hat Hardened Images
+        </h1>
+        <p class="mt-4 text-xl text-gray-500">
+            Your simple Caddy server is running!
+        </p>
+        <p class="mt-5 text-xl text-gray-400">
+	    ....everybody loves hummingbirds
+        </p>
+    </div>
+</body>
 
-# Verify installation
-syft version
+EOF
 ----
 
-.*Expected output:*
-----
-syft version 1.17.0
-----
-
-[NOTE]
-====
-**What is an SBOM?**
-
-A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
-
-* **Supply chain security**: Know exactly what's in your images
-* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
-* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
-====
-
-=== Step 3: Install Grype (Vulnerability Scanning)
-
-Grype scans container images for known CVEs:
+With our `index.html` ready to serve, we just need a web server. The `caddy` image can be used for this sort of simple testing by running the default container image and passing the directory as a volume mount. 
 
 [source,bash,role=execute]
 ----
-# Install grype
-GRYPE_VERSION=v0.88.0
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
-
-# Verify installation
-grype version
+podman run -d --rm --name caddy-server \
+  -p 8080:8080 \
+  -v ~/webserver:/usr/share/caddy:ro,Z \
+  quay.io/hummingbird-hatchling/caddy:latest
+curl http://localhost:8080
+podman stop caddy-server
 ----
 
-.*Expected output:*
+This will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile for your final webserver.
+
+[source,bash,role=execute]
 ----
-grype version 0.88.0
+cat  > ~/webserver/Containerfile << 'EOF'
+FROM quay.io/hummingbird-hatchling/caddy:latest
+
+COPY webserver/ /usr/share/caddy/
+EOF
 ----
 
-[TIP]
-====
-Grype downloads a vulnerability database on first run. This may take a few minutes initially. The database is cached locally and updated periodically.
-====
+We can simply add the content to be served to the default Caddy location and create the final container. If we needed more complex Caddy configurations, we can also created and add a custom Cdddyfile to overfide the defaults in the image.
+
+[source,bash,role=execute]
+----
+podman build -t my-website -f webserver/Containerfile
+podman run -d --rm --name webserver -p 8080:8080 my-website
+curl http://localhost:8080
+----
+
+Network service images are fairly straightforward, but what about tools? Why would we wnat a containerized version of `curl` available?
+
+On the current system, we have `curl` installed as an RPM. But, what if you were building on a system without `curl` and without the privileges to install new packages? This can be a common occurence in CI/CD runners, systems used to build xoftware in a pipeline often with minimal packages installed.
+
+In that case we could run the same test as we did with the local package using a known good and specific version of `curl` via `podman`
+
+[source,bash,role=execute]
+----
+podman run -it --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
+----
+Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of poosibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
+
+Containerized versions of common tools let's us provide a known good, common set of capabitliies to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact sanme tool image instead of requiring local tools.
+We can be sure we've got the right images by verifing the signature with a tool like `cosign`. We'll cover more on that later.
+
+[[runtimes]]
+=== Simple runtime examples
+While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in three variants: `default`, `builder`, and `fips`. The details will vary from image to image, but the `defautl` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant addes to the `default` both rpm and languga specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles. 
+The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+
+Let's use the `python:builder` image to create a simple Flask application using upstreawm dependencies.
+
+
+[source,bash,role=execute]
+----
+mkdir -p ~/flask
+cat  > ~/flask/app.py << 'EOF'
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return """
+    <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Hummingbird</title>
+    <!-- Load Tailwind CSS from CDN for instant styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+    <div class="text-center">
+        <h1 class="text-6xl md:text-8xl font-extrabold text-indigo-700
+                   hover:scale-105 transition duration-300 ease-in-out">
+            Welcome to Project Hummingbird
+        </h1>
+        <p class="mt-4 text-xl text-gray-500">
+            Your simple Flask application is running!
+        </p>
+        <p class="mt-5 text-xl text-gray-400">
+	    ....everybody loves hummingbirds
+        </p>
+    </div>
+</body>
+</html>
+    """
+
+if __name__ == "__main__":
+    # Listen on all interfaces (0.0.0.0) on port 8080
+    app.run(host="0.0.0.0", port=8080)
+EOF
+----
+
+This is the same index.html we saw in the `caddy` example, just served via Flask instead of Caddy.
+
+We can now create the Containerfile to build this application.
+
+[source,bash,role=execute]
+----
+cat  > ~/flask/Containerfile << 'EOF'
+FROM quay.io/hummingbird-hatchling/python:3.14-builder
+
+# Temporarily switch to root for package installation
+USER root
+
+# Install Flask and it's required dependencies from local cache 
+RUN pip install --index-url http://localhost:8000 flask 
+
+# Switch back to the default user to install and run the application
+USER ${CONTAINER_DEFAULT_USER}
+COPY app.py .
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./app.py"]
+
+EOF
+----
+<.> Use the version tag plus `-builder` to get the right matching tools
+<.> Install globally as `root` to skip creating a virtual environment
+<.> Use `--index-url` to use our local artifact repository
+<.> Reset the USER with the provded ENV variable
+<.> Standard non-init container configuration
+
+Like the `caddy` example, this can be built and run locally with `podman`. 
+
+[source,bash,role=execute]
+----
+podman build --net=host -t my-flasksite -f flask/Containerfile
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite
+curl http://localhost:8080
+----
 
 [[sample-application]]
 == Create Sample Application
@@ -231,6 +334,37 @@ quarkus.http.host=0.0.0.0
 quarkus.http.port=8080
 EOF
 ----
+== UBI version
+
+Let's build a comparison image using only UBI (no Hummingbird runtime) to see the difference.
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/sample-app
+
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > Containerfile.ubi << 'EOF'
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+WORKDIR /app
+RUN cp -r /build/target/quarkus-app/* /app/
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+
+# Build UBI-only version
+podman build -f Containerfile.ubi -t demo-ubi:v1 .
+----
+
+== HUM version
 
 [[multi-stage-containerfile]]
 == Multi-Stage Containerfile
@@ -242,20 +376,19 @@ Now let's create the Containerfile that builds our application using the multi-s
 [source,bash,role=execute]
 ----
 cat > Containerfile << 'EOF'
-# Multi-stage build: UBI builder -> Hummingbird runtime
+# Multi-stage build: builder -> runtime
 
 # Build arguments for registry flexibility
-ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG BUILDER_REGISTRY=quay.io/hummingbird-hatchling
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 
 # ============================================
 # Stage 1: Build stage using full UBI image
 # ============================================
-FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+FROM ${BUILDER_REGISTRY}/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
-USER root
-RUN microdnf install -y unzip && microdnf clean all
+RUN dnf install -y maven && dnf clean all
 
 WORKDIR /build
 
@@ -278,13 +411,13 @@ FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
 WORKDIR /app
 
 # Copy the Quarkus fast-jar layout
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/lib/ ./lib/
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/*.jar ./
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/app/ ./app/
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/quarkus/ ./quarkus/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 # Run as non-root user
-USER 1001
+USER 65532
 
 # Expose port
 EXPOSE 8080
@@ -303,7 +436,7 @@ EOF
 * **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
 * **Unzip Installation**: The UBI9 OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
 * **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
-* **Security**: Non-root user (1001), proper file ownership with `--chown`
+* **Security**: Non-root user (65532), proper file ownership with `--chown`
 * **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup
 * **Image Naming**: Hummingbird images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
 
@@ -509,7 +642,7 @@ Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbir
 * **grype**: Vulnerability scanning
 
 **Best Practices Applied:**
-* Non-root user (UID 1001)
+* Non-root user (UID 65532)
 * Minimal runtime image (no build tools, no package managers, no compiler)
 * Proper file ownership with `--chown`
 * Dependency layer caching for faster rebuilds
@@ -575,3 +708,94 @@ ls -la mvnw
 chmod +x mvnw
 ./mvnw --version
 ----
+
+== CUT CONTENT
+We'll also install the security tools (cosign, syft, grype) that you'll use extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
+
+[[security-tools]]
+== Security Tools Installation
+
+Security is a critical part of modern container workflows. Install tools for image signing, SBOM generation, and vulnerability scanning.
+
+=== Step 1: Install Cosign (Image Signing)
+
+Cosign is used to sign and verify container images:
+
+[source,bash,role=execute]
+----
+# Install cosign from GitHub releases
+COSIGN_VERSION=v2.4.1
+curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
+sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
+rm cosign-linux-amd64
+
+# Verify installation
+cosign version
+----
+
+.*Expected output:*
+----
+cosign version v2.4.1
+----
+
+[TIP]
+====
+**Cosign in Production:**
+
+* **Development**: Generate key pairs locally (as we'll do in this workshop)
+* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
+* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
+====
+
+=== Step 2: Install Syft (SBOM Generation)
+
+Syft generates Software Bill of Materials (SBOMs) from container images:
+
+[source,bash,role=execute]
+----
+# Install syft
+SYFT_VERSION=v1.17.0
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
+
+# Verify installation
+syft version
+----
+
+.*Expected output:*
+----
+syft version 1.17.0
+----
+
+[NOTE]
+====
+**What is an SBOM?**
+
+A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
+
+* **Supply chain security**: Know exactly what's in your images
+* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
+* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
+====
+
+=== Step 3: Install Grype (Vulnerability Scanning)
+
+Grype scans container images for known CVEs:
+
+[source,bash,role=execute]
+----
+# Install grype
+GRYPE_VERSION=v0.88.0
+curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
+
+# Verify installation
+grype version
+----
+
+.*Expected output:*
+----
+grype version 0.88.0
+----
+
+[TIP]
+====
+Grype downloads a vulnerability database on first run. This may take a few minutes initially. The database is cached locally and updated periodically.
