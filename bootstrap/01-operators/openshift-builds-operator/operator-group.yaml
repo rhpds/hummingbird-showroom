@@ -3,4 +3,6 @@ kind: OperatorGroup
 metadata:
   name: openshift-builds-operator-group
   namespace: openshift-builds
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec: {}

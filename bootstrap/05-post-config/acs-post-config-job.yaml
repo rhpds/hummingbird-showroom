@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: acs-post-config
+  namespace: stackrox
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: acs-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["platform.stackrox.io"]
+    resources: ["securedclusters"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: acs-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+subjects:
+  - kind: ServiceAccount
+    name: acs-post-config
+    namespace: stackrox
+roleRef:
+  kind: ClusterRole
+  name: acs-post-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: acs-post-config
+  namespace: stackrox
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: acs-post-config
+      restartPolicy: OnFailure
+      containers:
+        - name: configure-acs
+          image: registry.redhat.io/openshift4/ose-cli:latest
+          env:
+            - name: ACS_NAMESPACE
+              value: "stackrox"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              echo "=== ACS Post-Configuration Job ==="
+
+              # Wait for Central to be ready
+              echo "[1/4] Waiting for ACS Central..."
+              for i in $(seq 1 60); do
+                  if oc get deployment central -n "${ACS_NAMESPACE}" > /dev/null 2>&1; then
+                      AVAILABLE=$(oc get deployment central -n "${ACS_NAMESPACE}" \
+                          -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
+                      if [ "${AVAILABLE:-0}" -ge 1 ]; then
+                          echo "  Central is ready."
+                          break
+                      fi
+                  fi
+                  echo "  Waiting for Central... (${i}/60)"
+                  sleep 10
+              done
+
+              # Get ACS admin password
+              echo "[2/4] Retrieving ACS admin password..."
+              ACS_PASSWORD=""
+              if oc get secret central-htpasswd -n "${ACS_NAMESPACE}" > /dev/null 2>&1; then
+                  ACS_PASSWORD=$(oc get secret central-htpasswd -n "${ACS_NAMESPACE}" \
+                      -o jsonpath='{.data.password}' | base64 -d)
+                  echo "  ACS admin password retrieved."
+              else
+                  echo "  WARNING: central-htpasswd secret not found."
+                  exit 1
+              fi
+
+              # Get ACS route
+              ACS_ROUTE=$(oc get route central -n "${ACS_NAMESPACE}" \
+                  -o jsonpath='{.spec.host}' 2>/dev/null || true)
+              if [ -z "$ACS_ROUTE" ]; then
+                  echo "  ERROR: ACS route not found."
+                  exit 1
+              fi
+              echo "  ACS Central URL: https://${ACS_ROUTE}"
+
+              # Generate and apply init bundle
+              echo "[3/4] Generating cluster init bundle..."
+              if oc get secret sensor-tls -n "${ACS_NAMESPACE}" > /dev/null 2>&1; then
+                  echo "  Init bundle secrets already exist. Skipping."
+              else
+                  BUNDLE_NAME="workshop-cluster-$(date +%s)"
+
+                  # Wait for Central API to be responsive
+                  for i in $(seq 1 30); do
+                      HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                          -u "admin:${ACS_PASSWORD}" \
+                          "https://${ACS_ROUTE}/v1/metadata" 2>/dev/null || echo "000")
+                      if [ "$HTTP_CODE" = "200" ]; then
+                          echo "  Central API is ready."
+                          break
+                      fi
+                      echo "  Central API not ready (HTTP ${HTTP_CODE}), waiting... (${i}/30)"
+                      sleep 10
+                  done
+
+                  curl -sk -u "admin:${ACS_PASSWORD}" \
+                      "https://${ACS_ROUTE}/v1/cluster-init/init-bundles" \
+                      -X POST -H 'Content-Type: application/json' \
+                      -d "{\"name\": \"${BUNDLE_NAME}\"}" \
+                      -o /tmp/init-bundle.json
+
+                  python3 -c "
+              import json, base64
+              with open('/tmp/init-bundle.json') as f:
+                  data = json.load(f)
+                  bundle = data.get('kubectlBundle', '')
+                  decoded = base64.b64decode(bundle).decode('utf-8')
+                  with open('/tmp/init-bundle-secrets.yaml', 'w') as out:
+                      out.write(decoded)
+              "
+                  oc apply -f /tmp/init-bundle-secrets.yaml -n "${ACS_NAMESPACE}"
+                  rm -f /tmp/init-bundle.json /tmp/init-bundle-secrets.yaml
+                  echo "  Init bundle applied."
+              fi
+
+              # Verify
+              echo "[4/4] Verifying ACS installation..."
+              oc get pods -n "${ACS_NAMESPACE}" --no-headers 2>/dev/null || true
+
+              echo "=== ACS Post-Configuration Complete ==="
+              echo "  Central URL: https://${ACS_ROUTE}"
+              echo "  Admin user: admin"

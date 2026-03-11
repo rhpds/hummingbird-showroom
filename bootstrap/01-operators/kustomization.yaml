@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
   # OpenShift Pipelines (Tekton) -- from gitops-catalog
-  - https://github.com/tosin2013/gitops-catalog/openshift-pipelines-operator/overlays/latest?ref=main
+  - https://github.com/tosin2013/gitops-catalog/openshift-pipelines-operator/overlays/pipelines-1.20?ref=main
   # Builds for Red Hat OpenShift (Shipwright) -- local
   - openshift-builds-operator
   # Red Hat Quay operator -- local (Appendix B uses 'quay' namespace)
@@ -12,3 +12,48 @@ resources:
   - openshift-data-foundation
   # Red Hat Advanced Cluster Security operator -- from gitops-catalog
   - https://github.com/tosin2013/gitops-catalog/advanced-cluster-security-operator/operator/overlays/stable?ref=main
+
+patches:
+  # Pipelines subscription -- sync-wave 1
+  - target:
+      group: operators.coreos.com
+      version: v1alpha1
+      kind: Subscription
+      name: openshift-pipelines-operator
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  # ACS subscription -- sync-wave 1
+  - target:
+      group: operators.coreos.com
+      version: v1alpha1
+      kind: Subscription
+      name: rhacs-operator
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  # ACS namespace -- sync-wave 0
+  - target:
+      version: v1
+      kind: Namespace
+      name: rhacs-operator
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "0"
+  # ACS operator group -- sync-wave 1
+  - target:
+      group: operators.coreos.com
+      version: v1
+      kind: OperatorGroup
+      name: rhacs-operator
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"

@@ -2,4 +2,40 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - https://github.com/tosin2013/gitops-catalog/openshift-data-foundation-operator/operator/overlays/stable-4.18?ref=main
+  - https://github.com/tosin2013/gitops-catalog/openshift-data-foundation-operator/operator/overlays/stable-4.19?ref=main
+
+patches:
+  - target:
+      group: operators.coreos.com
+      version: v1alpha1
+      kind: Subscription
+      name: odf-operator
+      namespace: openshift-storage
+    patch: |
+      - op: replace
+        path: /spec/channel
+        value: stable-4.21
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      version: v1
+      kind: Namespace
+      name: openshift-storage
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "0"
+  - target:
+      group: operators.coreos.com
+      version: v1
+      kind: OperatorGroup
+      name: openshift-storage
+      namespace: openshift-storage
+    patch: |
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"

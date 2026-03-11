@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - 01-operators
+  - 02-workshop-namespace
+  - 02a-odf-noobaa
+  - 03-quay-instance
+  - 04-acs-instance
+  - 05-post-config

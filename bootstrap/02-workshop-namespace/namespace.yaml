@@ -4,3 +4,5 @@ metadata:
   name: hummingbird-builds
   labels:
     workshop: zero-cve-hummingbird
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"

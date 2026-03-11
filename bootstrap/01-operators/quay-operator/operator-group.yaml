@@ -3,6 +3,8 @@ kind: OperatorGroup
 metadata:
   name: quay-operator-group
   namespace: quay
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   targetNamespaces:
     - quay

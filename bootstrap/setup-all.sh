@@ -1,31 +1,38 @@
 #!/bin/bash
 # =============================================================================
-# Hummingbird Workshop: Full OpenShift Platform Bootstrap
+# Hummingbird Workshop: OpenShift Platform Bootstrap via ArgoCD
 #
-# Automates the complete Appendix B setup using Kustomize overlays:
-#   1. Operators  (Pipelines, Builds/Shipwright, Quay, ODF, ACS)
-#   2. Workshop namespace
-#   2a. ODF NooBaa standalone (S3 for Quay)
-#   3. Quay registry instance (with Clair, ODF-backed object storage)
-#   4. ACS instance (Central + SecuredCluster)
-#   5. Post-config (Quay users, registry credentials, roxctl)
+# Installs the OpenShift GitOps (ArgoCD) operator, then creates an ArgoCD
+# Application that deploys the full workshop stack using sync waves:
 #
-# Environment variables:
-#   NUM_USERS  - Number of workshop users to create (default: 1)
-#
-# Prerequisites:
-#   - oc CLI logged in with cluster-admin
-#   - HA cluster (3+ nodes) for ODF
-#   - Internet access (pulls from gitops-catalog on GitHub)
+#   Wave 0: Namespaces
+#   Wave 1: Operators (Pipelines, Builds/Shipwright, Quay, ODF, ACS)
+#   Wave 2: NooBaa (S3 for Quay)
+#   Wave 3: Quay registry with Clair
+#   Wave 4: ACS Central
+#   Wave 5: Post-config Jobs (Quay users, registry creds, ACS init-bundle)
+#   Wave 6: SecuredCluster
 #
 # Usage:
-#   ./bootstrap/setup-all.sh
-#   NUM_USERS=10 ./bootstrap/setup-all.sh
+#   ./bootstrap/setup-all.sh                          # defaults: fork repo, main branch
+#   ./bootstrap/setup-all.sh --source upstream        # use upstream repo
+#   ./bootstrap/setup-all.sh --source fork            # use fork (default)
+#   ./bootstrap/setup-all.sh --branch feature-x       # use a specific branch
+#
+# Environment variables:
+#   REPO_URL   - Override the git repository URL
+#   BRANCH     - Override the git branch (default: main)
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NUM_USERS="${NUM_USERS:-1}"
+
+FORK_REPO="https://github.com/tosin2013/zero-cve-hummingbird-showroom.git"
+UPSTREAM_REPO="https://github.com/rhpds/zero-cve-hummingbird-showroom.git"
+
+SOURCE="fork"
+BRANCH="${BRANCH:-main}"
+REPO_URL="${REPO_URL:-}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -36,32 +43,47 @@ info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-wait_for_csv() {
-    local ns="$1"
-    local label="${2:-}"
-    local timeout="${3:-300}"
-    local interval=5
-    local elapsed=0
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --source)
+            SOURCE="$2"
+            shift 2
+            ;;
+        --branch)
+            BRANCH="$2"
+            shift 2
+            ;;
+        --repo)
+            REPO_URL="$2"
+            shift 2
+            ;;
+        *)
+            error "Unknown argument: $1"
+            echo "Usage: $0 [--source fork|upstream] [--branch BRANCH] [--repo URL]"
+            exit 1
+            ;;
+    esac
+done
 
-    while [ $elapsed -lt $timeout ]; do
-        PHASE=$(oc get csv -n "$ns" ${label:+-l "$label"} -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-        if [ "$PHASE" = "Succeeded" ]; then
-            info "  Operator in ${ns}: Succeeded"
-            return 0
-        fi
-        echo "    Phase: ${PHASE} (${elapsed}s / ${timeout}s)"
-        sleep $interval
-        elapsed=$((elapsed + interval))
-    done
-    warn "  Operator in ${ns} did not reach Succeeded within ${timeout}s (current: ${PHASE})"
-    return 1
-}
+if [ -z "$REPO_URL" ]; then
+    case "$SOURCE" in
+        fork)     REPO_URL="$FORK_REPO" ;;
+        upstream) REPO_URL="$UPSTREAM_REPO" ;;
+        *)
+            error "Invalid --source: $SOURCE (use 'fork' or 'upstream')"
+            exit 1
+            ;;
+    esac
+fi
 
 echo ""
 echo "============================================================"
-echo "  Hummingbird Workshop: OpenShift Platform Bootstrap"
+echo "  Hummingbird Workshop: ArgoCD Bootstrap"
 echo "============================================================"
-echo "  NUM_USERS=${NUM_USERS}"
+echo "  Source:  ${SOURCE}"
+echo "  Repo:   ${REPO_URL}"
+echo "  Branch: ${BRANCH}"
 echo ""
 
 # =================================================================
@@ -85,159 +107,118 @@ info "cluster-admin: confirmed"
 NODE_COUNT=$(oc get nodes --no-headers 2>/dev/null | wc -l)
 if [ "$NODE_COUNT" -lt 3 ]; then
     warn "Only ${NODE_COUNT} node(s) detected. ODF requires 3+ nodes for HA."
-    warn "Quay object storage may not deploy correctly on single-node clusters."
 fi
 info "Cluster nodes: ${NODE_COUNT}"
 echo ""
 
 # =================================================================
-# STEP 1: Install all operators
+# STEP 1: Install OpenShift GitOps operator
 # =================================================================
-info "=== Step 1: Installing operators (Pipelines, Builds, Quay, ODF, ACS) ==="
-oc apply -k "${SCRIPT_DIR}/01-operators/"
-info "Operator subscriptions applied."
+info "=== Step 1: Installing OpenShift GitOps (ArgoCD) operator ==="
+oc apply -k "${SCRIPT_DIR}/00-gitops-operator/"
+info "GitOps operator subscription applied."
 echo ""
 
 # =================================================================
-# STEP 2: Wait for operators to become ready
+# STEP 2: Wait for GitOps operator to be ready
 # =================================================================
-info "=== Step 2: Waiting for operators to reach Succeeded phase ==="
+info "=== Step 2: Waiting for OpenShift GitOps operator ==="
 
-info "Waiting for OpenShift Pipelines operator..."
+info "Waiting for GitOps CSV to reach Succeeded..."
 for i in $(seq 1 60); do
-    if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
-        info "  OpenShift Pipelines: Running"
+    PHASE=$(oc get csv -n openshift-gitops-operator \
+        -l operators.coreos.com/openshift-gitops-operator.openshift-operators \
+        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || \
+        oc get csv -n openshift-operators \
+        -l operators.coreos.com/openshift-gitops-operator.openshift-operators \
+        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then
+        info "  GitOps operator: Succeeded"
         break
     fi
     if [ "$i" -eq 60 ]; then
-        warn "  OpenShift Pipelines not yet ready after 5 minutes."
+        warn "  GitOps operator not ready after 5 minutes."
     fi
+    echo "    Phase: ${PHASE} (${i}/60)"
     sleep 5
 done
 
-info "Waiting for Builds for OpenShift operator..."
-wait_for_csv "openshift-builds" "operators.coreos.com/openshift-builds-operator.openshift-builds" 300 || true
-
-info "Waiting for Quay operator..."
-wait_for_csv "quay" "operators.coreos.com/quay-operator.quay" 300 || \
-    wait_for_csv "quay-operator" "operators.coreos.com/quay-operator.quay-operator" 300 || true
-
-info "Waiting for ODF operator..."
-wait_for_csv "openshift-storage" "operators.coreos.com/odf-operator.openshift-storage" 300 || \
-    wait_for_csv "openshift-storage" "" 300 || true
-
-info "Waiting for ACS operator..."
-wait_for_csv "rhacs-operator" "" 300 || true
-echo ""
-
-# =================================================================
-# STEP 2a: Deploy NooBaa standalone for Quay object storage
-# =================================================================
-info "=== Step 2a: Deploying NooBaa for Quay object storage ==="
-oc create namespace openshift-storage 2>/dev/null || true
-oc apply -k "${SCRIPT_DIR}/02a-odf-noobaa/"
-info "NooBaa CR applied. Waiting for NooBaa to become ready..."
-
+info "Waiting for ArgoCD server pods..."
 for i in $(seq 1 60); do
-    NOOBAA_PHASE=$(oc get noobaa noobaa -n openshift-storage -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
-    if [ "$NOOBAA_PHASE" = "Ready" ]; then
-        info "  NooBaa: Ready"
+    if oc get pods -n openshift-gitops -l app.kubernetes.io/name=openshift-gitops-server 2>/dev/null | grep -q Running; then
+        info "  ArgoCD server: Running"
         break
     fi
     if [ "$i" -eq 60 ]; then
-        warn "  NooBaa not ready after 5 minutes (current: ${NOOBAA_PHASE}). Quay may start without object storage."
+        warn "  ArgoCD server not running after 5 minutes."
     fi
-    echo "    NooBaa phase: ${NOOBAA_PHASE} (${i}/60)"
     sleep 5
 done
 echo ""
 
 # =================================================================
-# STEP 3: Create workshop namespace
+# STEP 3: Grant ArgoCD cluster-admin
 # =================================================================
-info "=== Step 3: Creating workshop namespace ==="
-oc apply -k "${SCRIPT_DIR}/02-workshop-namespace/"
-oc project hummingbird-builds 2>/dev/null || true
-info "Namespace hummingbird-builds ready."
+info "=== Step 3: Granting ArgoCD cluster-admin privileges ==="
+oc adm policy add-cluster-role-to-user cluster-admin system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller 2>/dev/null || true
+info "ArgoCD application controller has cluster-admin."
 echo ""
 
 # =================================================================
-# STEP 4: Deploy Quay registry instance
+# STEP 4: Create ArgoCD Application
 # =================================================================
-info "=== Step 4: Deploying Quay registry with Clair (ODF-backed storage) ==="
-oc apply -k "${SCRIPT_DIR}/03-quay-instance/"
-info "QuayRegistry CR applied. Waiting for Quay pods (this takes 3-5 minutes)..."
+info "=== Step 4: Creating ArgoCD Application ==="
+info "  Repo:   ${REPO_URL}"
+info "  Branch: ${BRANCH}"
+info "  Path:   bootstrap"
 
-for i in $(seq 1 60); do
-    READY=$(oc get pods -n quay -l quay-operator/quayregistry=quay-registry --no-headers 2>/dev/null | grep -c Running || true)
-    if [ "${READY:-0}" -ge 3 ]; then
-        info "  Quay pods ready: ${READY} running"
+sed -e "s|REPLACE_REPO_URL|${REPO_URL}|g" \
+    -e "s|REPLACE_BRANCH|${BRANCH}|g" \
+    "${SCRIPT_DIR}/argocd-application.yaml" | oc apply -f -
+
+info "ArgoCD Application 'hummingbird-workshop' created."
+echo ""
+
+# =================================================================
+# STEP 5: Monitor Application sync
+# =================================================================
+info "=== Step 5: Monitoring ArgoCD sync status ==="
+info "This may take 10-20 minutes as operators install and components deploy."
+echo ""
+
+SYNC_TIMEOUT=1200
+ELAPSED=0
+INTERVAL=15
+
+while [ $ELAPSED -lt $SYNC_TIMEOUT ]; do
+    SYNC_STATUS=$(oc get application hummingbird-workshop -n openshift-gitops \
+        -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    HEALTH_STATUS=$(oc get application hummingbird-workshop -n openshift-gitops \
+        -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    OP_PHASE=$(oc get application hummingbird-workshop -n openshift-gitops \
+        -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "Unknown")
+
+    echo "    Sync: ${SYNC_STATUS} | Health: ${HEALTH_STATUS} | Operation: ${OP_PHASE} (${ELAPSED}s / ${SYNC_TIMEOUT}s)"
+
+    if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
+        info "Application is Synced and Healthy!"
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        warn "  Quay not fully ready after 5 minutes. Pods running: ${READY:-0}"
+
+    if [ "$OP_PHASE" = "Failed" ] || [ "$OP_PHASE" = "Error" ]; then
+        warn "Sync operation failed. ArgoCD will retry automatically."
+        oc get application hummingbird-workshop -n openshift-gitops \
+            -o jsonpath='{.status.operationState.message}' 2>/dev/null
+        echo ""
     fi
-    echo "    Quay pods running: ${READY:-0} (${i}/60)"
-    sleep 5
-done
-echo ""
 
-# =================================================================
-# STEP 5: Deploy ACS instance
-# =================================================================
-info "=== Step 5: Deploying ACS Central + SecuredCluster ==="
-oc apply -k "${SCRIPT_DIR}/04-acs-instance/"
-info "ACS CRs applied. Waiting for Central (this takes 3-5 minutes)..."
-
-for i in $(seq 1 60); do
-    if oc get deployment central -n stackrox > /dev/null 2>&1; then
-        AVAILABLE=$(oc get deployment central -n stackrox -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
-        if [ "${AVAILABLE:-0}" -ge 1 ]; then
-            info "  Central is ready."
-            break
-        fi
-    fi
-    if [ "$i" -eq 60 ]; then
-        warn "  Central not ready after 5 minutes."
-    fi
-    echo "    Waiting for Central... (${i}/60)"
-    sleep 5
-done
-echo ""
-
-# =================================================================
-# STEP 6: Post-configuration (Quay users, credentials, SA link)
-# =================================================================
-info "=== Step 6: Configuring Quay registry credentials (${NUM_USERS} user(s)) ==="
-NUM_USERS="${NUM_USERS}" bash "${SCRIPT_DIR}/05-post-config/configure-quay-and-credentials.sh"
-echo ""
-
-# =================================================================
-# STEP 7: Post-configuration (ACS roxctl, verification)
-# =================================================================
-info "=== Step 7: Configuring ACS and installing roxctl ==="
-bash "${SCRIPT_DIR}/05-post-config/configure-acs.sh"
-echo ""
-
-# =================================================================
-# STEP 8: Verify Shipwright CRDs
-# =================================================================
-info "=== Step 8: Verifying Shipwright CRDs ==="
-ALL_CRDS_FOUND=true
-for CRD in builds.shipwright.io buildruns.shipwright.io buildstrategies.shipwright.io clusterbuildstrategies.shipwright.io; do
-    if oc get crd "$CRD" > /dev/null 2>&1; then
-        info "  ${CRD}: found"
-    else
-        warn "  ${CRD}: NOT FOUND (operator may still be installing)"
-        ALL_CRDS_FOUND=false
-    fi
+    sleep $INTERVAL
+    ELAPSED=$((ELAPSED + INTERVAL))
 done
 
-TEKTON_STATUS="not ready"
-if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
-    TEKTON_STATUS="running"
+if [ $ELAPSED -ge $SYNC_TIMEOUT ]; then
+    warn "Sync did not complete within ${SYNC_TIMEOUT}s. Check ArgoCD console for details."
 fi
-info "OpenShift Pipelines (Tekton): ${TEKTON_STATUS}"
 echo ""
 
 # =================================================================
@@ -250,12 +231,20 @@ echo "============================================================"
 echo ""
 echo "  Cluster:     $(oc whoami --show-server)"
 echo "  User:        $(oc whoami)"
-echo "  Namespace:   hummingbird-builds"
-echo "  Users:       ${NUM_USERS}"
+echo "  Source:      ${SOURCE} (${REPO_URL})"
+echo "  Branch:      ${BRANCH}"
 echo ""
+
+ARGOCD_ROUTE=$(oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='{.spec.host}' 2>/dev/null || echo "pending...")
+echo "  ArgoCD:      https://${ARGOCD_ROUTE}"
 
 BUILDS_CSV=$(oc get csv -n openshift-builds -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "installing...")
 echo "  Builds:      ${BUILDS_CSV}"
+
+TEKTON_STATUS="not ready"
+if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
+    TEKTON_STATUS="running"
+fi
 echo "  Pipelines:   ${TEKTON_STATUS}"
 
 NOOBAA_PHASE=$(oc get noobaa noobaa -n openshift-storage -o jsonpath='{.status.phase}' 2>/dev/null || echo "pending...")
@@ -271,5 +260,6 @@ ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.pa
 echo "  ACS Password: ${ACS_PASSWORD}"
 
 echo ""
+echo "  ArgoCD console: https://${ARGOCD_ROUTE}"
 echo "  Proceed to Module 2 to start the workshop labs."
 echo "============================================================"
