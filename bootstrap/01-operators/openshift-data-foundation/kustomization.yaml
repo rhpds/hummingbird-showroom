@@ -14,7 +14,7 @@ patches:
     patch: |
       - op: replace
         path: /spec/channel
-        value: stable-4.21
+        value: stable-4.20
       - op: add
         path: /metadata/annotations
         value:
