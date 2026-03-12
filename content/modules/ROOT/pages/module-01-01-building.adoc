@@ -100,7 +100,6 @@ We can simply add the content to be served to the default Caddy location and cre
 podman build -t my-website -f webserver/Containerfile
 podman run -d --rm --name webserver -p 8080:8080 my-website
 curl http://localhost:8080
-podman stop webserver
 ----
 
 Network service images are fairly straightforward, but what about tools? Why would we wnat a containerized version of `curl` available?
@@ -112,6 +111,7 @@ In that case we could run the same test as we did with the local package using a
 [source,bash,role=execute]
 ----
 podman run -it --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
+podman stop webserver
 ----
 Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of poosibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
 
@@ -362,7 +362,8 @@ FROM ${BUILDER_REGISTRY}/openjdk:21-builder AS builder
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
-RUN dnf install -y maven && dnf clean all
+USER root
+RUN dnf install -y unzip && dnf clean all
 
 WORKDIR /build
 
