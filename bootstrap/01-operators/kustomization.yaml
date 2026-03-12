@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
   # OpenShift Pipelines (Tekton) -- from gitops-catalog
-  - https://github.com/tosin2013/gitops-catalog/openshift-pipelines-operator/overlays/pipelines-1.20?ref=main
+  - https://github.com/tosin2013/gitops-catalog/openshift-pipelines-operator/overlays/latest?ref=main
   # Builds for Red Hat OpenShift (Shipwright) -- local
   - openshift-builds-operator
   # Red Hat Quay operator -- local (Appendix B uses 'quay' namespace)
