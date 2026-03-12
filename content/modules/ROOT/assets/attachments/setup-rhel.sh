@@ -47,6 +47,7 @@ curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sud
 
 # Verify installation
 grype version
+grype db update
 
 cat > /home/rhel/quarkus.sh <<'EOF'
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
