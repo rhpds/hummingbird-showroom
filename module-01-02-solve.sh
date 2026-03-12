@@ -6,14 +6,14 @@ set -e
 
 echo "=== Checking prerequisites ==="
 # Verify that hummingbird-demo:v1 exists (created in module 01-01)
-if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^hummingbird-demo:v1$"; then
+if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hummingbird-demo:v1$"; then
     echo "ERROR: hummingbird-demo:v1 image not found"
     echo "Please run module-01-01-solve.sh first to build the required image"
     exit 1
 fi
 
 # Verify that demo-ubi:v1 exists (created in module 01-01)
-if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^demo-ubi:v1$"; then
+if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/demo-ubi:v1$"; then
     echo "ERROR: demo-ubi:v1 image not found"
     echo "Please run module-01-01-solve.sh first to build the required image"
     exit 1
@@ -63,18 +63,13 @@ echo "=== Step 6: Generate Signing Keys ==="
 # Generate a key pair with empty password for automation
 # Using expect-style input or environment variable
 export COSIGN_PASSWORD=""
-cosign generate-key-pair <<EOF
-
-
-EOF
+printf '\n\n' | cosign generate-key-pair
 
 echo "=== Step 7: Sign the Image ==="
-cosign sign --yes --key cosign.key \
+printf '\n' | cosign sign --yes --key cosign.key \
   --tlog-upload=false \
   --allow-insecure-registry \
-  localhost:5000/hummingbird-demo@${IMAGE_DIGEST} <<EOF
-
-EOF
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
 
 echo "=== Step 8: Verify the Signature ==="
 cosign verify --key cosign.pub \
@@ -83,13 +78,11 @@ cosign verify --key cosign.pub \
   localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
 
 echo "=== Step 9: Attach SBOM Attestation ==="
-cosign attest --yes --key cosign.key \
+printf '\n' | cosign attest --yes --key cosign.key \
   --predicate hi.spdx --type spdxjson \
   --tlog-upload=false \
   --allow-insecure-registry \
-  localhost:5000/hummingbird-demo@${IMAGE_DIGEST} <<EOF
-
-EOF
+  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
 
 echo "=== Step 10: Verify SBOM Attestation ==="
 cosign verify-attestation --key cosign.pub \
