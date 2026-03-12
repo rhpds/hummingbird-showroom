@@ -89,7 +89,7 @@ This will work for very simple testing, but to use this image in a production en
 cat  > ~/webserver/Containerfile << 'EOF'
 FROM quay.io/hummingbird-hatchling/caddy:latest
 
-COPY webserver/ /usr/share/caddy/
+COPY index.html /usr/share/caddy/
 EOF
 ----
 
@@ -100,6 +100,7 @@ We can simply add the content to be served to the default Caddy location and cre
 podman build -t my-website -f webserver/Containerfile
 podman run -d --rm --name webserver -p 8080:8080 my-website
 curl http://localhost:8080
+podman stop webserver
 ----
 
 Network service images are fairly straightforward, but what about tools? Why would we wnat a containerized version of `curl` available?
@@ -212,6 +213,7 @@ Like the `caddy` example, this can be built and run locally with `podman`.
 podman build --net=host -t my-flasksite -f flask/Containerfile
 podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite
 curl http://localhost:8080
+podman stop flask-demo
 ----
 
 [[sample-application]]
@@ -334,35 +336,6 @@ quarkus.http.host=0.0.0.0
 quarkus.http.port=8080
 EOF
 ----
-== UBI version
-
-Let's build a comparison image using only UBI (no Hummingbird runtime) to see the difference.
-
-[source,bash,role=execute]
-----
-cd ~/hummingbird-lab/sample-app
-
-# Create a UBI-only Containerfile (single-stage, no Hummingbird)
-cat > Containerfile.ubi << 'EOF'
-FROM registry.access.redhat.com/ubi9/openjdk-21:latest
-USER root
-RUN microdnf install -y unzip && microdnf clean all
-WORKDIR /build
-COPY mvnw pom.xml ./
-COPY .mvn ./.mvn
-RUN ./mvnw dependency:go-offline -B
-COPY src ./src
-RUN ./mvnw package -DskipTests -B
-WORKDIR /app
-RUN cp -r /build/target/quarkus-app/* /app/
-EXPOSE 8080
-USER 1001
-ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-EOF
-
-# Build UBI-only version
-podman build -f Containerfile.ubi -t demo-ubi:v1 .
-----
 
 == HUM version
 
@@ -383,9 +356,10 @@ ARG BUILDER_REGISTRY=quay.io/hummingbird-hatchling
 ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 
 # ============================================
-# Stage 1: Build stage using full UBI image
+# Stage 1: Build stage using builder variant
 # ============================================
 FROM ${BUILDER_REGISTRY}/openjdk:21-builder AS builder
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 RUN dnf install -y maven && dnf clean all
@@ -491,18 +465,49 @@ COMMIT hummingbird-demo:v1
 Successfully tagged localhost/hummingbird-demo:v1
 ----
 
+== UBI version
+
+Let's build a comparison image using only UBI (no Hummingbird runtime) to see the difference.
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/sample-app
+
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > Containerfile.ubi << 'EOF'
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+WORKDIR /app
+RUN cp -r /build/target/quarkus-app/* /app/
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+
+# Build UBI-only version
+podman build -f Containerfile.ubi -t demo-ubi:v1 .
+----
 === Step 9: Verify Image Size
 
 Check the size of your built image:
 
 [source,bash,role=execute]
 ----
-podman images | grep hummingbird-demo
+podman images hummingbird-demo
+podman images demo-ubi
 ----
 
 .*Expected output:*
 ----
-localhost/hummingbird-demo  v1  abc123def456  1 minute ago  272 MB
+localhost/hummingbird-demo  v1  abc123def456  1 minute ago  273 MB
+localhost/demo-ubi  v1          1cf92afc37ae  29 seconds ago  624 MB
 ----
 
 [[testing-application]]
@@ -515,7 +520,7 @@ Run the container and test it:
 [source,bash,role=execute]
 ----
 # Run in background
-podman run -d --name demo -p 8080:8080 hummingbird-demo:v1
+podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
 
 # Wait for Quarkus to start
 sleep 5
@@ -568,52 +573,7 @@ Listening on: http://0.0.0.0:8080
 [source,bash,role=execute]
 ----
 podman stop demo
-podman rm demo
 ----
-
-[[podman-desktop-build]]
-== Building with Podman Desktop GUI
-
-Now let's build the same image using Podman Desktop's visual interface.
-
-=== Podman Desktop Example 4: Build Your App on Top of Hummingbird
-
-. Open Podman Desktop
-. Navigate to **Images** tab
-. Click **Build** button in the top-right
-. In the "Build Image" dialog:
-  - **Containerfile path**: Click **Browse** and select `~/hummingbird-lab/sample-app/Containerfile`
-  - **Build context**: Select `~/hummingbird-lab/sample-app` (the directory containing the Containerfile)
-  - **Image name**: `hummingbird-demo:gui-v1`
-  - **Build arguments** (optional):
-    * Add `BUILDER_REGISTRY=registry.access.redhat.com/ubi9`
-    * Add `RUNTIME_REGISTRY=quay.io/hummingbird-hatchling`
-. Click **Build**
-. Monitor build progress in the GUI:
-  - You'll see each Containerfile step execute in real-time
-  - Stage 1 (builder) will show Maven download and build output
-  - Stage 2 (runtime) will show the COPY operations
-. Once complete, the image `hummingbird-demo:gui-v1` will appear in your **Images** list
-
-.*Key Observation:*
-The Podman Desktop build uses the same Podman engine backend as the CLI, so the result is identical. The GUI provides a visual representation of the build process, which can be helpful for learning and debugging.
-
-[[containerfile-editor]]
-=== Containerfile Visual Editor (Optional)
-
-Some versions of Podman Desktop include a Containerfile editor:
-
-. In the **Images** tab, click **Create**
-. Choose **From Containerfile**
-. Use the visual editor to:
-  - View syntax highlighting
-  - See build arguments highlighted
-  - Get linting warnings for common mistakes
-
-[TIP]
-====
-While the visual editor is convenient, most developers prefer using their IDE (VS Code, IntelliJ, etc.) for Containerfile editing, as it provides better syntax highlighting and linting extensions.
-====
 
 [[summary]]
 == Summary
