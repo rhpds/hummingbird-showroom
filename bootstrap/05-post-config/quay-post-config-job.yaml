@@ -91,15 +91,24 @@ spec:
               fi
               echo "  Quay registry: ${QUAY_ROUTE}"
 
-              # Wait for Quay API to respond
-              echo "  Waiting for Quay API to be ready..."
-              for i in $(seq 1 30); do
-                  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${QUAY_ROUTE}/api/v1/discovery" 2>/dev/null || echo "000")
+              # Wait for Quay to fully start
+              echo "  Waiting for Quay to fully start (initial 2min delay)..."
+              sleep 120
+
+              # Wait for Quay health endpoint to be ready
+              echo "  Checking Quay health endpoint..."
+              for i in $(seq 1 60); do
+                  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${QUAY_ROUTE}/health/instance" 2>/dev/null || echo "000")
                   if [ "$HTTP_CODE" = "200" ]; then
-                      echo "  Quay API is ready."
-                      break
+                      echo "  Quay health check passed."
+                      # Additional check: verify Quay API can serve requests
+                      DISCOVERY_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${QUAY_ROUTE}/api/v1/discovery" 2>/dev/null || echo "000")
+                      if [ "$DISCOVERY_CODE" = "200" ]; then
+                          echo "  Quay API is ready."
+                          break
+                      fi
                   fi
-                  echo "  Quay API not ready (HTTP ${HTTP_CODE}), waiting... (${i}/30)"
+                  echo "  Quay not ready (Health: ${HTTP_CODE}), waiting... (${i}/60)"
                   sleep 10
               done
 
