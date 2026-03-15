@@ -47,9 +47,14 @@ If the secret does not exist, return to xref:appendix-b-openshift-setup.adoc#qua
 
 [TIP]
 ====
-To browse images in the Quay web console, log in at `https://<quay-route>` with username `workshopuser` and password `workshoppass123`. If the account does not exist, click **Create Account** on the login page and register with those credentials.
+Verify your Quay registry credentials are configured correctly:
 
-image::module-02/quay-create-account.png[Quay Create Account page,400,align="center"]
+[source,bash,role=execute]
+----
+oc get secret registry-credentials -n hummingbird-builds -o yaml | grep -A 5 "dockerconfigjson"
+----
+
+The secret should contain base64-encoded credentials for the Quay registry. These credentials were created during the bootstrap process in xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B].
 ====
 
 [[buildpacks-strategy]]
@@ -300,41 +305,46 @@ Check detailed build logs:
 
 [source,bash,role=execute]
 ----
-# Get the TaskRun created by BuildRun
-TASKRUN=$(oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.taskRunName}')
+# Get the pod created by BuildRun (pod name = TaskRun name + "-pod")
+BUILDRUN_POD=$(oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.taskRunName}')-pod
 
 # View logs
-oc logs -f $TASKRUN --all-containers
+oc logs $BUILDRUN_POD -n hummingbird-builds --all-containers
 ----
 
 .*Expected log excerpts:*
 ----
 ===> DETECTING
 ...
-[detector] ======== Results ========
-[detector] pass: paketo-buildpacks/node-engine@2.0.0
-[detector] pass: paketo-buildpacks/npm-install@1.2.0
+4 of 11 buildpacks participating
+paketo-buildpacks/ca-certificates 3.x.x
+paketo-buildpacks/node-engine     8.x.x
+paketo-buildpacks/npm-install     2.x.x
+paketo-buildpacks/node-start      2.x.x
 ...
 ===> ANALYZING
 ...
 ===> RESTORING
 ...
 ===> BUILDING
-[builder] Paketo Buildpack for Node Engine 2.0.0
-[builder]   Resolving Node Engine version
-[builder]     Candidate version sources (in priority order):
-[builder]       package.json -> ">=20.0.0"
-[builder]     Selected Node Engine version: 20.18.0
+Paketo Buildpack for Node Engine 8.x.x
+  Resolving Node Engine version
+    Candidate version sources (in priority order):
+      package.json -> "~18"
+    Selected Node Engine version (using package.json): 18.x.x
 ...
-[builder] Paketo Buildpack for NPM Install 1.2.0
-[builder]   Installing node_modules
-[builder]     Running 'npm ci --only=production'
+Paketo Buildpack for NPM Install 2.x.x
+  Resolving installation process
+    Selected NPM build process: 'npm install'
+  Executing launch environment install process
+    Running 'npm install ...'
 ...
 ===> EXPORTING
-[exporter] Adding layer 'paketo-buildpacks/node-engine:nodejs'
-[exporter] Reusing layer 'paketo-buildpacks/npm-install:modules'
+Adding layer 'paketo-buildpacks/node-engine:node'
+Adding layer 'paketo-buildpacks/npm-install:launch-modules'
 ...
-[exporter] Successfully built image .../sample-nodejs:latest
+Saving .../workshopuser/sample-nodejs:latest...
+*** Images (sha256:...):
 ----
 
 [NOTE]
@@ -342,8 +352,8 @@ oc logs -f $TASKRUN --all-containers
 **Key Buildpacks Phases:**
 
 * **DETECTING**: Auto-detects Node.js via `package.json`
-* **BUILDING**: Runs `npm ci` to install dependencies
-* **EXPORTING**: Creates final image layers with **Hummingbird runtime**
+* **BUILDING**: Runs `npm install` to install production dependencies
+* **EXPORTING**: Creates final image layers with the configured runtime image
 
 The runtime image is swapped out automatically thanks to the `RUN_IMAGE` parameter!
 ====
@@ -369,10 +379,30 @@ sha256:abc123def456789...
 
 [TIP]
 ====
-You can also check your on-cluster Quay console to confirm the image is present:
-1. Open {workshop-registry-console} in your browser
-2. Navigate to your repository: `{registry-user}/sample-nodejs`
-3. You should see the `latest` tag with a recent push timestamp
+Verify the image was pushed to Quay via the Docker v2 registry API:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+TOKEN=$(curl -sk "https://${QUAY_ROUTE}/v2/auth?service=${QUAY_ROUTE}&scope=repository:{registry-user}/sample-nodejs:pull" \
+  -u "{registry-user}:{registry-password}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  "https://${QUAY_ROUTE}/v2/{registry-user}/sample-nodejs/tags/list" | python3 -m json.tool
+----
+
+.*Expected output:*
+----
+{
+    "name": "workshopuser/sample-nodejs",
+    "tags": [
+        "latest"
+    ]
+}
+----
+
+The `latest` tag should appear, confirming the BuildRun successfully pushed the image.
+
+NOTE: The Quay repository is created as **private** by default. The v2 registry API is used here instead of the Quay REST API because it supports standard Docker token authentication without requiring an OAuth application token.
 ====
 
 === Step 10: Inspect Image Layers and Labels
@@ -382,8 +412,8 @@ Use `skopeo` to examine the built image and confirm it uses the Hummingbird runt
 [source,bash,role=execute,subs="attributes"]
 ----
 skopeo inspect docker://{workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null \
-  | head -40 \
-  || echo "Note: skopeo not available in cluster - check the Quay console"
+  | jq '.' \
+  || echo "Note: skopeo not available - image verification requires registry access"
 ----
 
 [NOTE]
@@ -396,7 +426,14 @@ The image labels should reference the Hummingbird runtime. The layer count will 
 
 === Step 11: Deploy to OpenShift
 
-Deploy your Hummingbird-built application:
+Deploy your Hummingbird-built application. First, link the registry credentials to the `default` ServiceAccount so pods can pull the image from the private Quay repository:
+
+[source,bash,role=execute]
+----
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds
+----
+
+Now create the deployment, service, and route:
 
 [source,bash,role=execute,subs="attributes"]
 ----
@@ -411,6 +448,11 @@ oc expose deployment sample-nodejs --port=8080 -n hummingbird-builds
 # Create route
 oc expose service sample-nodejs -n hummingbird-builds
 ----
+
+[NOTE]
+====
+The `oc secrets link default registry-credentials --for=pull` step is required because Quay creates repositories as **private** by default (`CREATE_PRIVATE_REPO_ON_PUSH: true`). Without linking the pull secret to the `default` ServiceAccount, pods will fail with `ImagePullBackOff`.
+====
 
 === Step 12: Get Route URL
 
@@ -437,7 +479,7 @@ curl http://$ROUTE
 
 .*Expected output:*
 ----
-Hello World from Node.js!
+Hello, World!
 ----
 
 [TIP]
@@ -465,7 +507,7 @@ echo "Check image at: {workshop-registry-console}/repository/{registry-user}/sam
 
 [NOTE]
 ====
-With the default Paketo run image, the image size will be ~200-250 MB. When a Hummingbird Node.js runtime image becomes available, swapping it in via the `RUN_IMAGE` parameter will reduce this to ~95-120 MB because:
+With the default Paketo run image, the compressed image size will be ~125-150 MB. When a Hummingbird Node.js runtime image becomes available, swapping it in via the `RUN_IMAGE` parameter will significantly reduce this because:
 
 1. Buildpacks detected Node.js and installed only production dependencies
 2. The `RUN_IMAGE` parameter swaps in the minimal Hummingbird runtime
@@ -484,10 +526,10 @@ Congratulations! You've completed Sub-Module 2.1 and built your first applicatio
 ✅ Executed BuildRun and monitored progress +
 ✅ Viewed detailed build logs showing Buildpacks phases +
 ✅ Verified image pushed to registry +
-✅ Inspected image layers and labels with skopeo +
+✅ Inspected image via registry API (and skopeo if available) +
 ✅ Deployed built image to OpenShift +
 ✅ Tested running application via Route +
-✅ Confirmed Hummingbird runtime usage (95-120MB image)
+✅ Confirmed image pushed with Paketo runtime (ready to swap to Hummingbird)
 
 .*Key Takeaways*
 
@@ -557,6 +599,34 @@ oc get events -n hummingbird-builds --sort-by=.metadata.creationTimestamp
 
 # Describe buildrun for details
 oc describe buildrun sample-nodejs-app-run-1 -n hummingbird-builds
+----
+
+**Issue: BuildRun fails with BLOB_UPLOAD_INVALID**
+
+This typically indicates a problem with the NooBaa object storage backend used by Quay. Check the backing store status:
+
+[source,bash]
+----
+# Check NooBaa backing store status
+oc get backingstore -n openshift-storage
+oc get noobaa -n openshift-storage -o jsonpath='{.items[0].status.phase}'
+
+# If backing store shows Rejected/ALL_NODES_OFFLINE, wait for recovery
+oc get pods -n openshift-storage
+
+# Once NooBaa returns to Ready/OPTIMAL, delete the failed BuildRun and retry
+oc delete buildrun sample-nodejs-app-run-1 -n hummingbird-builds
+# Then re-create the BuildRun (Step 6)
+----
+
+**Issue: Deployment pod stuck in ImagePullBackOff**
+
+The on-cluster Quay registry creates repositories as **private** by default. The `default` ServiceAccount needs pull credentials:
+
+[source,bash]
+----
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds
+oc delete pod -l app=sample-nodejs -n hummingbird-builds
 ----
 
 **Issue: Application not responding**
