@@ -317,11 +317,27 @@ Packages scanned: 15
 Total vulnerabilities: 0
 ----
 
-You can also view the results in the Quay web console:
+Query Clair scan results via the Quay API:
 
-. Open {workshop-registry-console} in your browser
-. Navigate to *{registry-user}/secure-nodejs* -> *Tags*
-. The *Security Scan* column shows the vulnerability count for each tag
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+curl -sk "https://${QUAY_ROUTE}/api/v1/repository/{registry-user}/secure-nodejs/tag/latest/security?vulnerabilities=true" \
+  | jq '{vulnerabilities: ([.data.Layer.Features[]?.Vulnerabilities[]? | select(. != null)] | length), status: .status}'
+----
+
+.*Expected output:*
+----
+{
+  "vulnerabilities": 0,
+  "status": "scanned"
+}
+----
+
+[NOTE]
+====
+If the scan shows `"status": "queued"`, wait 30-60 seconds and retry the query. Clair scanning happens asynchronously after the image is pushed to the registry.
+====
 
 [NOTE]
 ====

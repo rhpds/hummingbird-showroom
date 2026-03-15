@@ -7,7 +7,7 @@
 ** xref:module-01-04-selinux-advanced.adoc[1.4: Advanced SELinux Hardening]
 
 * Module 2: Shipwright and Buildpacks (OpenShift)
-** xref:module-02-01-buildpacks.adoc[2.1: Cloud Native Buildpacks]
+** xref:module-02-01-buildpacks.adoc[2.1: Building with Hummingbird]
 ** xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
 ** xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
 ** xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
@@ -22,6 +22,7 @@
 ** xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines]
 ** xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS]
 ** xref:module-02-07-acs-zero-cve.adoc[2.7: The Immutable Fortress -- Zero-CVE with ACS]
+** xref:module-02-08-trusted-libraries.adoc[2.8: Verified Python Dependencies with Red Hat Trusted Libraries]
 
 * Appendix: Environment Setup
 ** xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]

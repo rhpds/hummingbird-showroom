@@ -39,6 +39,11 @@ asciidoc:
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
+    # Red Hat Trusted Libraries (Tech Preview)
+    trusted-libraries-index: 'https://packages.redhat.com/trusted-libraries/python/simple'
+    trusted-libraries-docs: 'https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain'
+    trusted-libraries-registry-portal: 'https://access.redhat.com/terms-based-registry/accounts'
+
     # Placeholders for lab environment
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'

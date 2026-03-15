@@ -76,11 +76,50 @@ export ROX_API_TOKEN=$(oc -n {acs-namespace} create token central-service-accoun
 
 [TIP]
 ====
-If token creation fails, generate an API token through the ACS Central UI:
+If the service account token creation fails, generate an API token using `roxctl` or directly via the ACS API:
 
-. Navigate to *Platform Configuration* -> *Integrations* -> *Authentication Tokens*
-. Click *Generate Token*, name it `workshop-token`, select the *Admin* role
-. Copy the token and export it: `export ROX_API_TOKEN=<your-token>`
+**Option 1: Using roxctl** (recommended)
+
+[source,bash,role=execute,subs="attributes"]
+----
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
+
+# Generate API token via roxctl
+export ROX_API_TOKEN=$(roxctl --insecure-skip-tls-verify \
+  -e "${ACS_ROUTE}:443" \
+  -p "${ACS_PASSWORD}" \
+  central init-bundles generate workshop-token \
+  --output-format json \
+  | jq -r '.token')
+
+echo "Generated ACS API Token: ${ROX_API_TOKEN}"
+----
+
+**Option 2: Using ACS API directly**
+
+[source,bash,role=execute,subs="attributes"]
+----
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
+
+# Generate API token via REST API
+export ROX_API_TOKEN=$(curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/v1/apitokens/generate" \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"workshop-token","role":"Admin"}' \
+  | jq -r '.token')
+
+echo "Generated ACS API Token: ${ROX_API_TOKEN}"
+----
+
+Validate the token works:
+
+[source,bash,role=execute]
+----
+roxctl central whoami --insecure-skip-tls-verify
+----
 ====
 
 Verify connectivity:
@@ -639,13 +678,34 @@ NAME                         WEBHOOKS   AGE
 stackrox-validating-webhook  1          ...
 ----
 
-If no webhook exists, enable it in ACS Central:
+If no webhook exists, enable it via the ACS API:
 
-. Navigate to *Platform Configuration* -> *Clusters*
-. Select your cluster
-. Under *Admission Controller Settings*, toggle *Configure Admission Controller Webhook to listen on creates* to **ON**
-. Toggle *Contact Admission Controller when policy is violated* to **ON**
-. Click *Save*
+[source,bash,role=execute,subs="attributes"]
+----
+# Get cluster ID
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+CLUSTER_ID=$(roxctl --insecure-skip-tls-verify central clusters list \
+  | grep -i "$(oc config current-context | cut -d/ -f2)" \
+  | awk '{print $1}')
+
+# Enable admission controller webhook
+curl -sk -X PATCH \
+  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://${ACS_ROUTE}/v1/cluster/${CLUSTER_ID}" \
+  -d '{
+    "admissionController": true,
+    "admissionControllerUpdates": true,
+    "admissionControllerEvents": true
+  }'
+
+echo "Admission controller webhook enabled for cluster ${CLUSTER_ID}"
+----
+
+[NOTE]
+====
+Wait 30-60 seconds for the webhook configuration to propagate to the OpenShift API server before testing policy enforcement.
+====
 
 === Step 2: Create Policy -- Reject Images with Fixable CVEs
 
@@ -839,27 +899,69 @@ fortress-python-api   1/1     1            1           ...
 {"message": "Hello from the Immutable Fortress lab"}
 ----
 
-=== Step 4: View Violations in ACS Dashboard
+=== Step 4: View Policy Violations
 
-Navigate to the ACS Central UI:
+Query the policy violations via roxctl:
 
-. Go to *Violations*
-. Filter by namespace `hummingbird-acs-lab`
-. Observe the blocked deployment attempt with full details:
-  - Which policy was violated
-  - Which image triggered the violation
-  - The specific CVEs that exceeded the threshold
-  - Timestamp and requesting user identity
+[source,bash,role=execute]
+----
+# List recent violations
+roxctl deployment check \
+  --deployment=legacy-python-api \
+  --namespace=hummingbird-acs-lab \
+  --insecure-skip-tls-verify 2>/dev/null \
+  || echo "Deployment blocked by ACS admission controller"
+
+# Query violations via API
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-lab" \
+  | jq '.alerts[] | {policy: .policy.name, time: .time, violations: .violations[].message}'
+----
+
+.*Expected output:*
+----
+{
+  "policy": "Zero Fixable CVEs Required",
+  "time": "2026-03-13T...",
+  "violations": "Image has 127 fixable CVEs"
+}
+----
 
 [TIP]
 ====
-In production, configure ACS to send violation alerts to your SIEM, Slack, or PagerDuty:
+For visual inspection, you can optionally view violations in the ACS Central UI:
 
-. Navigate to *Platform Configuration* -> *Integrations* -> *Notifiers*
-. Add your notification channel
-. Edit each policy and attach the notifier under *Actions*
+. Navigate to *Violations*
+. Filter by namespace `hummingbird-acs-lab`
+. Observe which policies blocked the deployment and the specific CVE details
+====
 
-This closes the loop: build -> verify -> enforce -> alert.
+[TIP]
+====
+**Production Alert Integration**: Configure ACS to send violation alerts to your SIEM, Slack, or PagerDuty using the API or UI:
+
+[source,bash,role=execute]
+----
+# Example: Create Slack notifier via API
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+curl -sk -X POST \
+  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://${ACS_ROUTE}/v1/notifiers" \
+  -d '{
+    "name": "Slack Violations",
+    "type": "slack",
+    "labelKey": "violations",
+    "slack": {
+      "webhook": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    }
+  }'
+----
+
+This closes the loop: build → verify → enforce → alert.
+
+For detailed notifier configuration options, see the ACS API documentation.
 ====
 
 [[cleanup]]

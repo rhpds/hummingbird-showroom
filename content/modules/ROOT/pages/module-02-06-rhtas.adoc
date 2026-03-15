@@ -61,10 +61,9 @@ Client software like `cosign` uses these trust root targets to sign and verify a
 === Prerequisites
 
 * Red Hat OpenShift Container Platform 4.16 or later
-* A workstation with the `oc` binary installed
-* Access to the OpenShift web console with the `cluster-admin` role
+* A workstation with the `oc` binary installed and authenticated with `cluster-admin` privileges
 * An OIDC provider configured (Red Hat build of Keycloak, Google, Amazon STS, Microsoft Entra ID, or GitHub)
-* `cosign` version 2.2 or later (downloadable from the OpenShift cluster after installation)
+* `cosign` version 2.2 or later (will be downloaded from the RHTAS operator after installation)
 
 .*Resource recommendations for the Trillian database:*
 
@@ -86,50 +85,107 @@ Client software like `cosign` uses these trust root targets to sign and verify a
 [[install-operator]]
 == Exercise 1: Install the Operator and Deploy the Stack
 
-=== Step 1: Install the RHTAS Operator via OperatorHub
+=== Step 1: Install the RHTAS Operator via CLI
 
-The supported installation path on OpenShift is through the Operator Lifecycle Manager (OLM):
+Install the RHTAS operator using the Operator Lifecycle Manager (OLM) CLI approach:
 
-1. Log in to the OpenShift web console with `cluster-admin` privileges
-2. Navigate to *Operators* -> *OperatorHub*
-3. Search for **Red Hat Trusted Artifact Signer**
-4. Accept the default values and click *Install*
-5. Wait for the installation to finish
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trusted-artifact-signer
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhtas-operator-group
+  namespace: trusted-artifact-signer
+spec:
+  targetNamespaces:
+    - trusted-artifact-signer
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhtas-operator
+  namespace: trusted-artifact-signer
+spec:
+  channel: stable
+  name: rhtas-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/trusted-artifact-signer created
+operatorgroup.operators.coreos.com/rhtas-operator-group created
+subscription.operators.coreos.com/rhtas-operator created
+----
+
+Wait for the operator to install (2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=AtLatestKnown subscription/rhtas-operator \
+  -n trusted-artifact-signer --timeout=300s
+
+oc get csv -n trusted-artifact-signer
+----
+
+.*Expected output:*
+----
+NAME                    DISPLAY                              VERSION   REPLACES   PHASE
+rhtas-operator.v1.x.x   Red Hat Trusted Artifact Signer      1.x.x                Succeeded
+----
 
 [IMPORTANT]
 ====
-The RHTAS operator installs into the `openshift-operators` namespace. Once installation finishes, a new project called `trusted-artifact-signer` is **automatically created** for you -- you do not need to create it manually. All dependencies are automatically installed.
+The RHTAS operator is installed in the `trusted-artifact-signer` namespace. All Sigstore components (Fulcio, Rekor, CTlog, TUF) will deploy into this namespace.
 ====
 
 === Step 2: Download the CLI Tools
 
-After the operator is installed, download the `cosign`, `rekor-cli`, and `ec` binaries from the OpenShift cluster:
-
-1. In the OpenShift web console, click the *?* icon, then click *Command line tools*
-2. Download `cosign`, `rekor-cli`, and `ec` for your platform
+After the operator is installed, download the `cosign`, `rekor-cli`, and `ec` binaries. The RHTAS operator exposes these tools via a downloads route:
 
 [source,bash,role=execute]
 ----
+# Get the downloads route
+DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer -l app=trusted-artifact-signer-clientserver -o jsonpath='{.items[0].spec.host}')
+
+# Download cosign
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/cosign-amd64.gz" -o cosign-amd64.gz
 gunzip cosign-amd64.gz && chmod +x cosign-amd64
 sudo mv cosign-amd64 /usr/local/bin/cosign
 
+# Download rekor-cli
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/rekor-cli-amd64.gz" -o rekor-cli-amd64.gz
 gunzip rekor-cli-amd64.gz && chmod +x rekor-cli-amd64
 sudo mv rekor-cli-amd64 /usr/local/bin/rekor-cli
 
+# Download ec (Enterprise Contract CLI)
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/ec-amd64.gz" -o ec-amd64.gz
 gunzip ec-amd64.gz && chmod +x ec-amd64
 sudo mv ec-amd64 /usr/local/bin/ec
+
+# Verify installations
+cosign version
+rekor-cli version
+ec version
 ----
 
 [NOTE]
 ====
-For RHTAS, you must use `cosign` version 2.2 or later. The binaries served from the OpenShift cluster are always the correct version for your RHTAS installation.
+For RHTAS, you must use `cosign` version 2.2 or later. The binaries served by the RHTAS operator are always the correct version for your installation. If the download route is not yet available, wait 1-2 minutes for the operator to complete initialization.
 ====
 
 === Step 3: Deploy the Securesign Stack
 
-Deploy the full Sigstore stack by creating a Securesign custom resource. Navigate to *Operators* -> *Installed Operators* -> *Red Hat Trusted Artifact Signer*, select the `trusted-artifact-signer` project, click the *Securesign* tab, then click *Create Securesign* and switch to *YAML view*.
-
-The Securesign CR configures Fulcio with two OIDC issuers: one for human users (Keycloak/RHBK) and one for Kubernetes service accounts (enabling keyless pipeline signing). Under the `spec.fulcio.config.OIDCIssuers` section, edit the issuer URLs and `ClientID` for your environment:
+Deploy the full Sigstore stack by creating a Securesign custom resource. The Securesign CR configures Fulcio with two OIDC issuers: one for human users (Keycloak/RHBK) and one for Kubernetes service accounts (enabling keyless pipeline signing). Under the `spec.fulcio.config.OIDCIssuers` section, edit the issuer URLs and `ClientID` for your environment:
 
 [source,yaml,role=execute]
 ----
@@ -198,7 +254,7 @@ trillian:
 
 === Step 4: Watch Until All Components Are Ready
 
-Click the *All instances* tab in the operator view to watch deployment status, or use the CLI:
+Monitor the deployment status of all Sigstore components:
 
 [source,bash,role=execute]
 ----

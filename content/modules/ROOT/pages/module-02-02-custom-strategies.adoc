@@ -4,7 +4,7 @@
 [sidebar]
 --
 *Duration:* ~12 minutes +
-*Prerequisites:* Completion of Sub-Module 2.1 (Cloud Native Buildpacks) +
+*Prerequisites:* Completion of Sub-Module 2.1 (Building with Hummingbird) +
 *Learning Objectives:*
 
 * Create ClusterBuildStrategy with language auto-detection
@@ -16,9 +16,9 @@
 [[introduction]]
 == Introduction
 
-In Sub-Module 2.1, you created a BuildStrategy specific to Node.js. In production environments, platform teams often support multiple languages across different application teams. Creating separate BuildStrategies for each language creates overhead and inconsistency.
+In Sub-Module 2.1, you built a Quarkus application using the pre-installed `buildah` strategy and a multi-stage Containerfile. That approach works well when each repository includes its own Containerfile. But in production environments, platform teams often support multiple languages across different application teams. Requiring every team to write and maintain a Containerfile creates overhead and inconsistency.
 
-In this sub-module, you'll create a **multi-language ClusterBuildStrategy** that automatically detects the application language and selects the appropriate Hummingbird runtime, providing a single, consistent build interface for all development teams.
+In this sub-module, you'll create a **multi-language ClusterBuildStrategy** that automatically detects the application language and generates the appropriate multi-stage Containerfile with the correct Hummingbird runtime, providing a single, consistent build interface for all development teams.
 
 [[multi-language-strategy]]
 == Create Multi-Language BuildStrategy
@@ -37,112 +37,165 @@ metadata:
 spec:
   parameters:
   - name: DOCKERFILE
-    description: Path to Dockerfile
+    description: Path to Containerfile/Dockerfile
     default: "Containerfile"
-  - name: CONTEXT_DIR
-    description: Build context directory
-    default: "."
-  - name: RUNTIME_IMAGE
-    description: Override Hummingbird runtime image (optional)
   - name: LANGUAGE
     description: Programming language (nodejs, python, java, go) - auto-detected if not specified
     default: "auto"
 
-  buildSteps:
-  - name: detect-language
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+
+  steps:
+  - name: detect-and-generate
     image: registry.access.redhat.com/ubi9/ubi-minimal:latest
-    workingDir: $(params.shp-source-root)
+    workingDir: $(params.shp-source-context)
     command:
     - /bin/bash
     args:
     - -c
     - |
       set -e
-      echo "Detecting application language..."
 
-      if [ -f "package.json" ]; then
-        echo "nodejs" > /workspace/detected-lang
-        echo "Detected: Node.js"
-      elif [ -f "requirements.txt" ] || [ -f "setup.py" ]; then
-        echo "python" > /workspace/detected-lang
-        echo "Detected: Python"
-      elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
-        echo "java" > /workspace/detected-lang
-        echo "Detected: Java"
-      elif [ -f "go.mod" ]; then
-        echo "go" > /workspace/detected-lang
-        echo "Detected: Go"
-      else
-        echo "unknown" > /workspace/detected-lang
-        echo "Warning: Could not detect language, will use parameter default"
+      # Auto-detect language from project files
+      DETECTED="$(params.LANGUAGE)"
+      if [ "$DETECTED" = "auto" ]; then
+        echo "Detecting application language..."
+        if [ -f "package.json" ]; then
+          DETECTED="nodejs"
+        elif [ -f "requirements.txt" ] || [ -f "setup.py" ] || [ -f "Pipfile" ]; then
+          DETECTED="python"
+        elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
+          DETECTED="java"
+        elif [ -f "go.mod" ]; then
+          DETECTED="go"
+        else
+          echo "ERROR: Could not detect language. Set LANGUAGE parameter explicitly."
+          exit 1
+        fi
       fi
-    volumeMounts:
-    - name: workspace
-      mountPath: /workspace
+      echo "Language: $DETECTED"
+      echo "$DETECTED" > /shared/detected-lang
 
-  - name: build-image
-    image: registry.redhat.io/rhel9/buildah:latest
-    workingDir: $(params.shp-source-root)/$(params.CONTEXT_DIR)
-    command:
-    - /bin/bash
-    args:
-    - -c
-    - |
-      set -e
-
-      LANG=$(cat /workspace/detected-lang 2>/dev/null || echo "$(params.LANGUAGE)")
-      echo "Building with language: $LANG"
-
-      # Select appropriate Hummingbird runtime
-      case $LANG in
+      # Select builder and Hummingbird runtime images
+      case $DETECTED in
         nodejs)
-          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/nodejs-20:latest}"
           BUILDER="registry.access.redhat.com/ubi9/nodejs-20:latest"
+          RUNTIME="quay.io/hummingbird-hatchling/nodejs:20"
           ;;
         python)
-          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/python-311:latest}"
           BUILDER="registry.access.redhat.com/ubi9/python-311:latest"
+          RUNTIME="quay.io/hummingbird-hatchling/python:3.11"
           ;;
         java)
-          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/openjdk-21:latest}"
-          BUILDER="registry.access.redhat.com/ubi9/openjdk-21:latest"
+          BUILDER="quay.io/hummingbird-hatchling/openjdk:21-builder"
+          RUNTIME="quay.io/hummingbird-hatchling/openjdk:21-runtime"
           ;;
         go)
-          RUNTIME="${RUNTIME_IMAGE:-quay.io/hummingbird-hatchling/ubi9-micro:latest}"
           BUILDER="registry.access.redhat.com/ubi9/go-toolset:latest"
-          ;;
-        *)
-          echo "Unsupported language: $LANG"
-          exit 1
+          RUNTIME="quay.io/hummingbird-hatchling/core-runtime:2"
           ;;
       esac
 
       # Generate multi-stage Containerfile if not present
       if [ ! -f "$(params.DOCKERFILE)" ]; then
-        echo "Generating Containerfile for $LANG..."
-        cat > Containerfile << DOCKERFILE_EOF
-      ARG BUILDER_IMAGE=$BUILDER
-      ARG RUNTIME_IMAGE=$RUNTIME
+        echo "No Containerfile found -- generating one for $DETECTED..."
+        case $DETECTED in
+          nodejs)
+            cat > Containerfile <<CEOF
+      FROM $BUILDER AS builder
+      WORKDIR /build
+      COPY package*.json ./
+      RUN npm ci --only=production
+      COPY . .
 
-      FROM \$BUILDER_IMAGE AS builder
+      FROM $RUNTIME
+      WORKDIR /app
+      COPY --from=builder /build ./
+      USER 65532
+      EXPOSE 8080
+      CMD ["node", "server.js"]
+      CEOF
+            ;;
+          python)
+            cat > Containerfile <<CEOF
+      FROM $BUILDER AS builder
+      WORKDIR /build
+      COPY requirements.txt ./
+      RUN pip install --user --no-cache-dir -r requirements.txt
+      COPY . .
+
+      FROM $RUNTIME
+      WORKDIR /app
+      COPY --from=builder /build ./
+      COPY --from=builder /root/.local /root/.local
+      ENV PATH=/root/.local/bin:\$PATH
+      USER 65532
+      EXPOSE 8080
+      CMD ["python", "app.py"]
+      CEOF
+            ;;
+          java)
+            cat > Containerfile <<CEOF
+      FROM $BUILDER AS builder
       WORKDIR /build
       COPY . .
-      RUN if [ "$LANG" = "nodejs" ]; then npm ci --only=production; fi
-      RUN if [ "$LANG" = "python" ]; then pip install --user -r requirements.txt; fi
-      RUN if [ "$LANG" = "java" ]; then mvn clean package -DskipTests; fi
-      RUN if [ "$LANG" = "go" ]; then go build -o app .; fi
+      RUN if [ -f "mvnw" ]; then chmod +x mvnw && ./mvnw package -DskipTests; else mvn package -DskipTests; fi
 
-      FROM \$RUNTIME_IMAGE
+      FROM $RUNTIME
       WORKDIR /app
-      COPY --from=builder --chown=1001:1001 /build ./
-      USER 1001
+      COPY --from=builder /build/target/quarkus-app/lib/ ./lib/
+      COPY --from=builder /build/target/quarkus-app/*.jar ./
+      COPY --from=builder /build/target/quarkus-app/app/ ./app/
+      COPY --from=builder /build/target/quarkus-app/quarkus/ ./quarkus/
+      USER 65532
       EXPOSE 8080
-      DOCKERFILE_EOF
-      fi
+      ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+      CEOF
+            ;;
+          go)
+            cat > Containerfile <<CEOF
+      FROM $BUILDER AS builder
+      WORKDIR /build
+      COPY go.mod go.sum ./
+      RUN go mod download
+      COPY . .
+      RUN CGO_ENABLED=0 go build -o app .
 
-      # Build with buildah
-      buildah bud \
-        --storage-driver=vfs \
+      FROM $RUNTIME
+      WORKDIR /app
+      COPY --from=builder /build/app ./
+      USER 65532
+      EXPOSE 8080
+      ENTRYPOINT ["./app"]
+      CEOF
+            ;;
+        esac
+        echo "Generated Containerfile:"
+        cat Containerfile
+      else
+        echo "Using existing $(params.DOCKERFILE)"
+      fi
+    volumeMounts:
+    - name: shared
+      mountPath: /shared
+
+  - name: build-and-push
+    image: registry.redhat.io/rhel9/buildah:latest
+    imagePullPolicy: Always
+    workingDir: $(params.shp-source-context)
+    command:
+    - /bin/bash
+    args:
+    - -c
+    - |
+      set -e
+
+      DETECTED=$(cat /shared/detected-lang)
+      echo "[INFO] Building $DETECTED application"
+
+      buildah --storage-driver=vfs bud \
         --format=oci \
         --tls-verify=true \
         --no-cache \
@@ -150,33 +203,22 @@ spec:
         -t $(params.shp-output-image) \
         .
 
-      # Push image
-      buildah push \
-        --storage-driver=vfs \
+      echo "[INFO] Pushing image $(params.shp-output-image)"
+      buildah --storage-driver=vfs push \
         --tls-verify=true \
-        --digestfile /workspace/image-digest \
+        --digestfile='$(results.shp-image-digest.path)' \
         $(params.shp-output-image) \
         docker://$(params.shp-output-image)
-
-      echo "Image built and pushed: $(params.shp-output-image)"
-      cat /workspace/image-digest
-
-    env:
-    - name: STORAGE_DRIVER
-      value: vfs
     volumeMounts:
-    - name: workspace
-      mountPath: /workspace
-    - name: $(params.shp-output-directory)
-      mountPath: /var/lib/containers
-      readOnly: false
+    - name: shared
+      mountPath: /shared
     securityContext:
       capabilities:
         add:
         - SETFCAP
 
   volumes:
-  - name: workspace
+  - name: shared
     emptyDir: {}
 EOF
 ----
@@ -188,10 +230,21 @@ clusterbuildstrategy.shipwright.io/hummingbird-multi-lang created
 
 .*What this strategy does:*
 
-* **Auto-detects** application language (Node.js, Python, Java, Go)
-* **Selects** appropriate UBI builder and Hummingbird runtime images
-* **Generates** a multi-stage Containerfile if one doesn't exist
-* **Builds** and pushes the image using buildah
+* **Auto-detects** application language from project files (`package.json`, `requirements.txt`, `pom.xml`, `go.mod`)
+* **Selects** the appropriate UBI builder (or Hummingbird builder for Java) and Hummingbird runtime images
+* **Generates** a language-appropriate multi-stage Containerfile if one doesn't already exist
+* **Builds** and pushes the final image using buildah
+
+.*Hummingbird Runtime Mapping:*
+
+|===
+|Language |Builder Image |Runtime Image
+
+|Node.js |`ubi9/nodejs-20` |`hummingbird-hatchling/nodejs:20`
+|Python |`ubi9/python-311` |`hummingbird-hatchling/python:3.11`
+|Java |`hummingbird-hatchling/openjdk:21-builder` |`hummingbird-hatchling/openjdk:21-runtime`
+|Go |`ubi9/go-toolset` |`hummingbird-hatchling/core-runtime:2`
+|===
 
 [NOTE]
 ====
@@ -202,7 +255,7 @@ This single ClusterBuildStrategy supports 4+ languages. Development teams can us
 
 === Step 2: Test Multi-Language Strategy
 
-Create a Build using this strategy with the same Node.js sample:
+Create a Build using this strategy with the same Quarkus sample application from Module 2.1. The strategy will auto-detect Java from the `pom.xml` and find the existing `Containerfile`:
 
 [source,yaml,role=execute,subs="attributes"]
 ----
@@ -216,7 +269,7 @@ spec:
   source:
     type: Git
     git:
-      url: https://github.com/shipwright-io/sample-nodejs
+      url: https://github.com/tosin2013/sample-quarkus-hummingbird
       revision: main
   strategy:
     name: hummingbird-multi-lang
@@ -230,7 +283,7 @@ EOF
 
 [NOTE]
 ====
-The `{registry-user}` placeholder is replaced by your Antora attributes. Ensure the organisation or user exists in your on-cluster Quay registry.
+Notice we're using the **same Git repository** from Module 2.1 but with the `hummingbird-multi-lang` strategy instead of `buildah`. The strategy will auto-detect Java (via `pom.xml`) and use the repository's existing `Containerfile`. This demonstrates how the multi-language strategy provides a consistent build interface regardless of language.
 ====
 
 === Step 3: Trigger Build
@@ -264,17 +317,20 @@ Check that the language was detected correctly:
 
 [source,bash,role=execute]
 ----
-TASKRUN=$(oc get buildrun auto-detect-build-run-1 -o jsonpath='{.status.taskRunName}')
+BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -o jsonpath='{.status.taskRunName}')-pod
 
-# View detect-language step output
-oc logs $TASKRUN -c step-detect-language
+# View detect-and-generate step output
+oc logs $BUILDRUN_POD -c step-detect-and-generate
 ----
 
 .*Expected output:*
 ----
 Detecting application language...
-Detected: Node.js
+Language: java
+Using existing Containerfile
 ----
+
+The strategy detected Java via `pom.xml` and found the existing `Containerfile` in the repository -- no auto-generation needed.
 
 === Step 5: Verify Build Logs
 
@@ -282,27 +338,31 @@ Confirm the full build pipeline worked by inspecting the build step output:
 
 [source,bash,role=execute]
 ----
-oc logs $TASKRUN -c step-build-image | head -20
+oc logs $BUILDRUN_POD -c step-build-and-push | head -20
 ----
 
 .*Expected output:*
 ----
-Building with language: nodejs
+[INFO] Building java application
+[INFO] Building image ...
+[1/2] STEP 1/8: FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
 ...
-STEP 1/...: FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS builder
-...
-STEP .../...: FROM quay.io/hummingbird-hatchling/nodejs-20:latest
+[2/2] STEP 6/11: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
 ...
 ----
 
-This confirms the strategy correctly selected the Node.js UBI builder for compilation and the Hummingbird Node.js runtime for the final image.
+This confirms the strategy correctly detected Java, used the existing multi-stage Containerfile, and built with Hummingbird builder and runtime images.
 
 [TIP]
 ====
-To test with different languages, point the Build at repositories with:
-- **Python**: Repository with `requirements.txt` or `setup.py`
-- **Java**: Repository with `pom.xml` or `build.gradle`
-- **Go**: Repository with `go.mod`
+To test with different languages, point the Build at any repository containing:
+
+- **Node.js**: `package.json` (strategy auto-generates Containerfile if missing)
+- **Python**: `requirements.txt`, `setup.py`, or `Pipfile`
+- **Java**: `pom.xml` or `build.gradle` (uses existing Containerfile if present)
+- **Go**: `go.mod`
+
+If the repository already has a `Containerfile`, the strategy uses it as-is. Otherwise, it generates a language-appropriate multi-stage Containerfile.
 ====
 
 [[registry-integration]]
@@ -331,7 +391,7 @@ If the route doesn't exist yet, it may take 1-2 minutes for the operator to crea
 
 === Step 7: Create Build Using Internal Registry
 
-Create a Build using the internal registry:
+Create a Build targeting the internal registry:
 
 [source,yaml,role=execute]
 ----
@@ -345,7 +405,7 @@ spec:
   source:
     type: Git
     git:
-      url: https://github.com/shipwright-io/sample-nodejs
+      url: https://github.com/tosin2013/sample-quarkus-hummingbird
       revision: main
   strategy:
     name: hummingbird-multi-lang
@@ -507,19 +567,19 @@ Integrate SBOM generation, vulnerability scanning, image signing, and production
 **Issue: Language detection fails**
 [source,bash]
 ----
-# Check detect-language step logs
-TASKRUN=$(oc get buildrun <buildrun-name> -o jsonpath='{.status.taskRunName}')
-oc logs $TASKRUN -c step-detect-language
+# Check detect-and-generate step logs
+BUILDRUN_POD=$(oc get buildrun <buildrun-name> -o jsonpath='{.status.taskRunName}')-pod
+oc logs $BUILDRUN_POD -c step-detect-and-generate
 
 # Verify source repository contents
-# Ensure package.json, requirements.txt, etc. exist in the repo
+# Ensure package.json, requirements.txt, pom.xml, or go.mod exist in the repo
 ----
 
 **Issue: Buildah build fails**
 [source,bash]
 ----
-# Check build-image step logs for errors
-oc logs $TASKRUN -c step-build-image
+# Check build-and-push step logs for errors
+oc logs $BUILDRUN_POD -c step-build-and-push
 
 # Common issues:
 # - Missing build tools in UBI builder image
