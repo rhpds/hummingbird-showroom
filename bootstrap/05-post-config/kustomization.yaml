@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - quay-post-config-job.yaml
   - acs-post-config-job.yaml
+  - noobaa-post-config-job.yaml
