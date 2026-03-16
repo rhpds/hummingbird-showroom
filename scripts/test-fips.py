@@ -99,13 +99,88 @@ def run_test_suite(suite_name: str, tests: list) -> Tuple[bool, str]:
         )
 
 
-def get_fips_provider_version() -> Optional[str]:
-    """Query FIPS provider version from OpenSSL using CFFI (more Pythonic than ctypes)"""
+def get_fips_provider_version_ctypes() -> Optional[str]:
+    """Query FIPS provider version from OpenSSL using ctypes (original working implementation)"""
+    try:
+        from ctypes import (
+            CDLL,
+            Structure,
+            POINTER,
+            c_void_p,
+            c_char_p,
+            c_uint,
+            c_int,
+            c_size_t,
+            byref,
+        )
+        from ctypes.util import find_library
+
+        class OSSL_PARAM(Structure):
+            """OpenSSL parameter structure for provider queries"""
+
+            _fields_ = [
+                ("key", c_char_p),
+                ("data_type", c_uint),
+                ("data", c_void_p),
+                ("data_size", c_size_t),
+                ("return_size", c_size_t),
+            ]
+
+        libcrypto_path = find_library("crypto")
+        if not libcrypto_path:
+            return None
+
+        lib = CDLL(libcrypto_path)
+
+        # Configure OpenSSL provider API functions
+        lib.OSSL_PROVIDER_load.argtypes = [c_void_p, c_char_p]
+        lib.OSSL_PROVIDER_load.restype = c_void_p
+        lib.OSSL_PROVIDER_get_params.argtypes = [c_void_p, POINTER(OSSL_PARAM)]
+        lib.OSSL_PROVIDER_get_params.restype = c_int
+        lib.OSSL_PROVIDER_unload.argtypes = [c_void_p]
+        lib.OSSL_PROVIDER_unload.restype = c_int
+        lib.OSSL_PARAM_construct_utf8_ptr.argtypes = [
+            c_char_p,
+            POINTER(c_char_p),
+            c_size_t,
+        ]
+        lib.OSSL_PARAM_construct_utf8_ptr.restype = OSSL_PARAM
+        lib.OSSL_PARAM_construct_end.restype = OSSL_PARAM
+
+        prov = lib.OSSL_PROVIDER_load(None, b"fips")
+        if not prov:
+            return None
+
+        try:
+            vers = c_char_p()
+            params = (OSSL_PARAM * 2)()
+            params[0] = lib.OSSL_PARAM_construct_utf8_ptr(b"version", byref(vers), 0)
+            params[1] = lib.OSSL_PARAM_construct_end()
+
+            if lib.OSSL_PROVIDER_get_params(prov, params) == 1 and vers.value:
+                return vers.value.decode("utf-8")
+        finally:
+            lib.OSSL_PROVIDER_unload(prov)
+
+        return None
+    except Exception:
+        return None
+
+
+def get_fips_provider_version_cffi() -> Optional[str]:
+    """Query FIPS provider version from OpenSSL using CFFI with proper error handling"""
     try:
         from cffi import FFI
+        from ctypes.util import find_library
+
+        # Use ctypes library resolution for better compatibility
+        libcrypto_path = find_library("crypto")
+        if not libcrypto_path:
+            return None
 
         ffi = FFI()
         ffi.cdef("""
+            typedef struct ossl_provider_st OSSL_PROVIDER;
             typedef struct {
                 const char *key;
                 unsigned int data_type;
@@ -114,47 +189,55 @@ def get_fips_provider_version() -> Optional[str]:
                 size_t return_size;
             } OSSL_PARAM;
             
-            void* OSSL_PROVIDER_load(void *libctx, const char *name);
-            int OSSL_PROVIDER_get_params(void *prov, OSSL_PARAM *param);
-            int OSSL_PROVIDER_unload(void *prov);
+            OSSL_PROVIDER *OSSL_PROVIDER_load(void *libctx, const char *name);
+            int OSSL_PROVIDER_get_params(OSSL_PROVIDER *prov, OSSL_PARAM *param);
+            int OSSL_PROVIDER_unload(OSSL_PROVIDER *prov);
             OSSL_PARAM OSSL_PARAM_construct_utf8_ptr(const char *key, char **buf, size_t bsize);
             OSSL_PARAM OSSL_PARAM_construct_end(void);
         """)
 
-        # Try to load OpenSSL library with fallback options for better robustness
-        lib = None
-        for lib_name in ["crypto", "libcrypto.so.3", "libcrypto.so"]:
-            try:
-                lib = ffi.dlopen(lib_name)
-                break
-            except OSError:
-                continue
+        lib = ffi.dlopen(libcrypto_path)
 
-        if not lib:
-            return None
-
-        # Load FIPS provider and query version
+        # Load FIPS provider
         provider = lib.OSSL_PROVIDER_load(ffi.NULL, b"fips")
         if provider == ffi.NULL:
             return None
 
-        version_ptr = ffi.new("char **")
-        params = ffi.new("OSSL_PARAM[2]")
-        params[0] = lib.OSSL_PARAM_construct_utf8_ptr(b"version", version_ptr, 0)
-        params[1] = lib.OSSL_PARAM_construct_end()
+        try:
+            version_ptr = ffi.new("char **")
+            params = ffi.new("OSSL_PARAM[2]")
+            params[0] = lib.OSSL_PARAM_construct_utf8_ptr(b"version", version_ptr, 0)
+            params[1] = lib.OSSL_PARAM_construct_end()
 
-        result = None
-        if (
-            lib.OSSL_PROVIDER_get_params(provider, params) == 1
-            and version_ptr[0] != ffi.NULL
-        ):
-            result = ffi.string(version_ptr[0]).decode("utf-8")
+            result = None
+            if lib.OSSL_PROVIDER_get_params(provider, params) == 1:
+                if version_ptr[0] != ffi.NULL:
+                    result = ffi.string(version_ptr[0]).decode("utf-8")
+        finally:
+            lib.OSSL_PROVIDER_unload(provider)
 
-        lib.OSSL_PROVIDER_unload(provider)
         return result
 
-    except Exception:
+    except Exception as e:
+        # For debugging - in production you might want to log this
+        # import logging
+        # logging.error(f"FIPS provider version detection failed: {e}")
         return None
+
+
+def get_fips_provider_version() -> Optional[str]:
+    """Robust FIPS provider version detection with fallback to working ctypes implementation"""
+    # Try ctypes approach first (known to work)
+    version = get_fips_provider_version_ctypes()
+    if version:
+        return version
+
+    # Try CFFI approach as fallback
+    version = get_fips_provider_version_cffi()
+    if version:
+        return version
+
+    return None
 
 
 def get_fips_info() -> str:
