@@ -15,177 +15,197 @@ import sys
 import hashlib
 import hmac
 import ssl
-from ctypes import CDLL, Structure, POINTER, c_void_p, c_char_p, c_uint, c_int, c_size_t, byref
-from ctypes.util import find_library
+from typing import Callable, Tuple, Optional
 
 
-class Colors:
-    """ANSI color codes for terminal output"""
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    BLUE = '\033[94m'
-    BOLD = '\033[1m'
-    RESET = '\033[0m'
+# Test specifications: (name, operation, should_succeed_in_fips)
+TESTS = {
+    "FIPS-Approved Algorithms": [
+        ("SHA-256", lambda: hashlib.sha256(b"test").hexdigest(), True),
+        ("HMAC-SHA256", lambda: hmac.new(b"key", b"msg", "sha256").hexdigest(), True),
+        (
+            "MD5 (usedforsecurity=False)",
+            lambda: hashlib.md5(b"test", usedforsecurity=False).hexdigest(),
+            True,
+        ),
+        ("AES-256-GCM cipher", lambda: _test_aes_gcm(), True),
+    ],
+    "Disallowed Algorithms Blocked": [
+        ("MD5 via hashlib.new()", lambda: hashlib.new("md5", b"test"), False),
+        ("MD5 via hashlib.md5()", lambda: hashlib.md5(b"test"), False),
+        ("HMAC-MD5", lambda: hmac.new(b"key", b"msg", "md5").hexdigest(), False),
+        ("CHACHA20-POLY1305 cipher", lambda: _test_chacha(), False),
+    ],
+}
 
 
-def print_header(text):
+def _test_aes_gcm():
+    """Test AES-256-GCM cipher availability"""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.set_ciphers("ECDHE-RSA-AES256-GCM-SHA384")
+    assert len(ctx.get_ciphers()) > 0
+
+
+def _test_chacha():
+    """Test ChaCha20-Poly1305 cipher availability"""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.set_ciphers("ECDHE-RSA-CHACHA20-POLY1305")
+
+
+def print_section(text: str):
     """Print a section header"""
-    header_style = f"{Colors.BOLD}{Colors.BLUE}"
-    print(f"\n{header_style}{'=' * 60}{Colors.RESET}")
-    print(f"{header_style}{text}{Colors.RESET}")
-    print(f"{header_style}{'=' * 60}{Colors.RESET}")
+    print(f"\n\033[1m\033[94m{'=' * 60}\n{text}\n{'=' * 60}\033[0m")
 
 
-def print_result(check_name, passed, details=""):
+def print_result(name: str, passed: bool, details: str = ""):
     """Print a check result with color coding"""
-    status = f"{Colors.GREEN}✓ PASS" if passed else f"{Colors.RED}✗ FAIL"
-    print(f"{status}{Colors.RESET} - {check_name}")
+    status = "\033[92m✓ PASS" if passed else "\033[91m✗ FAIL"
+    print(f"{status}\033[0m - {name}")
     if details:
         print(f"  {details}")
 
 
-def check_approved_algorithms():
-    """Verify that FIPS-approved algorithms work correctly"""
+def run_test_suite(suite_name: str, tests: list) -> Tuple[bool, str]:
+    """Run a suite of algorithm tests with unified error handling"""
     failures = []
+    success_names = []
 
-    def ensure_works(name, operation):
+    for name, operation, should_succeed in tests:
         try:
             operation()
-        except Exception as e:
-            failures.append(f"{name} failed: {e}")
-
-    ensure_works("SHA-256", lambda: hashlib.sha256(b'test').hexdigest())
-    ensure_works("HMAC-SHA256", lambda: hmac.new(b'key', b'msg', 'sha256').hexdigest())
-    ensure_works("MD5 (usedforsecurity=False)",
-                 lambda: hashlib.md5(b'test', usedforsecurity=False).hexdigest())
-
-    def test_aes_gcm():
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.set_ciphers('ECDHE-RSA-AES256-GCM-SHA384')
-        assert len(ctx.get_ciphers()) > 0
-    ensure_works("AES-256-GCM cipher", test_aes_gcm)
-
-    return (False, f"Failures: {'; '.join(failures)}") if failures else \
-           (True, "All FIPS-approved algorithms available (SHA-256, HMAC-SHA256, AES-GCM)")
-
-
-def check_disallowed_algorithms():
-    """Verify that FIPS-disallowed algorithms are properly blocked"""
-    failures = []
-
-    def ensure_blocked(name, operation):
-        try:
-            operation()
-            failures.append(f"{name} was allowed")
+            if should_succeed:
+                success_names.append(name)
+            else:
+                failures.append(f"{name} was allowed")
         except (ValueError, ssl.SSLError):
-            pass
+            if should_succeed:
+                failures.append(f"{name} failed")
+        except Exception as e:
+            failures.append(f"{name} failed with unexpected error: {e}")
 
-    ensure_blocked("MD5 via hashlib.new()", lambda: hashlib.new('md5', b'test'))
-    ensure_blocked("MD5 via hashlib.md5()", lambda: hashlib.md5(b'test'))
-    ensure_blocked("HMAC-MD5", lambda: hmac.new(b'key', b'msg', 'md5').hexdigest())
+    if failures:
+        return False, f"Failures: {'; '.join(failures)}"
 
-    def test_chacha():
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.set_ciphers('ECDHE-RSA-CHACHA20-POLY1305')
-    ensure_blocked("CHACHA20-POLY1305 cipher", test_chacha)
-
-    return (False, f"Failures: {'; '.join(failures)}") if failures else \
-           (True, "All disallowed algorithms properly blocked (MD5, HMAC-MD5, ChaCha20)")
-
-
-class OSSL_PARAM(Structure):
-    """OpenSSL parameter structure for provider queries"""
-    _fields_ = [
-        ("key", c_char_p),
-        ("data_type", c_uint),
-        ("data", c_void_p),
-        ("data_size", c_size_t),
-        ("return_size", c_size_t)
-    ]
+    # Generate success message based on suite type
+    if "Approved" in suite_name:
+        return (
+            True,
+            f"All FIPS-approved algorithms available ({', '.join(success_names)})",
+        )
+    else:
+        return (
+            True,
+            f"All disallowed algorithms properly blocked ({len(tests)} algorithms)",
+        )
 
 
-def get_fips_provider_version():
-    """Query the actual FIPS provider version from OpenSSL"""
+def get_fips_provider_version() -> Optional[str]:
+    """Query FIPS provider version from OpenSSL using CFFI (more Pythonic than ctypes)"""
     try:
-        libcrypto_path = find_library('crypto')
-        if not libcrypto_path:
+        from cffi import FFI
+
+        ffi = FFI()
+        ffi.cdef("""
+            typedef struct {
+                const char *key;
+                unsigned int data_type;
+                void *data;
+                size_t data_size;
+                size_t return_size;
+            } OSSL_PARAM;
+            
+            void* OSSL_PROVIDER_load(void *libctx, const char *name);
+            int OSSL_PROVIDER_get_params(void *prov, OSSL_PARAM *param);
+            int OSSL_PROVIDER_unload(void *prov);
+            OSSL_PARAM OSSL_PARAM_construct_utf8_ptr(const char *key, char **buf, size_t bsize);
+            OSSL_PARAM OSSL_PARAM_construct_end(void);
+        """)
+
+        # Try to load OpenSSL library with fallback options for better robustness
+        lib = None
+        for lib_name in ["crypto", "libcrypto.so.3", "libcrypto.so"]:
+            try:
+                lib = ffi.dlopen(lib_name)
+                break
+            except OSError:
+                continue
+
+        if not lib:
             return None
 
-        lib = CDLL(libcrypto_path)
-
-        # Configure OpenSSL provider API functions
-        lib.OSSL_PROVIDER_load.argtypes = [c_void_p, c_char_p]
-        lib.OSSL_PROVIDER_load.restype = c_void_p
-        lib.OSSL_PROVIDER_get_params.argtypes = [c_void_p, POINTER(OSSL_PARAM)]
-        lib.OSSL_PROVIDER_get_params.restype = c_int
-        lib.OSSL_PROVIDER_unload.argtypes = [c_void_p]
-        lib.OSSL_PROVIDER_unload.restype = c_int
-        lib.OSSL_PARAM_construct_utf8_ptr.argtypes = [c_char_p, POINTER(c_char_p), c_size_t]
-        lib.OSSL_PARAM_construct_utf8_ptr.restype = OSSL_PARAM
-        lib.OSSL_PARAM_construct_end.restype = OSSL_PARAM
-
-        prov = lib.OSSL_PROVIDER_load(None, b"fips")
-        if not prov:
+        # Load FIPS provider and query version
+        provider = lib.OSSL_PROVIDER_load(ffi.NULL, b"fips")
+        if provider == ffi.NULL:
             return None
 
-        try:
-            vers = c_char_p()
-            params = (OSSL_PARAM * 2)()
-            params[0] = lib.OSSL_PARAM_construct_utf8_ptr(b"version", byref(vers), 0)
-            params[1] = lib.OSSL_PARAM_construct_end()
+        version_ptr = ffi.new("char **")
+        params = ffi.new("OSSL_PARAM[2]")
+        params[0] = lib.OSSL_PARAM_construct_utf8_ptr(b"version", version_ptr, 0)
+        params[1] = lib.OSSL_PARAM_construct_end()
 
-            if lib.OSSL_PROVIDER_get_params(prov, params) == 1 and vers.value:
-                return vers.value.decode('utf-8')
-        finally:
-            lib.OSSL_PROVIDER_unload(prov)
+        result = None
+        if (
+            lib.OSSL_PROVIDER_get_params(provider, params) == 1
+            and version_ptr[0] != ffi.NULL
+        ):
+            result = ffi.string(version_ptr[0]).decode("utf-8")
+
+        lib.OSSL_PROVIDER_unload(provider)
+        return result
 
     except Exception:
-        pass
-
-    return None
+        return None
 
 
-def get_fips_info():
+def get_fips_info() -> str:
     """Get FIPS provider information by testing if restrictions are active"""
     try:
-        hashlib.new('md5', b'test')
+        hashlib.new("md5", b"test")
         return "not active"
     except ValueError:
         pass
 
     # MD5 is blocked - FIPS is active
     provider_version = get_fips_provider_version()
-    return f"active (provider {provider_version})" if provider_version else "active (provider version unknown)"
+    return (
+        f"active (provider {provider_version})"
+        if provider_version
+        else "active (provider version unknown)"
+    )
 
 
-def run_check(name, check_func):
+def run_check(name: str, check_func: Callable[[], Tuple[bool, str]]) -> bool:
     """Run a check function and return pass/fail result"""
     try:
         passed, details = check_func()
         print_result(name, passed, details)
         return passed
     except Exception as e:
-        print_result(name, False, f"Unexpected error: {e}")
+        print_result(name, False, f"Error: {e}")
         return False
 
 
-def main():
+def main() -> int:
     """Run FIPS validation checks and display results"""
-    print_header("FIPS Validated Crypto Library Test")
+    print_section("FIPS Validated Crypto Library Test")
     print(f"Python version: {sys.version.split()[0]}")
     print(f"OpenSSL version: {ssl.OPENSSL_VERSION}")
     print(f"FIPS provider: {get_fips_info()}")
 
-    print_header("Running FIPS Validation Checks")
+    print_section("Running FIPS Validation Checks")
 
     results = [
-        run_check("FIPS-Approved Algorithms", check_approved_algorithms),
-        run_check("Disallowed Algorithms Blocked", check_disallowed_algorithms),
+        run_check(suite_name, lambda s=suite_name, t=tests: run_test_suite(s, t))
+        for suite_name, tests in TESTS.items()
     ]
 
     all_passed = all(results)
-    symbol, text, color = ("✓", "FIPS CAPABLE", Colors.GREEN) if all_passed else ("✗", "NOT FIPS CAPABLE", Colors.RED)
-    print(f"\n{color}{Colors.BOLD}{symbol} {text}{Colors.RESET}\n")
+    symbol, text, color = (
+        ("✓", "FIPS CAPABLE", "\033[92m")
+        if all_passed
+        else ("✗", "NOT FIPS CAPABLE", "\033[91m")
+    )
+    print(f"\n{color}\033[1m{symbol} {text}\033[0m\n")
 
     return 0 if all_passed else 2
 

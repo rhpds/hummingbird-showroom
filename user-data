@@ -35,6 +35,7 @@ runcmd:
   - curl -LO https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64 && install -m 755 cosign-linux-amd64 /usr/local/bin/cosign && rm cosign-linux-amd64
   - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.42.2
   - curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.109.1
+  - curl -o /home/rhel/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/mod1-review/scripts/test-fips.py
   - su -c '/tmp/quarkus.sh' -l rhel
   - rm /tmp/quarkus.sh
   - nohup grype db update &

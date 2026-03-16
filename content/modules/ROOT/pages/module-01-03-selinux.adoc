@@ -1,4 +1,4 @@
-= Sub-Module 1.3: SELinux Fundamentals with udica
+= Sub-Module 1.3: Common security changes
 
 .*Sub-Module Overview*
 [sidebar]
@@ -7,7 +7,8 @@
 *Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
 *Learning Objectives:*
 
-* Understand why the default `container_t` policy is insufficient
+* Installing custom CA bundles in images
+* Using special security focused variabts
 * Install udica and SELinux tools
 * Prepare host directories with proper SELinux labels for bind mounts
 * Generate custom SELinux policies from `podman inspect` output
@@ -18,6 +19,115 @@
 [[introduction]]
 == Introduction
 
+Beginning with a baseline that reduces the toil associated with identifying, researching, and, when possible, manually remediating CVEs while tracking exceptions is a good start to reducing friction on the path to production.
+
+However this isn't the only security concern common to containerized application delivery. Nor is it the only control available when using Hardened Images.  In this module we'll look at a few examples of how things may or may not change for common container security practices.
+
+[[certs]]
+== Adding certificate authority bundles to images
+
+One of the common things developers need to deal with is custom SSL certificates. Organizations will often have internal certificates or authorities (CAs) that need to be used to provide appropriate chains of trust for signing.
+
+[source,bash,role=execute]
+----
+vim Caddyfile 
+{
+    http_port 8080
+    https_port 8443
+}
+
+localhost {
+    tls internal
+    root * /usr/share/caddy
+    file_server
+}
+
+vim Containerfile.caddy 
+FROM quay.io/hummingbird/caddy:latest
+
+COPY Caddyfile /etc/caddy/Caddyfile
+
+podman build -t caddy:ssl -f Containerfile.caddy 
+podman run --replace -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+
+podman run --net=host --rm -it curl https://localhost:8443
+
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
+cat root.key root.crt > ca.pem
+
+vim Containerfile.pem
+FROM quay.io/hummingbird/curl:latest-builder as builder
+
+# Copy the certificate to the image
+COPY ca.pem /tmp/
+
+# Temporarily switch to root to add the CA certificate to the trust store
+USER root
+RUN trust anchor /tmp/ca.pem
+USER ${CONTAINER_DEFAULT_USER}
+
+
+# Runtime stage:
+# Copy the trust store from the builder image to the runtime image
+FROM quay.io/hummingbird/curl:latest
+COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
+
+podman build -t curl:local-ca -f Containerfile.pem 
+podman run --net=host --rm -it curl:local-ca https://localhost:8443
+
+----
+
+[[fips]]
+== Baselines for special use cases
+
+In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the FIPS 140-3 standard.
+
+[source,bash,role=execute]
+----
+cat < ~/fips/Containerfile << "EOF"
+FROM quay.io/hummingbird-hatchling/python:3.14
+
+COPY test-fips.py .
+
+# Switch back to the default user to install and run the application
+USER ${CONTAINER_DEFAULT_USER}
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./test-fips.py"]
+EOF
+----
+
+[source,bash,role=execute]
+----
+podman build -t fips:no -f Containerfile 
+podman run --rm -it fips:no
+----
+
+[source,bash,role=execute]
+----
+cat < ~/fips/Containerfile << "EOF"
+FROM quay.io/hummingbird-hatchling/python:3.14-fips
+
+COPY test-fips.py .
+
+# Switch back to the default user to install and run the application
+USER ${CONTAINER_DEFAULT_USER}
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./test-fips.py"]
+----
+
+[source,bash,role=execute]
+----
+podman build -t fips:yes -f Containerfile 
+podman run --rm -it fips:yes
+----
+
+[[ selinux ]]
+== Intro to SELinux
 SELinux (Security-Enhanced Linux) provides mandatory access control (MAC) that can enforce fine-grained security policies on containers. By default, all containers run under the `container_t` SELinux type, which is a one-size-fits-all policy that's often too permissive for some use cases and too restrictive for others.
 
 **udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. Combined with Hummingbird's minimal images, this provides **double hardening**: a minimal attack surface at the image level plus restrictive SELinux policies at the kernel level.
