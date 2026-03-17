@@ -185,11 +185,17 @@ cat > Containerfile.legacy << 'EOF'
 FROM docker.io/library/python:3.11-buster
 WORKDIR /app
 COPY app.py .
+RUN chmod 644 app.py && chown 1001:0 app.py
 EXPOSE 8080
 USER 1001
 CMD ["python3", "app.py"]
 EOF
 ----
+
+[NOTE]
+====
+**OpenShift SCC Compatibility**: The `chmod 644` and `chown 1001:0` ensure the file is readable when OpenShift's `restricted-v2` Security Context Constraint remaps the container UID to the namespace's allocated range (e.g., `1000890000`). Without this, the Python interpreter cannot read `app.py` and the container will crash with `Permission denied`.
+====
 
 === Step 3: Build and Push the Legacy Image
 
@@ -379,10 +385,11 @@ cat > Containerfile.fortress << 'EOF'
 FROM docker.io/library/python:3.11-slim AS builder
 WORKDIR /build
 COPY app.py .
+RUN chmod 644 app.py
 
 # Stage 2: Runtime -- copy only what the app needs into Hummingbird
 FROM quay.io/hummingbird-hatchling/python:latest
-COPY --from=builder /build/app.py /app/app.py
+COPY --from=builder --chmod=644 /build/app.py /app/app.py
 WORKDIR /app
 EXPOSE 8080
 USER 1001
@@ -709,77 +716,94 @@ Wait 30-60 seconds for the webhook configuration to propagate to the OpenShift A
 
 === Step 2: Create Policy -- Reject Images with Fixable CVEs
 
-This policy blocks any deployment where the image contains fixable vulnerabilities:
+This policy blocks any deployment where the image contains fixable vulnerabilities. Create it via the ACS REST API:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-roxctl declarative-config create security-policy \
-  --name="Zero Fixable CVEs Required" \
-  --description="Reject deployments where the image has any fixable CVE. Enforces proactive attack surface eradication over reactive patching." \
-  --severity=CRITICAL_SEVERITY \
-  --category="Vulnerability Management" \
-  --lifecycle-stage=DEPLOY \
-  --enforcement=FAIL_DEPLOYMENT_CREATE_ENFORCEMENT \
-  --scope-namespace=hummingbird-acs-lab \
-  --policy-section-name="Fixable CVE threshold" \
-  --field-name="Fixable CVSS" \
-  --comparison=GREATER_THAN_OR_EQUAL_TO \
-  --value="0" \
-  --insecure-skip-tls-verify 2>/dev/null
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+
+curl -sk -X POST \
+  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://${ACS_ROUTE}/v1/policies" \
+  -d '{
+    "name": "Zero Fixable CVEs Required",
+    "description": "Reject deployments where the image has any fixable CVE. Enforces proactive attack surface eradication over reactive patching.",
+    "severity": "CRITICAL_SEVERITY",
+    "categories": ["Vulnerability Management"],
+    "lifecycleStages": ["DEPLOY"],
+    "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
+    "eventSource": "NOT_APPLICABLE",
+    "disabled": false,
+    "scope": [{"namespace": "hummingbird-acs-lab"}],
+    "policySections": [{
+      "sectionName": "Fixable CVE threshold",
+      "policyGroups": [
+        {"fieldName": "Fixed By", "booleanOperator": "OR", "negate": false, "values": [{"value": ".*"}]},
+        {"fieldName": "CVSS", "booleanOperator": "OR", "negate": false, "values": [{"value": ">= 0.000000"}]}
+      ]
+    }]
+  }' | python3 -m json.tool
 ----
+
+[IMPORTANT]
+====
+**Enforcement Action**: Use `SCALE_TO_ZERO_ENFORCEMENT` (not `FAIL_DEPLOYMENT_CREATE_ENFORCEMENT`) for deploy-time policies. This is the enforcement type that the ACS admission controller webhook recognises for blocking deployments at admission time. With `SCALE_TO_ZERO_ENFORCEMENT`, the admission webhook will deny the Kubernetes API request before the pod is created.
+====
 
 [NOTE]
 ====
-If `roxctl declarative-config` is not available in your version, create the policy through the ACS Central UI:
+**UI alternative**: Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
 
-. Navigate to *Platform Configuration* -> *Policy Management*
-. Click *Create Policy*
-. Set the following:
   - **Name**: `Zero Fixable CVEs Required`
   - **Severity**: Critical
   - **Lifecycle**: Deploy
   - **Response**: Inform and enforce
-. Under *Policy Criteria*, add:
-  - **Fixable CVSS** >= 0 (any fixable vulnerability triggers the policy)
-. Under *Policy Scope*, restrict to namespace `hummingbird-acs-lab`
-. Click *Save*
+  - **Policy Criteria**: `Fixed By` matches `.*` AND `CVSS` >= 0
+  - **Policy Scope**: namespace `hummingbird-acs-lab`
 ====
 
 === Step 3: Create Policy -- Require SBOM / Image Scanning
 
 This policy rejects images that ACS has not scanned (ensuring every deployed image has been evaluated):
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-roxctl declarative-config create security-policy \
-  --name="Image Scan Required" \
-  --description="Reject deployments where the image has not been scanned by ACS. Ensures every runtime artifact has a verified vulnerability assessment." \
-  --severity=HIGH_SEVERITY \
-  --category="Supply Chain Security" \
-  --lifecycle-stage=DEPLOY \
-  --enforcement=FAIL_DEPLOYMENT_CREATE_ENFORCEMENT \
-  --scope-namespace=hummingbird-acs-lab \
-  --policy-section-name="Scan status" \
-  --field-name="Unscanned Image" \
-  --value="true" \
-  --insecure-skip-tls-verify 2>/dev/null
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+
+curl -sk -X POST \
+  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://${ACS_ROUTE}/v1/policies" \
+  -d '{
+    "name": "Image Scan Required",
+    "description": "Reject deployments where the image has not been scanned by ACS. Ensures every runtime artifact has a verified vulnerability assessment.",
+    "severity": "HIGH_SEVERITY",
+    "categories": ["DevOps Best Practices"],
+    "lifecycleStages": ["DEPLOY"],
+    "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
+    "eventSource": "NOT_APPLICABLE",
+    "disabled": false,
+    "scope": [{"namespace": "hummingbird-acs-lab"}],
+    "policySections": [{
+      "sectionName": "Scan status",
+      "policyGroups": [
+        {"fieldName": "Unscanned Image", "booleanOperator": "OR", "negate": false, "values": [{"value": "true"}]}
+      ]
+    }]
+  }' | python3 -m json.tool
 ----
 
 [NOTE]
 ====
-**UI alternative** for the scan policy:
+**UI alternative**: Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
 
-. Navigate to *Platform Configuration* -> *Policy Management*
-. Click *Create Policy*
-. Set the following:
   - **Name**: `Image Scan Required`
   - **Severity**: High
   - **Lifecycle**: Deploy
   - **Response**: Inform and enforce
-. Under *Policy Criteria*, add:
-  - **Unscanned Image** = true
-. Under *Policy Scope*, restrict to namespace `hummingbird-acs-lab`
-. Click *Save*
+  - **Policy Criteria**: `Unscanned Image` = true
+  - **Policy Scope**: namespace `hummingbird-acs-lab`
 ====
 
 === Step 4: Verify Policies Are Active
