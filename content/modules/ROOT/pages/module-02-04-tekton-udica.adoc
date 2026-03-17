@@ -469,6 +469,11 @@ application-repo/
     └── kustomization.yaml
 ----
 
+[TIP]
+====
+A working reference implementation of this structure is available at https://github.com/tosin2013/sample-nodejs-hummingbird[sample-nodejs-hummingbird^]. It includes the Tekton Task, Pipeline, PipelineRun template, Deployment, MachineConfig, and generated CIL policy from this sub-module.
+====
+
 === load-policy.sh Helper
 
 [source,bash]
@@ -593,6 +598,9 @@ Learn how to integrate chunkah content-based layer splitting into the Tekton pip
 *Shipwright Builds:*
 * https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/builds_using_shipwright/index[Builds for OpenShift^]
 * https://shipwright.io/docs/[Shipwright Documentation^]
+
+*Reference Implementation:*
+* https://github.com/tosin2013/sample-nodejs-hummingbird[sample-nodejs-hummingbird^] -- Node.js application with SELinux CI/CD manifests (Tekton, Deployment, MachineConfig, CIL policy)
 
 === Troubleshooting
 
