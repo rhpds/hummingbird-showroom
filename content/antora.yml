@@ -44,6 +44,12 @@ asciidoc:
     trusted-libraries-docs: 'https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain'
     trusted-libraries-registry-portal: 'https://access.redhat.com/terms-based-registry/accounts'
 
+    # RHTAS (Red Hat Trusted Artifact Signer)
+    rhtas-namespace: 'trusted-artifact-signer'
+    keycloak-realm: 'trusted-artifact-signer'
+    rhtas-signing-sa: 'rhtas-signer'
+    rhtas-builds-namespace: 'hummingbird-builds'
+
     # Placeholders for lab environment
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'
