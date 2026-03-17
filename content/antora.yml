@@ -1,7 +1,7 @@
 ---
 name: modules
 title: "LB2865: Zero CVE containers with Project Hummingbird"
-version: '1.0'
+version: master
 nav:
 - modules/ROOT/nav.adoc
 
