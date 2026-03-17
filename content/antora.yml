@@ -1,14 +1,15 @@
 ---
 name: modules
-title: Project Hummingbird Environment Workshop
+title: "LB2865: Zero CVE containers with Project Hummingbird"
 version: '1.0'
 nav:
-  - modules/ROOT/nav.adoc
+- modules/ROOT/nav.adoc
 
 asciidoc:
   attributes:
+    # page-toclevels: -1               # <- This will remove the TOC that appear in the right sidebar at wider resolutions
     page-pagination: true
-    workshop-title: 'Zero CVE Hummingbird Workshop'
+    workshop-title: "LB2865: Zero CVE containers with Project Hummingbird"
     workshop-duration: '90 minutes'
 
     # Module 1 - Developer Environment
@@ -25,31 +26,11 @@ asciidoc:
     openshift-version: '4.21'
     shipwright-operator: 'Builds for Red Hat OpenShift'
 
-    # ACS (Red Hat Advanced Cluster Security)
-    acs-central-url: 'https://central-stackrox.apps.cluster-{guid}.example.com'
-    acs-namespace: 'stackrox'
-    roxctl-version: '4.7'
-
-    # Workshop Registry (on-cluster Quay)
-    workshop-registry: 'quay-registry-quay-quay.apps.cluster-{guid}.example.com'
-    workshop-registry-console: 'https://quay-registry-quay-quay.apps.cluster-{guid}.example.com'
-    quay-namespace: 'quay'
-
     # Upstream Source Registries
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
-    # Placeholders for lab environment
-    guid: 'PROVIDE-GUID'
-    aws-region: 'us-east-1'
-    openshift-console: 'https://console-openshift-console.apps.cluster-{guid}.example.com'
-    openshift-api: 'https://api.cluster-{guid}.example.com:6443'
-    openshift-user: 'admin'
-    openshift-password: 'PROVIDED-IN-LAB'
-    registry-user: 'PROVIDED-IN-LAB'
-    registry-password: 'PROVIDED-IN-LAB'
-
-  extensions:
-    - ./content/lib/tab-block.js
-    - ./content/lib/remote-include-processor.js
+  # extensions:
+  # - ./content/lib/tab-block.js
+  # - ./content/lib/remote-include-processor.js
 
