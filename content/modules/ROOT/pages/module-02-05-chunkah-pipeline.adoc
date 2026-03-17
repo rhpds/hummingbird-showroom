@@ -171,9 +171,9 @@ spec:
     name: chunkah-split-task
   params:
     - name: SOURCE_IMAGE
-      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest"
+      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
     - name: OUTPUT_IMAGE
-      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest-chunked"
+      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked"
     - name: MAX_LAYERS
       value: "48"
 EOF
@@ -304,13 +304,13 @@ Use `skopeo inspect` to compare the original and split images in the registry:
 [source,bash,role=execute,subs="attributes"]
 ----
 echo "=== Original image ==="
-skopeo inspect "docker://{workshop-registry}/{registry-user}/sample-nodejs:latest" 2>/dev/null \
+skopeo inspect "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest" 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 
 echo ""
 echo "=== After chunkah ==="
-skopeo inspect "docker://{workshop-registry}/{registry-user}/sample-nodejs:latest-chunked" 2>/dev/null \
+skopeo inspect "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked" 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 ----
