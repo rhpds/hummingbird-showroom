@@ -151,10 +151,65 @@ task.tekton.dev/chunkah-split-task created
 oc get task chunkah-split-task -n hummingbird-builds
 ----
 
-[[run-chunkah-task]]
-== Run the chunkah Task
+[[create-chunkah-pipeline]]
+== Create the chunkah Optimization Pipeline
 
-=== Step 3: Create a TaskRun
+=== Step 3: Create the Pipeline
+
+Wrap the Task in a Pipeline so it appears in the OpenShift Pipelines dashboard:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: chunkah-optimization-pipeline
+  namespace: hummingbird-builds
+  labels:
+    app.kubernetes.io/part-of: hummingbird-workshop
+spec:
+  params:
+    - name: SOURCE_IMAGE
+      type: string
+      description: "Source image to split"
+    - name: OUTPUT_IMAGE
+      type: string
+      description: "Output image with optimised layers"
+    - name: MAX_LAYERS
+      type: string
+      description: "Maximum number of layers after splitting"
+      default: "48"
+  tasks:
+    - name: split-layers
+      taskRef:
+        name: chunkah-split-task
+      params:
+        - name: SOURCE_IMAGE
+          value: "$(params.SOURCE_IMAGE)"
+        - name: OUTPUT_IMAGE
+          value: "$(params.OUTPUT_IMAGE)"
+        - name: MAX_LAYERS
+          value: "$(params.MAX_LAYERS)"
+EOF
+----
+
+.*Expected output:*
+----
+pipeline.tekton.dev/chunkah-optimization-pipeline created
+----
+
+=== Step 4: Verify the Pipeline
+
+[source,bash,role=execute]
+----
+oc get pipeline chunkah-optimization-pipeline -n hummingbird-builds
+----
+
+[[run-chunkah-pipeline]]
+== Run the chunkah Pipeline
+
+=== Step 5: Create a PipelineRun
 
 Run chunkah against the Node.js image built in earlier sub-modules:
 
@@ -162,13 +217,13 @@ Run chunkah against the Node.js image built in earlier sub-modules:
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
-kind: TaskRun
+kind: PipelineRun
 metadata:
   name: chunkah-split-nodejs
   namespace: hummingbird-builds
 spec:
-  taskRef:
-    name: chunkah-split-task
+  pipelineRef:
+    name: chunkah-optimization-pipeline
   params:
     - name: SOURCE_IMAGE
       value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
@@ -179,21 +234,23 @@ spec:
 EOF
 ----
 
-=== Step 4: Monitor the TaskRun
+=== Step 6: Monitor the PipelineRun
 
 [source,bash,role=execute]
 ----
-oc get taskrun chunkah-split-nodejs -w
+oc get pipelinerun chunkah-split-nodejs -w
 ----
 
 Wait for STATUS to show `True` (Succeeded), then press `Ctrl+C`.
 
-=== Step 5: View Results
+You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds` namespace.
+
+=== Step 7: View Results
 
 [source,bash,role=execute]
 ----
-oc get taskrun chunkah-split-nodejs \
-  -o jsonpath='{.status.results}' | python3 -m json.tool
+oc get pipelinerun chunkah-split-nodejs \
+  -o jsonpath='{.status.pipelineResults}' | python3 -m json.tool
 ----
 
 .*Expected output (example):*
@@ -209,8 +266,18 @@ View the detailed logs:
 
 [source,bash,role=execute]
 ----
-oc logs chunkah-split-nodejs -c step-run-chunkah
+oc logs chunkah-split-nodejs-split-layers-pod -c step-run-chunkah
 ----
+
+[TIP]
+====
+If the pod name above doesn't match, find it with:
+
+[source,bash,role=execute]
+----
+oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n hummingbird-builds
+----
+====
 
 [[pipeline-integration]]
 == Exercise 2: Pipeline Integration
@@ -232,7 +299,7 @@ The chunkah Task fits into the build pipeline **after** the image build and **be
 [Cosign Sign] -> [Deploy]
 ----
 
-=== Step 6: Pipeline YAML (Reference)
+=== Step 8: Pipeline YAML (Reference)
 
 In a full pipeline, chunkah is inserted between the build and scan tasks:
 
@@ -297,7 +364,7 @@ The vulnerability scan runs on the **split** image, not the original. Since chun
 [[verify-optimization]]
 == Exercise 3: Verify Layer Optimisation
 
-=== Step 7: Compare Layer Counts
+=== Step 9: Compare Layer Counts
 
 Use `skopeo inspect` to compare the original and split images in the registry:
 

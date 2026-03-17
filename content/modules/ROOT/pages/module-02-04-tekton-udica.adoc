@@ -144,10 +144,71 @@ NAME                      AGE
 udica-policy-generate     15s
 ----
 
-[[run-policy-task]]
-== Run the Policy Generation Task
+[[create-pipeline]]
+== Create the SELinux Policy Pipeline
 
-=== Step 3: Create a TaskRun
+=== Step 3: Create the Pipeline
+
+Wrap the Task in a Pipeline so it appears in the OpenShift Pipelines dashboard:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: selinux-policy-pipeline
+  namespace: hummingbird-builds
+  labels:
+    app.kubernetes.io/part-of: hummingbird-workshop
+spec:
+  params:
+    - name: IMAGE
+      type: string
+      description: "Fully qualified image reference"
+    - name: POLICY_NAME
+      type: string
+      description: "Name for the generated SELinux policy"
+    - name: PORTS
+      type: string
+      description: "Comma-separated list of ports"
+      default: "8080"
+    - name: MOUNTS
+      type: string
+      description: "Comma-separated host paths (empty if none)"
+      default: ""
+  tasks:
+    - name: generate-policy
+      taskRef:
+        name: udica-policy-generate
+      params:
+        - name: IMAGE
+          value: "$(params.IMAGE)"
+        - name: POLICY_NAME
+          value: "$(params.POLICY_NAME)"
+        - name: PORTS
+          value: "$(params.PORTS)"
+        - name: MOUNTS
+          value: "$(params.MOUNTS)"
+EOF
+----
+
+.*Expected output:*
+----
+pipeline.tekton.dev/selinux-policy-pipeline created
+----
+
+=== Step 4: Verify the Pipeline
+
+[source,bash,role=execute]
+----
+oc get pipeline selinux-policy-pipeline -n hummingbird-builds
+----
+
+[[run-policy-pipeline]]
+== Run the Policy Generation Pipeline
+
+=== Step 5: Create a PipelineRun
 
 Generate a policy for the Node.js application built in Sub-Module 2.3:
 
@@ -165,13 +226,13 @@ oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
-kind: TaskRun
+kind: PipelineRun
 metadata:
   name: generate-nodejs-policy
   namespace: hummingbird-builds
 spec:
-  taskRef:
-    name: udica-policy-generate
+  pipelineRef:
+    name: selinux-policy-pipeline
   params:
     - name: IMAGE
       value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
@@ -184,21 +245,23 @@ spec:
 EOF
 ----
 
-=== Step 4: Monitor the TaskRun
+=== Step 6: Monitor the PipelineRun
 
 [source,bash,role=execute]
 ----
-oc get taskrun generate-nodejs-policy -w
+oc get pipelinerun generate-nodejs-policy -w
 ----
 
 Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
 
-=== Step 5: View the Generated Policy
+You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds` namespace.
+
+=== Step 7: View the Generated Policy
 
 [source,bash,role=execute]
 ----
-oc get taskrun generate-nodejs-policy \
-  -o jsonpath='{.status.results}' | python3 -m json.tool
+oc get pipelinerun generate-nodejs-policy \
+  -o jsonpath='{.status.pipelineResults}' | python3 -m json.tool
 ----
 
 The `POLICY_CIL` result contains the generated CIL policy. The `POLICY_TYPE` result gives you the SELinux type name (`hummingbird_nodejs.process`) to use in your Deployment spec.
@@ -207,8 +270,18 @@ View the detailed logs:
 
 [source,bash,role=execute]
 ----
-oc logs generate-nodejs-policy -c step-generate-policy
+oc logs generate-nodejs-policy-generate-policy-pod -c step-generate-policy
 ----
+
+[TIP]
+====
+If the pod name above doesn't match, find it with:
+
+[source,bash,role=execute]
+----
+oc get pods -l tekton.dev/pipelineRun=generate-nodejs-policy -n hummingbird-builds
+----
+====
 
 [[pipeline-integration]]
 == Pipeline Integration
@@ -222,7 +295,7 @@ The `udica-policy-generate` Task fits naturally into a Shipwright/Tekton pipelin
   ↓
 [udica-policy-generate Task]
   ↓
-[CIL Policy in TaskRun Results]
+[CIL Policy in PipelineRun Results]
   ↓
 [Commit .cil to Git Repo]  →  [GitOps Sync]
   ↓
@@ -240,7 +313,7 @@ In a full pipeline, a subsequent Task would:
 [[selinux-deployment]]
 == Deploying with seLinuxOptions
 
-=== Step 6: Update the Deployment
+=== Step 8: Update the Deployment
 
 Once the CIL policy is loaded on cluster nodes (via MachineConfig or manually), reference it in your Deployment's pod spec.
 
@@ -304,7 +377,7 @@ EOF
 The `seLinuxOptions.type` field tells the container runtime to apply the custom SELinux type instead of the default `container_t`. This only works if the CIL policy has been loaded on the node via `semodule`.
 ====
 
-=== Step 7: Verify the Deployment
+=== Step 9: Verify the Deployment
 
 [source,bash,role=execute]
 ----
