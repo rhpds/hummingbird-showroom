@@ -12,6 +12,8 @@
 #   Wave 4: ACS Central
 #   Wave 5: Post-config Jobs (Quay users, registry creds, ACS init-bundle)
 #   Wave 6: SecuredCluster
+#   Wave 7: RHTAS operator (Red Hat Trusted Artifact Signer)
+#   Wave 8: Keycloak realm for RHTAS (trusted-artifact-signer)
 #
 # Usage:
 #   ./bootstrap/setup-all.sh                          # defaults: fork repo, main branch
@@ -258,6 +260,12 @@ echo "  ACS Central: https://${ACS_ROUTE}"
 
 ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "not available yet")
 echo "  ACS Password: ${ACS_PASSWORD}"
+
+RHTAS_CSV=$(oc get csv -n trusted-artifact-signer -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "installing...")
+echo "  RHTAS:       ${RHTAS_CSV}"
+
+RHTAS_REALM=$(oc get keycloakrealmimport trusted-artifact-signer -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Done")].status}' 2>/dev/null || echo "pending...")
+echo "  RHTAS Realm: ${RHTAS_REALM}"
 
 echo ""
 echo "  ---- Credentials ----"

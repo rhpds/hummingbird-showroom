@@ -8,3 +8,5 @@ resources:
   - 03-quay-instance
   - 04-acs-instance
   - 05-post-config
+  - 06-rhtas-operator
+  - 07-keycloak-rhtas

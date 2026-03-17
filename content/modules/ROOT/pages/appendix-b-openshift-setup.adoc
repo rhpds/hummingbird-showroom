@@ -16,6 +16,9 @@
 * OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
 * Red Hat Quay operator installed (on-cluster registry with Clair, ODF-backed storage)
 * Red Hat Advanced Cluster Security (ACS) operator installed (for Sub-Module 2.7)
+* Red Hat Trusted Artifact Signer (RHTAS) operator installed (for Sub-Module 2.6)
+* Keycloak `trusted-artifact-signer` realm configured for RHTAS OIDC
+* RHTAS CLI tools (`cosign`, `rekor-cli`, `ec`) installed
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
 * Red Hat Quay on-cluster registry with Clair vulnerability scanning
 * Configurable multi-user workshop support (`NUM_USERS` environment variable)
@@ -825,6 +828,206 @@ If the webhook does not appear, check that `listenOnCreates` is set to `true` in
 
 Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress].
 
+[[rhtas-setup]]
+=== Red Hat Trusted Artifact Signer (RHTAS) Setup
+
+[NOTE]
+====
+This section is only required if you plan to complete **xref:module-02-06-rhtas.adoc[Sub-Module 2.6: Keyless Signing with RHTAS]**. You can skip it for all other Module 2 labs.
+====
+
+Red Hat Trusted Artifact Signer (RHTAS) provides keyless signing infrastructure for container images using the Sigstore project. It deploys Fulcio (certificate authority), Rekor (transparency log), CTlog (certificate transparency), and TUF (trust root distribution) on-cluster.
+
+[NOTE]
+====
+If you used Option 2 (Kustomize Bootstrap), the RHTAS operator and Keycloak realm were installed automatically. Verify them with the steps below and skip to <<rhtas-cli-tools>>.
+====
+
+==== Step 24: Install the RHTAS Operator
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trusted-artifact-signer
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhtas-operator-group
+  namespace: trusted-artifact-signer
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhtas-operator
+  namespace: trusted-artifact-signer
+spec:
+  channel: stable
+  name: rhtas-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/trusted-artifact-signer created
+operatorgroup.operators.coreos.com/rhtas-operator-group created
+subscription.operators.coreos.com/rhtas-operator created
+----
+
+Wait for the operator to install (2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=AtLatestKnown subscription/rhtas-operator \
+  -n trusted-artifact-signer --timeout=300s
+
+oc get csv -n trusted-artifact-signer
+----
+
+.*Expected output:*
+----
+NAME                    DISPLAY                              VERSION   REPLACES   PHASE
+rhtas-operator.v1.x.x   Red Hat Trusted Artifact Signer      1.x.x                Succeeded
+----
+
+==== Step 25: Create the Keycloak Realm for RHTAS
+
+The RHTAS Fulcio service needs an OIDC issuer for human user signing. Create a `trusted-artifact-signer` realm in Keycloak:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: KeycloakRealmImport
+metadata:
+  name: trusted-artifact-signer
+  namespace: keycloak
+spec:
+  keycloakCRName: keycloak
+  realm:
+    id: trusted-artifact-signer
+    realm: trusted-artifact-signer
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: true
+    duplicateEmailsAllowed: false
+    sslRequired: external
+    clients:
+      - clientId: trusted-artifact-signer
+        clientAuthenticatorType: client-secret
+        enabled: true
+        publicClient: true
+        protocol: openid-connect
+        directAccessGrantsEnabled: true
+        standardFlowEnabled: true
+        frontchannelLogout: false
+        redirectUris:
+          - "*"
+        webOrigins:
+          - "*"
+    roles:
+      realm:
+        - name: user
+          description: Default user role
+    users:
+      - username: sigstore-user
+        email: sigstore@example.com
+        emailVerified: true
+        enabled: true
+        credentials:
+          - type: password
+            value: sigstore-user
+            temporary: false
+        realmRoles:
+          - user
+EOF
+----
+
+.*Expected output:*
+----
+keycloakrealmimport.k8s.keycloak.org/trusted-artifact-signer created
+----
+
+Wait for the realm import to complete:
+
+[source,bash,role=execute]
+----
+for i in $(seq 1 30); do
+    STATUS=$(oc get keycloakrealmimport trusted-artifact-signer -n keycloak \
+      -o jsonpath='{.status.conditions[?(@.type=="Done")].status}' 2>/dev/null || echo "Pending")
+    if [ "$STATUS" = "True" ]; then echo "Keycloak realm: Ready"; break; fi
+    echo "  Status: ${STATUS} (${i}/30)"
+    sleep 5
+done
+----
+
+Verify the realm is accessible:
+
+[source,bash,role=execute]
+----
+KEYCLOAK_URL=$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')
+curl -sk "https://${KEYCLOAK_URL}/realms/trusted-artifact-signer/.well-known/openid-configuration" | python3 -m json.tool | head -5
+----
+
+[[rhtas-cli-tools]]
+==== Step 26: Download RHTAS CLI Tools
+
+After the RHTAS operator is installed, download `cosign`, `rekor-cli`, and `ec` (Enterprise Contract) from the operator's clientserver route:
+
+[source,bash,role=execute]
+----
+DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
+  -l app=trusted-artifact-signer-clientserver \
+  -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
+
+if [ -z "$DOWNLOADS_URL" ]; then
+    echo "RHTAS clientserver route not yet available. Waiting..."
+    for i in $(seq 1 30); do
+        DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
+          -l app=trusted-artifact-signer-clientserver \
+          -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
+        if [ -n "$DOWNLOADS_URL" ]; then break; fi
+        sleep 10
+    done
+fi
+
+echo "Downloads URL: https://${DOWNLOADS_URL}"
+
+# Download cosign
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/cosign-amd64.gz" -o cosign-amd64.gz
+gunzip cosign-amd64.gz && chmod +x cosign-amd64
+sudo mv cosign-amd64 /usr/local/bin/cosign
+
+# Download rekor-cli
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/rekor-cli-amd64.gz" -o rekor-cli-amd64.gz
+gunzip rekor-cli-amd64.gz && chmod +x rekor-cli-amd64
+sudo mv rekor-cli-amd64 /usr/local/bin/rekor-cli
+
+# Download ec (Enterprise Contract CLI)
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/ec-amd64.gz" -o ec-amd64.gz
+gunzip ec-amd64.gz && chmod +x ec-amd64
+sudo mv ec-amd64 /usr/local/bin/ec
+
+# Verify installations
+cosign version
+rekor-cli version
+ec version
+----
+
+[NOTE]
+====
+The RHTAS operator serves CLI binaries that are version-matched to the deployed Sigstore stack. Always use these binaries rather than downloading from upstream to ensure compatibility. If the clientserver route is not yet available, wait 1-2 minutes for the operator to finish initializing.
+====
+
+Your RHTAS environment is ready. Proceed to xref:module-02-06-rhtas.adoc[Sub-Module 2.6: Keyless Signing with RHTAS].
+
 [[additional-resources]]
 === Additional Resources
 
@@ -882,3 +1085,29 @@ oc get secret sensor-tls -n stackrox
 ----
 
 If `sensor-tls` does not exist, the init bundle was not applied. Return to Step 20 to generate and apply it.
+
+**Issue: RHTAS operator not installing**
+[source,bash]
+----
+oc get csv -n trusted-artifact-signer
+
+oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: RHTAS clientserver route not available**
+[source,bash]
+----
+oc get route -n trusted-artifact-signer
+
+oc get pods -n trusted-artifact-signer
+----
+
+The clientserver pod must be running before CLI tools can be downloaded. Wait for the operator to finish initialization.
+
+**Issue: Keycloak realm import failing**
+[source,bash]
+----
+oc get keycloakrealmimport trusted-artifact-signer -n keycloak -o yaml
+
+oc logs -l app=keycloak -n keycloak --tail=50
+----
