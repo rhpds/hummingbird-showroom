@@ -1,36 +1,28 @@
 ---
 site:
   title: Zero CVE Hummingbird Workshop
-  url: https://github.com/rhpds/zero-cve-hummingbird-showroom
-  start_page: hummingbird-workshop::index.adoc
+  start_page: modules::index.adoc
 
 content:
   sources:
-    - url: .
-      start_path: content
+  - url: .
+    start_path: content
 
 ui:
   bundle:
     url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/rh-summit-2025/ui-bundle.zip
     snapshot: true
   supplemental_files:
-    - path: ./content/supplemental-ui
+  - path: ./content/supplemental-ui
 
 antora:
   extensions:
-    - '@sntke/antora-mermaid-extension'
+  - '@sntke/antora-mermaid-extension'
 
 asciidoc:
   attributes:
     experimental: true
     page-pagination: true
-    guid: PROVIDE-GUID
-    bastion_public_hostname: bastion.PROVIDE-GUID.ocpv00.rhdp.net
-    bastion_ssh_user_name: lab-user
-    bastion_ssh_password: password
-    ssh_user: lab-user
-    openshift_console_url: https://console-openshift-console.apps.cluster-PROVIDE-GUID.ocpv00.rhdp.net
-    openshift_cluster_ingress_domain: apps.cluster-PROVIDE-GUID.ocpv00.rhdp.net
 
 output:
   dir: ./www
