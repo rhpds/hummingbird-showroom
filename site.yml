@@ -1,6 +1,6 @@
 ---
 site:
-  title: Zero CVE Hummingbird Workshop
+  title: "LB2865: Zero CVE containers with Project Hummingbird"
   start_page: modules::index.adoc
 
 content:
