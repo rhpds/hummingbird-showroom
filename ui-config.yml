@@ -12,22 +12,10 @@ view_switcher:
 
 tabs:
 # OpenShift Console
-- name: OpenShift Console
+- name: Red Hat OpenShift Console
   url: 'https://console-openshift-console.${DOMAIN}'
-
-# Single terminal
 - name: Terminal
   path: /terminal
   port: 443
-
-  # Vertical split terminals
-  # - name: Bastion
-  #   path: /terminal
-  #   port: 443
-  #   secondary_name: Bastion
-  #   secondary_path: /terminal
-  #   secondary_port: 443
-
-# External page
 - name: Hummingbird Images
   url: 'https://web-app-8bd096.gitlab.io/'

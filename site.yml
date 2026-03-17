@@ -19,10 +19,5 @@ antora:
   extensions:
   - '@sntke/antora-mermaid-extension'
 
-asciidoc:
-  attributes:
-    experimental: true
-    page-pagination: true
-
 output:
   dir: ./www

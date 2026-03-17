@@ -7,6 +7,7 @@ nav:
 
 asciidoc:
   attributes:
+    # page-toclevels: -1               # <- This will remove the TOC that appear in the right sidebar at wider resolutions
     page-pagination: true
     workshop-title: "LB2865: Zero CVE containers with Project Hummingbird"
     workshop-duration: '90 minutes'
@@ -29,7 +30,7 @@ asciidoc:
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
-  extensions:
-  - ./content/lib/tab-block.js
-  - ./content/lib/remote-include-processor.js
+  # extensions:
+  # - ./content/lib/tab-block.js
+  # - ./content/lib/remote-include-processor.js
 
