@@ -110,7 +110,7 @@ In that case we could run the same test as we did with the local package using a
 
 [source,bash,role=execute]
 ----
-podman run -it --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
+podman run --rm --net=host {hummingbird-registry}/curl:latest http://localhost:8080
 podman stop webserver
 ----
 Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of poosibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
@@ -227,8 +227,6 @@ The Quarkus CLI generates the full project structure -- `pom.xml`, Maven wrapper
 
 [source,bash,role=execute]
 ----
-mkdir -p ~/hummingbird-lab
-cd ~/hummingbird-lab
 quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
     --no-code
@@ -440,7 +438,7 @@ Build your first Hummingbird-based container image:
 
 [source,bash,role=execute]
 ----
-cd ~/hummingbird-lab/sample-app
+cd ~/sample-app
 podman build -t hummingbird-demo:v1 .
 ----
 
@@ -472,7 +470,7 @@ Let's build a comparison image using only UBI (no Hummingbird runtime) to see th
 
 [source,bash,role=execute]
 ----
-cd ~/hummingbird-lab/sample-app
+cd ~/sample-app
 
 # Create a UBI-only Containerfile (single-stage, no Hummingbird)
 cat > Containerfile.ubi << 'EOF'

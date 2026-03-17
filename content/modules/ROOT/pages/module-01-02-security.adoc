@@ -145,10 +145,10 @@ Create a Software Bill of Materials for compliance:
 
 [source,bash,role=execute]
 ----
-syft hummingbird-demo:v1 -o spdx-json=hi.spdx
+syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
 
 # View package count
-jq '.packages | length' hi.spdx
+jq '.packages | length' hummingbird-demo.spdx
 ----
 
 .*Expected output:*
@@ -312,7 +312,7 @@ Attach the SBOM as a signed attestation:
 [source,bash,role=execute]
 ----
 cosign attest --yes --key cosign.key \
-  --predicate hi.spdx --type spdxjson \
+  --predicate hummingbird-demo.spdx --type spdxjson \
   --tlog-upload=false \
   --allow-insecure-registry \
   localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
@@ -320,7 +320,7 @@ cosign attest --yes --key cosign.key \
 
 .*Expected output:*
 ----
-Using payload from: hi.spdx
+Using payload from: hummingbird-demo.spdx
 Enter password for private key: 
 ----
 

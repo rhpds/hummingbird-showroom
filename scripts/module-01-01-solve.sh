@@ -84,12 +84,12 @@ COPY index.html /usr/share/caddy/
 EOF
 
 echo "=== Building and running caddy containerfile ==="
-podman build -t my-website -f webserver/Containerfile
+podman build -t my-website -f ~/webserver/Containerfile ~/webserver
 podman run -d --rm --name webserver -p 8080:8080 my-website
 retry_curl http://localhost:8080
 
 echo "=== Testing with containerized curl ==="
-podman run -it --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
+podman run --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
 podman stop webserver
 
 echo "=== Creating Flask application ==="
@@ -160,14 +160,12 @@ ENTRYPOINT ["python", "./app.py"]
 EOF
 
 echo "=== Building and running Flask application ==="
-podman build --net=host -t my-flasksite -f flask/Containerfile
+podman build --net=host -t my-flasksite -f ~/flask/Containerfile ~/flask
 podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite
 retry_curl http://localhost:8080
 podman stop flask-demo
 
 echo "=== Scaffolding Quarkus project ==="
-mkdir -p ~/hummingbird-lab
-cd ~/hummingbird-lab
 quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
     --no-code
@@ -289,11 +287,11 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 echo "=== Building with Podman ==="
-cd ~/hummingbird-lab/sample-app
+cd ~/sample-app
 podman build -t hummingbird-demo:v1 .
 
 echo "=== Building UBI version ==="
-cd ~/hummingbird-lab/sample-app
+cd ~/sample-app
 
 # Create a UBI-only Containerfile (single-stage, no Hummingbird)
 cat > Containerfile.ubi << 'EOF'
