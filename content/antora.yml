@@ -1,14 +1,14 @@
 ---
 name: modules
-title: Project Hummingbird Environment Workshop
+title: "LB2865: Zero CVE containers with Project Hummingbird"
 version: '1.0'
 nav:
-  - modules/ROOT/nav.adoc
+- modules/ROOT/nav.adoc
 
 asciidoc:
   attributes:
     page-pagination: true
-    workshop-title: 'Zero CVE Hummingbird Workshop'
+    workshop-title: "LB2865: Zero CVE containers with Project Hummingbird"
     workshop-duration: '90 minutes'
 
     # Module 1 - Developer Environment
@@ -50,6 +50,6 @@ asciidoc:
     registry-password: 'PROVIDED-IN-LAB'
 
   extensions:
-    - ./content/lib/tab-block.js
-    - ./content/lib/remote-include-processor.js
+  - ./content/lib/tab-block.js
+  - ./content/lib/remote-include-processor.js
 

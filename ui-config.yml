@@ -11,7 +11,7 @@ view_switcher:
   default_mode: split
 
 tabs:
-# OCP Console
+# OpenShift Console
 - name: OpenShift Console
   url: 'https://console-openshift-console.${DOMAIN}'
 
@@ -22,10 +22,10 @@ tabs:
 
   # Vertical split terminals
   # - name: Bastion
-  #   path: /wetty
+  #   path: /terminal
   #   port: 443
   #   secondary_name: Bastion
-  #   secondary_path: /wetty
+  #   secondary_path: /terminal
   #   secondary_port: 443
 
 # External page
