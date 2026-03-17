@@ -92,7 +92,7 @@ echo "=== Testing with containerized curl ==="
 podman run --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
 podman stop webserver
 
-echo "=== Creating Flask application ==="
+echo "=== Step 2: Creating Flask application ==="
 mkdir -p ~/flask
 cat  > ~/flask/app.py << 'EOF'
 from flask import Flask
@@ -139,19 +139,75 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
 EOF
 
-echo "=== Creating Flask Containerfile ==="
-cat  > ~/flask/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/python:3.14-builder
+echo "=== Step 3: Creating UBI Flask Containerfile for comparison ==="
+cat > ~/flask/Containerfile.ubi << 'EOF'
+# Stage 1: Base Image from Red Hat UBI
+FROM registry.access.redhat.com/ubi9/ubi
 
-# Temporarily switch to root for package installation
+# Install pip to manage application dependencies
+RUN dnf -y install python3-pip && dnf clean all
+
+# Create a non-root user and group for the application
+# Using a different UID/GID to avoid conflict with existing users in the base image.
+RUN groupadd -r -g 1005 appgroup && \
+    useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Ensure ownership is set to the new non-root user
+# COPY always executes as root
+COPY --chown=appuser:appgroup app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install application dependencies
 USER root
+RUN python3 -m pip install --extra-index-url http://localhost:8000 flask 
 
-# Install Flask and it's required dependencies from local cache
-RUN pip install --index-url http://localhost:8000 flask
+# Switch to the non-root user for runtime 
+USER appuser
 
-# Switch back to the default user to install and run the application
+# Expose the port Flask will listen on
+EXPOSE 8080
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python3", "./app.py"]
+
+EOF
+
+echo "=== Building UBI Flask version ==="
+podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
+
+echo "=== Step 4: Creating Hummingbird Flask Containerfile ==="
+cat > ~/flask/Containerfile.hi << 'EOF'
+# Stage 1: Base Image from Project Hummingbird
+FROM quay.io/hummingbird-hatchling/python:3.14
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the application files to the target directory
+# COPY always executes as root
+COPY --chown=65532 app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Switch to root from the non-root user to install dependencies
+# By default, these install in /tmp/.local for the non-root user 
+USER root
+RUN python3 -m pip install --index-url http://localhost:8000/simple flask 
+
+# Switch to the default non-root user for runtime 
 USER ${CONTAINER_DEFAULT_USER}
-COPY app.py .
+
+# Expose the port Flask will listen on
+EXPOSE 8080
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
 STOPSIGNAL SIGINT
@@ -159,13 +215,16 @@ ENTRYPOINT ["python", "./app.py"]
 
 EOF
 
-echo "=== Building and running Flask application ==="
-podman build --net=host -t my-flasksite -f ~/flask/Containerfile ~/flask
-podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite
+echo "=== Building and testing Hummingbird Flask application ==="
+podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
 retry_curl http://localhost:8080
 podman stop flask-demo
 
-echo "=== Scaffolding Quarkus project ==="
+echo "=== Comparing Flask image sizes ==="
+podman images my-flasksite
+
+echo "=== Step 5: Scaffolding Quarkus project ==="
 quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
     --no-code
@@ -241,7 +300,6 @@ ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
 # Stage 1: Build stage using builder variant
 # ============================================
 FROM ${BUILDER_REGISTRY}/openjdk:21-builder AS builder
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root

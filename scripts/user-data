@@ -30,6 +30,7 @@ write_files:
 runcmd:
   - mkdir -m 0755 /var/pypi-cache
   - "pip3 download --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/"
+  - "pip3 download --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/"
   - systemctl daemon-reload
   - systemctl start pypiserver
   - curl -LO https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64 && install -m 755 cosign-linux-amd64 /usr/local/bin/cosign && rm cosign-linux-amd64

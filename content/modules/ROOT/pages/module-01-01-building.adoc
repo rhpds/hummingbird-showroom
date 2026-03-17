@@ -177,22 +177,105 @@ EOF
 
 This is the same index.html we saw in the `caddy` example, just served via Flask instead of Caddy.
 
-We can now create the Containerfile to build this application.
+
+== Distroless vs distribution base images
+
+Let's build a comparison image using UBI to see the difference. We'll examine another Python Flask image to see what changes we need to make to move this to a hardened image.
 
 [source,bash,role=execute]
 ----
-cat  > ~/flask/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/python:3.14-builder
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > ~/flask/Containerfile.ubi << 'EOF'
+# Stage 1: Base Image from Red Hat UBI
+FROM registry.access.redhat.com/ubi9/ubi
 
-# Temporarily switch to root for package installation
+# Install pip to manage application dependencies
+RUN dnf -y install python3-pip && dnf clean all
+
+# Create a non-root user and group for the application
+# Using a different UID/GID to avoid conflict with existing users in the base image.
+RUN groupadd -r -g 1005 appgroup && \
+    useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Ensure ownership is set to the new non-root user
+# COPY always executes as root
+COPY --chown=appuser:appgroup app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install application dependencies
 USER root
+RUN python3 -m pip install --extra-index-url http://localhost:8000 flask 
 
-# Install Flask and it's required dependencies from local cache 
-RUN pip install --index-url http://localhost:8000 flask 
+# Switch to the non-root user for runtime 
+USER appuser
 
-# Switch back to the default user to install and run the application
+# Expose the port Flask will listen on
+EXPOSE 8080
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python3", "./app.py"]
+
+EOF
+----
+<.> Install globally as `root` to skip creating a virtual environment
+<.> Use `--index-url` to use our local artifact repository
+<.> Reset the USER with the provded ENV variable
+<.> Standard non-init container configuration
+
+Since we're using a local PyPi mirror, we need to make sure `podman` uses the host's networking to access mirror via `localhost`.
+[source,bash,role=execute]
+----
+# Build UBI-only version
+podman build --net=host -t my-flasksite:ubi -f flask/Containerfile.ubi
+----
+
+=== Examine the changes
+
+The most obvious change is the base image, but there are a few other minor adjustments we need to make.
+
+Our UBI example creates a non-root `appuser` to run the application. The hardened images already provides a default non-root user, so we can skip that step. 
+
+This means we do need to make sure we're running the commands as the correct user for each step however. We can also skip installing `pip` as that's already included in the `default` variant for `python`.
+
+We'll demonstrate this by installing the application dependecies globally as `root` instead of working in a virtual environment. This workflow is fine since we're only ever installing one application in this image, but your choice should make the most sense for your applications and environment.
+
+In practice those changes give us the following Containerfile
+
+[source,bash,role=execute]
+----
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > ~/flask/Containerfile.hi << 'EOF'
+# Stage 1: Base Image from Project Hummingbird
+FROM quay.io/hummingbird-hatchling/python:3.14
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the application files to the target directory
+# COPY always executes as root
+COPY --chown=65532 app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Switch to root from the non-root user to install dependcies
+# By default, these install in /tmp/.local for the non-root user 
+USER root
+RUN python3 -m pip install --index-url http://localhost:8000/simple flask 
+
+# Switch to the default non-root user for runtime 
 USER ${CONTAINER_DEFAULT_USER}
-COPY app.py .
+
+# Expose the port Flask will listen on
+EXPOSE 8080
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
 STOPSIGNAL SIGINT
@@ -200,26 +283,52 @@ ENTRYPOINT ["python", "./app.py"]
 
 EOF
 ----
-<.> Use the version tag plus `-builder` to get the right matching tools
-<.> Install globally as `root` to skip creating a virtual environment
-<.> Use `--index-url` to use our local artifact repository
+
+<.> Change our base image to the hardened `default` image
+<.> Change the user in `COPY` to the provided default instead of adding `appuser`
 <.> Reset the USER with the provded ENV variable
 <.> Standard non-init container configuration
+We can now create the Containerfile to build this application.
 
-Like the `caddy` example, this can be built and run locally with `podman`. 
 
 [source,bash,role=execute]
 ----
-podman build --net=host -t my-flasksite -f flask/Containerfile
-podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite
+podman build --net=host -t my-flasksite:hi -f flask/Containerfile.hi
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
 curl http://localhost:8080
 podman stop flask-demo
 ----
+Changing existing Containerfiles to use hardened images can be fairly straightforward. To help understand the default settings for hardened images, we https://gitlab.com/redhat/hummingbird/containers/-/blob/main/images/python-3-14/hummingbird/default/compat.md[provide tables] that compare them to upstream versions. 
+This not only includes the properties, but also the reasoning behind any changes.
+
+
+=== Step 9: Examine our two images
+
+List the images just built. Note that the hardened image is about half the size of the UBI based image.
+
+[source,bash,role=execute]
+----
+podman images my-flasksite
+----
+
+.*Expected output:*
+----
+REPOSITORY              TAG         IMAGE ID      CREATED            SIZE
+localhost/my-flasksite  hi          7355f3daefdc  About a minute ago  114 MB
+localhost/my-flasksite  ubi         472a6a9ebee8  9 minutes ago       261 MB
+----
+
+[[]]
+== Multi-stage builds with hardened images
+
+Let's create a simple Quarkus REST application that we'll use for a more realistic multi-stage build. Multi-stage builds are the most common pattern we see when using hardeneg images. 
+
+Multi-stage builds allow you to separate the final application artifacts from build time components and to choose the smallest runtimes for production. This keeps with the overall goal of minimal images, reduced attack and risk surfaces. Multi-stage builds provide a good blend of flexibility and control.
+
+This will also introduce a new variant, the `builder` image.
 
 [[sample-application]]
 == Create Sample Application
-
-Let's create a simple Quarkus REST application that we'll build into a Hummingbird container.
 
 === Step 4: Scaffold the Project with Quarkus CLI
 
@@ -335,12 +444,13 @@ quarkus.http.port=8080
 EOF
 ----
 
-== HUM version
-
 [[multi-stage-containerfile]]
 == Multi-Stage Containerfile
 
 Now let's create the Containerfile that builds our application using the multi-stage pattern.
+The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment. 
+Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
+Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
 
 === Step 7: Create Multi-Stage Containerfile
 
@@ -349,15 +459,10 @@ Now let's create the Containerfile that builds our application using the multi-s
 cat > Containerfile << 'EOF'
 # Multi-stage build: builder -> runtime
 
-# Build arguments for registry flexibility
-ARG BUILDER_REGISTRY=quay.io/hummingbird-hatchling
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
-
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM ${BUILDER_REGISTRY}/openjdk:21-builder AS builder
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -379,7 +484,7 @@ RUN ./mvnw package -DskipTests -B
 # ============================================
 # Stage 2: Runtime stage using Hummingbird
 # ============================================
-FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
+FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
 
 WORKDIR /app
 
@@ -405,9 +510,8 @@ EOF
 
 .*Key Points in this Containerfile:*
 
-* **Build Arguments**: `ARG BUILDER_REGISTRY` and `ARG RUNTIME_REGISTRY` allow switching registries without editing the file -- useful for Buildah and air-gapped environments
 * **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
-* **Unzip Installation**: The UBI9 OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
+* **Unzip Installation**: The OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
 * **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
 * **Security**: Non-root user (65532), proper file ownership with `--chown`
 * **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup
@@ -462,51 +566,6 @@ The first build downloads Maven dependencies and may take 3-5 minutes. Subsequen
 [2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 COMMIT hummingbird-demo:v1
 Successfully tagged localhost/hummingbird-demo:v1
-----
-
-== UBI version
-
-Let's build a comparison image using only UBI (no Hummingbird runtime) to see the difference.
-
-[source,bash,role=execute]
-----
-cd ~/sample-app
-
-# Create a UBI-only Containerfile (single-stage, no Hummingbird)
-cat > Containerfile.ubi << 'EOF'
-FROM registry.access.redhat.com/ubi9/openjdk-21:latest
-USER root
-RUN microdnf install -y unzip && microdnf clean all
-WORKDIR /build
-COPY mvnw pom.xml ./
-COPY .mvn ./.mvn
-RUN ./mvnw dependency:go-offline -B
-COPY src ./src
-RUN ./mvnw package -DskipTests -B
-WORKDIR /app
-RUN cp -r /build/target/quarkus-app/* /app/
-EXPOSE 8080
-USER 1001
-ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-EOF
-
-# Build UBI-only version
-podman build -f Containerfile.ubi -t demo-ubi:v1 .
-----
-=== Step 9: Verify Image Size
-
-Check the size of your built image:
-
-[source,bash,role=execute]
-----
-podman images hummingbird-demo
-podman images demo-ubi
-----
-
-.*Expected output:*
-----
-localhost/hummingbird-demo  v1  abc123def456  1 minute ago  273 MB
-localhost/demo-ubi  v1          1cf92afc37ae  29 seconds ago  624 MB
 ----
 
 [[testing-application]]
