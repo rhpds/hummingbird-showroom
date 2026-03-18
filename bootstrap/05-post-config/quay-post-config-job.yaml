@@ -1,0 +1,222 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: quay-post-config
+  namespace: hummingbird-builds
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: quay-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "serviceaccounts"]
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: quay-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+subjects:
+  - kind: ServiceAccount
+    name: quay-post-config
+    namespace: hummingbird-builds
+roleRef:
+  kind: ClusterRole
+  name: quay-post-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: quay-post-config
+  namespace: hummingbird-builds
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: quay-post-config
+      restartPolicy: OnFailure
+      containers:
+        - name: configure-quay
+          image: registry.redhat.io/openshift4/ose-cli:latest
+          env:
+            - name: QUAY_NAMESPACE
+              value: "quay"
+            - name: BUILDS_NAMESPACE
+              value: "hummingbird-builds"
+            - name: REGISTRY_USER
+              value: "workshopuser"
+            - name: REGISTRY_PASSWORD
+              value: "workshoppass123"
+            - name: REGISTRY_EMAIL
+              value: "workshop@example.com"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              echo "=== Quay Post-Configuration Job ==="
+
+              # Wait for Quay route to appear
+              echo "[1/4] Discovering Quay registry route..."
+              QUAY_ROUTE=""
+              for i in $(seq 1 60); do
+                  QUAY_ROUTE=$(oc get route -n "${QUAY_NAMESPACE}" -l quay-operator/quayregistry=quay-registry \
+                      -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+                  if [ -n "$QUAY_ROUTE" ]; then break; fi
+                  echo "  Waiting for Quay route... (${i}/60)"
+                  sleep 10
+              done
+              if [ -z "$QUAY_ROUTE" ]; then
+                  echo "ERROR: Quay route not found after 10 minutes."
+                  exit 1
+              fi
+              echo "  Quay registry: ${QUAY_ROUTE}"
+
+              # Wait for Quay to fully start
+              echo "  Waiting for Quay to fully start (initial 2min delay)..."
+              sleep 120
+
+              # Wait for Quay health endpoint to be ready
+              echo "  Checking Quay health endpoint..."
+              for i in $(seq 1 60); do
+                  HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${QUAY_ROUTE}/health/instance" 2>/dev/null || echo "000")
+                  if [ "$HTTP_CODE" = "200" ]; then
+                      echo "  Quay health check passed."
+                      # Additional check: verify Quay API can serve requests
+                      DISCOVERY_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${QUAY_ROUTE}/api/v1/discovery" 2>/dev/null || echo "000")
+                      if [ "$DISCOVERY_CODE" = "200" ]; then
+                          echo "  Quay API is ready."
+                          break
+                      fi
+                  fi
+                  echo "  Quay not ready (Health: ${HTTP_CODE}), waiting... (${i}/60)"
+                  sleep 10
+              done
+
+              # Initialize first user (or create via fallback)
+              echo "[2/5] Initializing Quay user (${REGISTRY_USER})..."
+              USER_READY=false
+
+              # Attempt 1: Try the first-user initialize endpoint (works on empty DB only)
+              INIT_RESPONSE=$(curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
+                  -H 'Content-Type: application/json' \
+                  -d "{
+                      \"username\": \"${REGISTRY_USER}\",
+                      \"password\": \"${REGISTRY_PASSWORD}\",
+                      \"email\": \"${REGISTRY_EMAIL}\",
+                      \"access_token\": true
+                  }" 2>/dev/null || true)
+
+              if echo "$INIT_RESPONSE" | grep -q "access_token"; then
+                  echo "  First user created successfully via initialize endpoint."
+                  USER_READY=true
+              elif echo "$INIT_RESPONSE" | grep -q "non-empty database\|already been initialized"; then
+                  echo "  Database already initialized, checking if user exists..."
+              else
+                  echo "  Initialize returned: $INIT_RESPONSE"
+              fi
+
+              # Attempt 2: Verify user can log in (basic auth to v2 registry endpoint)
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  Verifying registry login for ${REGISTRY_USER}..."
+                  AUTH_HEADER=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
+                  LOGIN_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                      "https://${QUAY_ROUTE}/v2/" \
+                      -H "Authorization: Basic ${AUTH_HEADER}" 2>/dev/null || echo "000")
+                  if [ "$LOGIN_CODE" = "200" ] || [ "$LOGIN_CODE" = "401" ]; then
+                      # 401 from /v2/ with basic auth means we need to check token endpoint
+                      TOKEN_RESP=$(curl -sk -u "${REGISTRY_USER}:${REGISTRY_PASSWORD}" \
+                          "https://${QUAY_ROUTE}/v2/auth?service=quay-registry-quay-quay&scope=repository:test/test:pull" 2>/dev/null || true)
+                      if echo "$TOKEN_RESP" | grep -q "token"; then
+                          echo "  User ${REGISTRY_USER} already exists and login works."
+                          USER_READY=true
+                      fi
+                  fi
+              fi
+
+              # Attempt 3: Create user via the user creation API (requires FEATURE_USER_CREATION: true)
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  Attempting to create user via Quay user creation API..."
+                  CREATE_RESPONSE=$(curl -sk "https://${QUAY_ROUTE}/api/v1/user/" \
+                      -H 'Content-Type: application/json' \
+                      -d "{
+                          \"username\": \"${REGISTRY_USER}\",
+                          \"password\": \"${REGISTRY_PASSWORD}\",
+                          \"email\": \"${REGISTRY_EMAIL}\"
+                      }" 2>/dev/null || true)
+
+                  if echo "$CREATE_RESPONSE" | grep -q "username\|encrypted_password"; then
+                      echo "  User created successfully via user creation API."
+                      USER_READY=true
+                  elif echo "$CREATE_RESPONSE" | grep -q "already exists\|already taken"; then
+                      echo "  User already exists (may have a different password)."
+                      USER_READY=true
+                  else
+                      echo "  WARNING: User creation response: $CREATE_RESPONSE"
+                  fi
+              fi
+
+              if [ "$USER_READY" = "false" ]; then
+                  echo "  WARNING: Could not verify or create user ${REGISTRY_USER}."
+                  echo "  You may need to create the account manually at https://${QUAY_ROUTE}"
+                  echo "  Click 'Create Account' and use: ${REGISTRY_USER} / ${REGISTRY_PASSWORD}"
+              fi
+
+              # Create registry-credentials secret
+              echo "[3/5] Creating registry-credentials secret..."
+              oc delete secret registry-credentials -n "${BUILDS_NAMESPACE}" 2>/dev/null || true
+              oc create secret docker-registry registry-credentials \
+                  --docker-server="${QUAY_ROUTE}" \
+                  --docker-username="${REGISTRY_USER}" \
+                  --docker-password="${REGISTRY_PASSWORD}" \
+                  -n "${BUILDS_NAMESPACE}"
+              echo "  Secret created."
+
+              # Link secret to pipeline ServiceAccount
+              echo "[4/5] Linking secret to pipeline ServiceAccount..."
+              for i in $(seq 1 24); do
+                  if oc get sa pipeline -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
+                      oc secrets link pipeline registry-credentials --for=pull,mount -n "${BUILDS_NAMESPACE}"
+                      echo "  Secret linked to pipeline ServiceAccount."
+                      break
+                  fi
+                  echo "  Waiting for pipeline ServiceAccount... (${i}/24)"
+                  sleep 10
+              done
+
+              # Final verification
+              echo "[5/5] Verifying registry credentials..."
+              AUTH_CHECK=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
+              VERIFY_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                  "https://${QUAY_ROUTE}/v2/" \
+                  -H "Authorization: Basic ${AUTH_CHECK}" 2>/dev/null || echo "000")
+              if [ "$VERIFY_CODE" = "200" ]; then
+                  echo "  Registry login verified successfully."
+              else
+                  echo "  NOTE: Could not fully verify registry login (HTTP ${VERIFY_CODE})."
+                  echo "  If login fails, visit https://${QUAY_ROUTE} and click 'Create Account'."
+                  echo "  Use: username=${REGISTRY_USER}  password=${REGISTRY_PASSWORD}"
+              fi
+
+              echo "=== Quay Post-Configuration Complete ==="
+              echo "  Registry: ${QUAY_ROUTE}"
+              echo "  User: ${REGISTRY_USER}"

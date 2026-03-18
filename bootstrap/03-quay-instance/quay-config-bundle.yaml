@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-config-bundle
+  namespace: quay
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+stringData:
+  config.yaml: |
+    FEATURE_USER_INITIALIZE: true
+    FEATURE_USER_CREATION: true
+    CREATE_PRIVATE_REPO_ON_PUSH: true
+    CREATE_NAMESPACE_ON_PUSH: true
+    SUPER_USERS:
+      - workshopuser

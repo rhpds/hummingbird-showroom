@@ -1,7 +1,7 @@
 ---
 name: modules
 title: "LB2865: Zero CVE containers with Project Hummingbird"
-version: '1.0'
+version: master
 nav:
 - modules/ROOT/nav.adoc
 
@@ -30,7 +30,28 @@ asciidoc:
     hummingbird-registry: 'quay.io/hummingbird-hatchling'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
-  # extensions:
-  # - ./content/lib/tab-block.js
-  # - ./content/lib/remote-include-processor.js
+    # Red Hat Trusted Libraries (Tech Preview)
+    trusted-libraries-index: 'https://packages.redhat.com/trusted-libraries/python/simple'
+    trusted-libraries-docs: 'https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain'
+    trusted-libraries-registry-portal: 'https://access.redhat.com/terms-based-registry/accounts'
+
+    # RHTAS (Red Hat Trusted Artifact Signer)
+    rhtas-namespace: 'trusted-artifact-signer'
+    keycloak-realm: 'trusted-artifact-signer'
+    rhtas-signing-sa: 'rhtas-signer'
+    rhtas-builds-namespace: 'hummingbird-builds'
+
+    # Placeholders for lab environment
+    guid: 'PROVIDE-GUID'
+    aws-region: 'us-east-1'
+    openshift-console: 'https://console-openshift-console.apps.cluster-{guid}.example.com'
+    openshift-api: 'https://api.cluster-{guid}.example.com:6443'
+    openshift-user: 'admin'
+    openshift-password: 'PROVIDED-IN-LAB'
+    registry-user: 'PROVIDED-IN-LAB'
+    registry-password: 'PROVIDED-IN-LAB'
+
+  extensions:
+    - ./content/lib/tab-block.js
+    - ./content/lib/remote-include-processor.js
 

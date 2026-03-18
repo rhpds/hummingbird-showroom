@@ -359,7 +359,7 @@ The `--no-code` flag tells the CLI to skip generating starter endpoint code so w
 Using the Maven wrapper (`./mvnw`) instead of a system `mvn` ensures every developer (and every container build) uses the exact same Maven version, avoiding "works on my machine" issues.
 ====
 
-=== Step 4a: Prepare Project for Multi-Stage Container Builds
+=== Step 2a: Prepare Project for Multi-Stage Container Builds
 
 The Quarkus scaffold generates a `.dockerignore` that excludes everything except pre-built artifacts -- this is designed for single-stage builds where you compile locally first. Our multi-stage Containerfile compiles _inside_ the container, so source files must be included in the build context.
 
@@ -395,7 +395,7 @@ sed -i 's/distributionSha256Sum=.*/distributionSha256Sum=/' .mvn/wrapper/maven-w
 ----
 ====
 
-=== Step 5: Create Application Resource
+=== Step 3: Create Application Resource
 
 [source,bash,role=execute]
 ----
@@ -437,7 +437,7 @@ public class GreetingResource {
 EOF
 ----
 
-=== Step 6: Configure Application Properties
+=== Step 4: Configure Application Properties
 
 [source,bash,role=execute]
 ----
@@ -455,7 +455,7 @@ The first stage will use the `builder` variant of the `openjdk-21` image. This p
 Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
 Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
 
-=== Step 7: Create Multi-Stage Containerfile
+=== Step 5: Create Multi-Stage Containerfile
 
 [source,bash,role=execute]
 ----
@@ -523,7 +523,7 @@ EOF
 [[building-image]]
 == Building the Image
 
-=== Step 8: Build with Podman
+=== Step 6: Build with Podman
 
 Building a multi-stage image with `podman` is no different than any other image. The stages are automatically handled as part of the standard OCI specification.
 
@@ -557,7 +557,7 @@ Successfully tagged localhost/hummingbird-demo:v1
 [[testing-application]]
 == Testing the Application
 
-=== Step 10: Run and Test the Container
+=== Step 8: Run and Test the Container
 
 Run the container and test it:
 
@@ -595,7 +595,7 @@ curl http://localhost:8080/health
 {"status":"healthy"}
 ----
 
-=== Step 11: View Container Logs
+=== Step 9: View Container Logs
 
 [source,bash,role=execute]
 ----
@@ -612,7 +612,7 @@ __  ____  __  _____   ___  __ ____  ______
 Listening on: http://0.0.0.0:8080
 ----
 
-=== Step 12: Stop and Remove Container
+=== Step 10: Stop and Remove Container
 
 [source,bash,role=execute]
 ----

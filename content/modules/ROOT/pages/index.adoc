@@ -108,6 +108,7 @@ Each module includes:
 * Hands-on labs (30-35 minutes)
 * Verification and summary (5 minutes)
 
+////
 == Environment Setup
 
 [IMPORTANT]
@@ -122,29 +123,70 @@ See xref:appendix-a-rhel-setup.adoc[Appendix A] for RHDP details, automation scr
 https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[Deploy OpenShift Cluster (AWS) via RHDP^] +
 See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automation scripts, or manual setup steps.
 ====
+////
 
 === Lab Environment Access
-
+////
 [NOTE]
 ====
 If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
 ====
+////
+==== Your RHEL Virtual Machine (Module 1)
+
+You will execute the first module in a Red Hat Enterprise Linux Virtual Machine running on Red Hat OpenShift Container Platform.
+
+. In the terminal window on your right log into OpenShift:
++
+[source,sh,subs=attributes,role=execute]
+----
+oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+----
+
+. Switch to your OpenShift project:
++
+[source,sh,subs=attributes,role=execute]
+----
+oc project rhel-{user}
+----
+
+. Connect to your RHEL Virtual Machine:
++
+[source,sh,subs=attributes,role=execute]
+----
+virtctl console rhel-{user}
+----
++
+[TIP]
+====
+You can use `Ctrl-]` to exit the VM console at any time.
+
+Hit `Enter` once you are connected to see the login prompt.
+====
+
+. Log into the VM using the following credentials:
+ 
+* *Username*: `rhel`
+* *Password*: `{password}`
 
 ==== OpenShift Console (Module 2)
 
-Your OpenShift console is available at: {openshift-console}
+Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}[window=blank].
 
 *Credentials:*
 
-* *Username:* `{openshift-user}`
-* *Password:* `{openshift-password}`
+* *Username:* `{user}`
+* *Password:* `{password}`
 
 ==== Registry Credentials
 
 For pushing images to registries:
 
-* *Registry User:* `{registry-user}`
-* *Registry Password:* `{registry-password}`
+* *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}[window=blank].
+
+You will need to register with Quay as user `{user}`. To make things easier use password `{password}` (the same as your OpenShift credentials).
+// * *Registry User:* `{user}`
+// * *Registry Password:* `{registry-password}`
 
 ==== GUID Information
 
@@ -176,7 +218,7 @@ Your unique lab environment identifier: `{guid}`
 
 *Registries:*
 
-* Workshop Registry (on-cluster Quay): `{workshop-registry}`
+* Workshop Registry (on-cluster Quay): `{quay_console_url}`
 * Hummingbird Source Registry: `{hummingbird-registry}`
 * UBI Registry: `{ubi-registry}`
 

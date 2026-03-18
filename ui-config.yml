@@ -11,11 +11,12 @@ view_switcher:
   default_mode: split
 
 tabs:
-# OpenShift Console
-- name: Red Hat OpenShift Console
-  url: 'https://console-openshift-console.${DOMAIN}'
 - name: Terminal
   path: /terminal
   port: 443
+- name: Red Hat OpenShift Console
+  url: 'https://console-openshift-console.${DOMAIN}'
+- name: Red Hat Quay Registry
+  url: 'https://quay.${DOMAIN}'
 - name: Hummingbird Images
   url: 'https://web-app-8bd096.gitlab.io/'
