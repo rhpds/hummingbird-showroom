@@ -1,10 +1,8 @@
 #! /bin/bash
-# --- Core Container Tools ---
-# sudo dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
-
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
 pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
+pip download  --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/
 
 cat > /etc/containers/systemd/pypiserver.container << 'EOF'
 [Unit]
@@ -35,21 +33,21 @@ rm cosign-linux-amd64
 cosign version
 
 # Install syft
-SYFT_VERSION=v1.17.0
+SYFT_VERSION=v1.42,2
 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
 
 # Verify installation
 syft version
 
 # Install grype
-GRYPE_VERSION=v0.88.0
+GRYPE_VERSION=v0.109.1
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
 
 # Verify installation
 grype version
 grype db update
 
-cat > /home/rhel/quarkus.sh <<'EOF'
+cat > /tmp/quarkus.sh <<'EOF'
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
 curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force quarkus@quarkusio
 export PATH="$HOME/.jbang/bin:$PATH"
@@ -58,8 +56,11 @@ if ! grep -q '.jbang/bin' ~/.bashrc 2>/dev/null; then
 fi
 
 EOF
-chmod +x /home/rhel/quarkus.sh
-su - rhel -c /home/rhel/quarkus.sh
-rm /home/rhel/quarkus.sh
+chmod +x /tmp/quarkus.sh
+su -l rhel -c /tmp/quarkus.sh
+rm /tmp/quarkus.sh
+
+mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
+curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/mod1-review/scripts/test-fips.py
 
 chown -R rhel:rhel /home/rhel/
