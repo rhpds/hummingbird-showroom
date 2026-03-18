@@ -132,6 +132,36 @@ See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automatio
 If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
 ====
 ////
+==== Your RHEL Virtual Machine (Module 1)
+
+You will execute the first module in a Red Hat Enterprise Linux Virtual Machine running on Red Hat OpenShift Container Platform.
+
+. In the terminal window on your right log into OpenShift:
++
+[source,sh,subs=attributes,role=execute]
+----
+oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+----
+
+. Switch to your OpenShift project:
++
+[source,sh,subs=attributes,role=execute]
+----
+oc project rhel-{user}
+----
+
+. Connect to your RHEL Virtual Machine:
++
+[source,sh,subs=attributes,role=execute]
+----
+virtctl console rhel-{user}
+----
++
+[TIP]
+====
+You can use `Ctrl-]` to exit the VM console at any time.
+====
+
 ==== OpenShift Console (Module 2)
 
 Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}.
@@ -145,7 +175,7 @@ Your OpenShift console is available on the right or if you prefer a separate win
 
 For pushing images to registries:
 
-* *Red Hat Quay* is available at {quay_console_url}.
+* *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}.
 
 You will need to register with Quay as user `{user}`. To make things easier use password `{password}` (the same as your OpenShift credentials).
 // * *Registry User:* `{user}`
