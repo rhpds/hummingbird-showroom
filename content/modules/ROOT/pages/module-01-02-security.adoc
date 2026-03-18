@@ -31,7 +31,6 @@ systemctl --user enable --now podman.socket
 Let's create a new diretory to hold our work.
 [source,bash,role=execute]
 ----
-mkdir ~/scanning
 cd ~/scanning
 ----
 
@@ -46,6 +45,33 @@ syft version
 ----
 .*Expected output:*
 ----
+----
+
+Let's build our sample quarkus app using the UBI openjdk image so we can do some comparisons with the hardened multi-stage build. 
+
+[source,bash,role=execute]
+----
+
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > ~/sample-app/Containerfile.ubi << 'EOF'
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+WORKDIR /app
+RUN cp -r /build/target/quarkus-app/* /app/
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+
+# Build UBI-only version
+podman build -f ~/sample-app/Containerfile.ubi -t demo-ubi:v1 
 ----
 
 [[vulnerability-scanning]]
@@ -203,7 +229,7 @@ podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
 podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
 podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
 
-# Capture the image digest for use with cosign
+# Capture the image digest COSIGN_PASSWORD=for use with cosign
 IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
 echo "Image digest: ${IMAGE_DIGEST}"
 ----
@@ -426,7 +452,6 @@ Congratulations! You've completed Sub-Module 1.2 and implemented a complete secu
 ✅ Verified image signatures +
 ✅ Attached SBOM as signed attestation +
 ✅ Verified SBOM attestations +
-✅ Compared Hummingbird vs UBI image sizes (~56% reduction) +
 ✅ Compared vulnerability counts (0 vs 28+ CVEs)
 
 .*Key Takeaways*
@@ -437,7 +462,6 @@ Congratulations! You've completed Sub-Module 1.2 and implemented a complete secu
 * **Complete transparency** via SBOMs
 
 **Security Workflow:**
-1. **Build** → Multi-stage Containerfile with Hummingbird runtime
 2. **Scan** → Grype checks for CVEs (should be 0)
 3. **SBOM** → Syft generates compliance artifacts
 4. **Sign** → Cosign proves provenance
@@ -447,29 +471,6 @@ Congratulations! You've completed Sub-Module 1.2 and implemented a complete secu
 * SBOMs meet NIST and EU Cyber Resilience Act requirements
 * Signed attestations prove SBOM authenticity
 * Automated scanning catches vulnerabilities early
-
-=== Next Sub-Module
-
-Ready to add SELinux hardening? Proceed to:
-
-**xref:module-01-03-selinux.adoc[Sub-Module 1.3: SELinux Fundamentals with udica]**
-
-Generate custom SELinux policies for Hummingbird containers using udica, handling the no-shell challenge with `podman inspect` and audit logs.
-
-=== Additional Resources
-
-*Security Tools Documentation:*
-* https://docs.sigstore.dev/cosign/[Cosign Documentation^]
-* https://github.com/anchore/syft[Syft GitHub Repository^]
-* https://github.com/anchore/grype[Grype GitHub Repository^]
-
-*SBOM Standards:*
-* https://spdx.dev/[SPDX Official Site^]
-* https://cyclonedx.org/[CycloneDX Official Site^]
-
-*Supply Chain Security:*
-* https://slsa.dev/[SLSA Framework^]
-* https://www.cisa.gov/sbom[CISA SBOM Resources^]
 
 === Troubleshooting
 

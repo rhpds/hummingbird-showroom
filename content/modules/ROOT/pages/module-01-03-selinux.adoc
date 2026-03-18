@@ -7,11 +7,10 @@
 *Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
 *Learning Objectives:*
 
-* Installing custom CA bundles in images
+* Installng custom CA bundles in images
 * Using special security focused variabts
-* Install udica and SELinux tools
-* Prepare host directories with proper SELinux labels for bind mounts
 * Generate custom SELinux policies from `podman inspect` output
+* Prepare host directories with proper SELinux labels for bind mounts
 * Read and understand generated CIL policy rules line by line
 * Apply and verify custom policies for Hummingbird containers
 --
@@ -28,9 +27,11 @@ However this isn't the only security concern common to containerized application
 
 One of the common things developers need to deal with is custom SSL certificates. Organizations will often have internal certificates or authorities (CAs) that need to be used to provide appropriate chains of trust for signing.
 
+For this lab, we'll rely on Caddy's built in TLS support. We can activate this with a custom Caddyfile, enabling the default SSL port and using the `internal` directive to turn on it's CA. We can rebuild our previous caddy-server with this new configuration and rebuild the image.
+
 [source,bash,role=execute]
 ----
-vim Caddyfile 
+cat  > ~/webserver/Caddyfile << 'EOF'
 {
     http_port 8080
     https_port 8443
@@ -41,23 +42,42 @@ localhost {
     root * /usr/share/caddy
     file_server
 }
+EOF
 
-vim Containerfile.caddy 
-FROM quay.io/hummingbird/caddy:latest
-
+cat  > ~/webserver/Containerfile << 'EOF'
+FROM quay.io/hummingbird-hatchling/caddy:latest
 COPY Caddyfile /etc/caddy/Caddyfile
 
-podman build -t caddy:ssl -f Containerfile.caddy 
-podman run --replace -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+COPY index.html /usr/share/caddy/
+EOF
 
-podman run --net=host --rm -it curl https://localhost:8443
 
+podman build -t caddy:ssl -f ~/webserver/Containerfile
+podman run -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+----
+
+With the new SSL enabled Caddy site running, we can test against the new port
+[source,bash,role=execute]
+----
+podman run --net=host --rm -it  quay.io/hummingbird-hatchling/curl https://localhost:8443
+----
+
+We can get the certificate and key for the internal CA from the running container and create a PEM file from them. This is similar to what you'd need for your internal organization's CA.
+[source,bash,role=execute]
+----
 podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
 podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
 cat root.key root.crt > ca.pem
+----
 
-vim Containerfile.pem
-FROM quay.io/hummingbird/curl:latest-builder as builder
+Using our internal CA as part of the trusted chain, we'd need to embed it in the image for our applications or tools. We'll use the `builder` variant of the `curl` image to create a custom internal `curl` we could use to validate custom certificates in a pipeline.
+
+This multi-stage pattern is the same we used for the `quarkus` application. This keeps all of the work of creating the new trust store in our builder and let's us only add the files we need to our new `curl` tool image.
+
+[source,bash,role=execute]
+----
+cat > ~/Containerfile.pem << 'EOF'
+FROM quay.io/hummingbird-hatchling/curl:latest-builder as builder
 
 # Copy the certificate to the image
 COPY ca.pem /tmp/
@@ -70,12 +90,11 @@ USER ${CONTAINER_DEFAULT_USER}
 
 # Runtime stage:
 # Copy the trust store from the builder image to the runtime image
-FROM quay.io/hummingbird/curl:latest
+FROM quay.io/hummingbird-hatchling/curl:latest
 COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 
-podman build -t curl:local-ca -f Containerfile.pem 
+podman build -t curl:local-ca -f ~/Containerfile.pem 
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
-
 ----
 
 [[fips]]
@@ -83,15 +102,21 @@ podman run --net=host --rm -it curl:local-ca https://localhost:8443
 
 In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the FIPS 140-3 standard.
 
+The `fips` variant changes the algorithms available in the container and also uses the validated FIPS proivider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+
+In this lab, the host and cluster are *not* in FIPS mode, howver the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
+
 [source,bash,role=execute]
 ----
-# Create directory for FIPS testing
-mkdir -p ~/fips
-cd ~/fips
+cat /proc/sys/crypto/fips_enabled
+----
 
+We've built a python application to demonstrate the differences an application would see based on the use of a `default` or `fips` variant. The only difference between our two containers is the source image.
+[source,bash,role=execute]
+----
 # Create standard Python Containerfile  
-cat > Containerfile << "EOF"
-FROM {hummingbird-registry}/python:3.14
+cat > ~/fips/Containerfile << "EOF"
+FROM quay.io/hummingbird-hatchling/python:3.14
 
 COPY test-fips.py .
 
@@ -102,19 +127,13 @@ USER ${CONTAINER_DEFAULT_USER}
 STOPSIGNAL SIGINT
 ENTRYPOINT ["python", "./test-fips.py"]
 EOF
-----
-
-[source,bash,role=execute]
-----
-podman build -t fips:no -f Containerfile 
-podman run --rm fips:no
 ----
 
 [source,bash,role=execute]
 ----
 # Create FIPS-enabled Python Containerfile
-cat > Containerfile.fips << "EOF"
-FROM {hummingbird-registry}/python:3.14-fips
+cat > ~/fips/Containerfile.fips << "EOF"
+FROM  quay.io/hummingbird-hatchling/python:3.14-fips
 
 COPY test-fips.py .
 
@@ -125,9 +144,19 @@ USER ${CONTAINER_DEFAULT_USER}
 STOPSIGNAL SIGINT
 ENTRYPOINT ["python", "./test-fips.py"]
 EOF
+----
 
-# Build and test FIPS-enabled image
-podman build -t fips:yes -f Containerfile.fips .
+We can build these and tag them so we can tell them apart
+[source,bash,role=execute]
+----
+podman build -t fips:no -f ~/fips/Containerfile 
+podman build -t fips:yes -f ~/fips/Containerfile.fips 
+----
+
+Running our application, we can see that MD5 and other methods considered less secure are disallowed in our `fips` based container.
+[source,bash,role=execute]
+----
+podman run --rm fips:no
 podman run --rm fips:yes
 ----
 
@@ -186,18 +215,6 @@ The policy generation relies on `podman inspect` output and audit log analysis, 
 
 [[installation]]
 == Installation
-
-=== Step 1: Install udica and SELinux Tools
-
-[source,bash,role=execute]
-----
-sudo dnf install -y \
-  udica \
-  setools-console \
-  audit \
-  policycoreutils-python-utils \
-  container-selinux
-----
 
 === Step 2: Confirm SELinux is Enforcing
 
@@ -490,16 +507,6 @@ podman stop demo-selinux
 podman rm demo-selinux
 ----
 
-[NOTE]
-====
-Keep the custom SELinux policy loaded -- you'll reference it in the next sub-module. To remove it later:
-
-[source,bash]
-----
-sudo semodule -r hummingbird_demo
-----
-====
-
 [[summary]]
 == Summary
 
@@ -530,13 +537,6 @@ Congratulations! You've completed Sub-Module 1.3 and learned the fundamentals of
 * `net_container.cil` -- inherited when ports are exposed
 * `home_container.cil` -- inherited when /home is bind-mounted
 
-=== Next Sub-Module
-
-Ready for advanced SELinux techniques? Proceed to:
-
-**xref:module-01-04-selinux-advanced.adoc[Sub-Module 1.4: Advanced SELinux Hardening]**
-
-Learn device access policies, the `--append-rules` technique for capturing audit log denials, the iteration workflow for production, and policy distribution patterns.
 
 === Troubleshooting
 
