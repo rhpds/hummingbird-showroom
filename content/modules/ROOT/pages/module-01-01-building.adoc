@@ -29,9 +29,10 @@ There are three main categories of images provided in the collection of hardend 
 
 [[services]]
 === Services and tools
-Let's start by looking at a simple web service with `caddy`.
 
 === Step 1: Create a simple index.html
+
+Let's start by looking at a simple web service with `caddy` and creating a landing page.
 
 [source,bash,role=execute]
 ----
@@ -93,11 +94,11 @@ COPY index.html /usr/share/caddy/
 EOF
 ----
 
-We can simply add the content to be served to the default Caddy location and create the final container. If we needed more complex Caddy configurations, we can also created and add a custom Cdddyfile to overfide the defaults in the image.
+We can simply add the content to be served to the default Caddy location and create the final container. If we needed more complex Caddy configurations, we can also create and add a custom Cdddyfile to overfide the defaults in the image.
 
 [source,bash,role=execute]
 ----
-podman build -t my-website -f webserver/Containerfile
+podman build -t my-website -f ~/webserver/Containerfile
 podman run -d --rm --name webserver -p 8080:8080 my-website
 curl http://localhost:8080
 ----
@@ -120,10 +121,10 @@ We can be sure we've got the right images by verifing the signature with a tool 
 
 [[runtimes]]
 === Simple runtime examples
-While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in three variants: `default`, `builder`, and `fips`. The details will vary from image to image, but the `defautl` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant addes to the `default` both rpm and languga specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles. 
-The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in different variants: eg `default`, `builder`, and `fips`. The details will vary from image to image, but the `defautl` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant addes to the `default` both rpm and languga specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles. 
+The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. We'll look at this variant in a later module.
 
-Let's use the `python:builder` image to create a simple Flask application using upstreawm dependencies.
+Let's use the `python:builder` image to create a simple Flask application using upstream dependencies.
 
 
 [source,bash,role=execute]
@@ -175,12 +176,14 @@ if __name__ == "__main__":
 EOF
 ----
 
-This is the same index.html we saw in the `caddy` example, just served via Flask instead of Caddy.
-
+This application is serving the same index.html content we saw in the `caddy` example, just served via a Flask route instead of Caddy.
+We'll ship this application in two ways to explore some differences between the typical container build and one with a hardened image.
 
 == Distroless vs distribution base images
 
-Let's build a comparison image using UBI to see the difference. We'll examine another Python Flask image to see what changes we need to make to move this to a hardened image.
+Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined. https://redhat.atlassian.net/browse/RHEL-144380
+
+Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
 
 [source,bash,role=execute]
 ----
@@ -224,6 +227,7 @@ ENTRYPOINT ["python3", "./app.py"]
 
 EOF
 ----
+<.> Use `dnf` to install RHEL pacakged `pip` for installing dependcies
 <.> Install globally as `root` to skip creating a virtual environment
 <.> Use `--index-url` to use our local artifact repository
 <.> Reset the USER with the provded ENV variable
@@ -233,14 +237,14 @@ Since we're using a local PyPi mirror, we need to make sure `podman` uses the ho
 [source,bash,role=execute]
 ----
 # Build UBI-only version
-podman build --net=host -t my-flasksite:ubi -f flask/Containerfile.ubi
+podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi
 ----
 
 === Examine the changes
 
 The most obvious change is the base image, but there are a few other minor adjustments we need to make.
 
-Our UBI example creates a non-root `appuser` to run the application. The hardened images already provides a default non-root user, so we can skip that step. 
+Our UBI example creates a non-root `appuser` to run the application. The hardened image already provides a default non-root user, so we can skip that step. 
 
 This means we do need to make sure we're running the commands as the correct user for each step however. We can also skip installing `pip` as that's already included in the `default` variant for `python`.
 
@@ -285,15 +289,14 @@ EOF
 ----
 
 <.> Change our base image to the hardened `default` image
-<.> Change the user in `COPY` to the provided default instead of adding `appuser`
+<.> Change the user in `COPY` to the provided default UID instead of adding `appuser`
 <.> Reset the USER with the provded ENV variable
-<.> Standard non-init container configuration
 We can now create the Containerfile to build this application.
 
 
 [source,bash,role=execute]
 ----
-podman build --net=host -t my-flasksite:hi -f flask/Containerfile.hi
+podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi
 podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
 curl http://localhost:8080
 podman stop flask-demo
@@ -328,7 +331,7 @@ Multi-stage builds allow you to separate the final application artifacts from bu
 This will also introduce a new variant, the `builder` image.
 
 [[sample-application]]
-== Create Sample Application
+== Create sample Java application
 
 === Step 4: Scaffold the Project with Quarkus CLI
 
@@ -456,7 +459,7 @@ Not only do all of the `maven` build artifacts stay in the first stage, but so d
 
 [source,bash,role=execute]
 ----
-cat > Containerfile << 'EOF'
+cat > ~/sample-app/Containerfile << 'EOF'
 # Multi-stage build: builder -> runtime
 
 # ============================================
@@ -515,35 +518,18 @@ EOF
 * **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
 * **Security**: Non-root user (65532), proper file ownership with `--chown`
 * **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup
-* **Image Naming**: Hummingbird images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
-
-[IMPORTANT]
-====
-**Why Multi-Stage Builds Matter:**
-
-**Stage 1 (Builder)**:
-* Full UBI OpenJDK 21 image (~435MB) -- includes JDK compiler, Maven, and build tools
-* Downloads dependencies and compiles the application
-* If you shipped this image as-is with your app: ~454MB
-
-**Stage 2 (Runtime)**:
-* Hummingbird OpenJDK 21 runtime base: ~253MB (JRE only -- no compiler, no Maven, no build tools)
-* Final image with app: ~272MB (app layers add ~19MB)
-
-**Result**: ~272MB final image instead of ~454MB -- a **40% size reduction**. The savings come from stripping build tools and the JDK compiler, shipping only the JRE and your application.
-====
+* **Image Naming**: Hardened images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
 
 [[building-image]]
 == Building the Image
 
 === Step 6: Build with Podman
 
-Build your first Hummingbird-based container image:
+Building a multi-stage image with `podman` is no different than any other image. The stages are automatically handled as part of the standard OCI specification.
 
 [source,bash,role=execute]
 ----
-cd ~/sample-app
-podman build -t hummingbird-demo:v1 .
+podman build -t hummingbird-demo:v1 -f  ~/sample-app/Containerfile
 ----
 
 [NOTE]
@@ -636,28 +622,22 @@ podman stop demo
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbird application.
+Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbird applications.
 
 .*What You've Accomplished*
-✅ Verified security tools are available (cosign, syft, grype) +
+✅ Used containerized tools to explore pipeline poosibilities +
+✅ Created a simple website and Flask application +
 ✅ Created a sample Quarkus REST application +
-✅ Wrote a multi-stage Containerfile with UBI builder + Hummingbird runtime +
-✅ Built a container image with Podman CLI (~272MB final size) +
-✅ Tested the running application and verified health endpoint +
-✅ Built the same image using Podman Desktop GUI +
-✅ Understood the build stage vs. runtime stage pattern
+✅ Wrote a multi-stage Containerfile with separate builder + runtime +
+✅ Compared Hardened vs UBI image sizes +
+✅ Tested the running applications and verified health endpoint +
 
 .*Key Takeaways*
 
 **Multi-Stage Build Pattern:**
-* **Stage 1 (Builder)**: Full UBI image (~435MB) with all build tools (JDK, Maven)
-* **Stage 2 (Runtime)**: Hummingbird runtime (~253MB base) with only the JRE
+* **Stage 1 (Builder)**: Hardened image (~435MB) with all build tools (JDK, Maven)
+* **Stage 2 (Runtime)**: Hardened runtime (~253MB base) with only the JRE
 * **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
-
-**Security Tools Available:**
-* **cosign**: Image signing and verification
-* **syft**: SBOM generation for compliance
-* **grype**: Vulnerability scanning
 
 **Best Practices Applied:**
 * Non-root user (UID 65532)
@@ -666,22 +646,8 @@ Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbir
 * Dependency layer caching for faster rebuilds
 * Health endpoints for orchestrator probes
 
-=== Next Sub-Module
-
-Ready to secure your images? Proceed to:
-
-**xref:module-01-02-security.adoc[Sub-Module 1.2: Security Scanning & SBOMs]**
-
-Scan images for CVEs, generate SBOMs, sign images with cosign, and compare Hummingbird vs. UBI image sizes and vulnerability counts.
-
-=== Optional: Multi-Language Builds
-
-Want to see this multi-stage pattern applied to other languages? The optional exercise covers production-ready Containerfiles for Node.js, Quarkus Native, Python (gunicorn + FastAPI), and Go -- each building on the same UBI builder to Hummingbird runtime pattern you used here.
-
-**xref:module-01-06-multi-lang-builds.adoc[Sub-Module 1.6: Multi-Language Builds with Hummingbird (~15 min)]**
-
 === Troubleshooting
-
+https://redhat.atlassian.net/browse/RHEL-144380
 **Issue: Build fails with Maven dependency download errors**
 [source,bash]
 ----

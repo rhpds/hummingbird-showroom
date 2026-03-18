@@ -3,29 +3,15 @@ set -e
 
 # Module 01-02: Security Scanning & SBOMs
 # Auto-generated script from executable bash blocks
+#
+# Note: Registry startup timing and cosign operations require automation for reliable execution
 
-echo "=== Checking prerequisites ==="
-# Verify that hummingbird-demo:v1 exists (created in module 01-01)
-if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hummingbird-demo:v1$"; then
-    echo "ERROR: hummingbird-demo:v1 image not found"
-    echo "Please run module-01-01-solve.sh first to build the required image"
-    exit 1
-fi
 
-# Verify that demo-ubi:v1 exists (created in module 01-01)
-if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/demo-ubi:v1$"; then
-    echo "ERROR: demo-ubi:v1 image not found"
-    echo "Please run module-01-01-solve.sh first to build the required image"
-    exit 1
-fi
-
-echo "Prerequisites met: hummingbird-demo:v1 and demo-ubi:v1 found"
 
 echo "=== Enabling podman socket ==="
 systemctl --user enable --now podman.socket
 
 echo "=== Creating scanning directory ==="
-mkdir -p ~/scanning
 cd ~/scanning
 
 echo "=== Verifying grype and syft installation ==="
@@ -34,6 +20,7 @@ syft version
 
 echo "=== Step 1: Scan Hummingbird image for CVEs ==="
 grype hummingbird-demo:v1
+echo "✅ CVE scan completed"
 
 echo "=== Step 2: Compare with Full UBI Image ==="
 grype demo-ubi:v1 --only-fixed
@@ -43,6 +30,7 @@ syft hummingbird-demo:v1 -o table
 
 echo "=== Step 3: Generate SBOM in SPDX-JSON format ==="
 syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
+echo "✅ SBOM generation completed"
 
 # View package count
 if [ -f hummingbird-demo.spdx ]; then
@@ -60,7 +48,7 @@ podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
 echo "Waiting for registry to be ready..."
 for i in {1..30}; do
     if curl -f -s http://localhost:5000/v2/ > /dev/null 2>&1; then
-        echo "Registry is ready!"
+        echo "✅ Registry is ready!"
         break
     fi
     if [ $i -eq 30 ]; then
@@ -81,7 +69,7 @@ if [ -z "$IMAGE_DIGEST" ]; then
     echo "ERROR: Failed to capture image digest"
     exit 1
 fi
-echo "Image digest: ${IMAGE_DIGEST}"
+echo "✅ Image digest: ${IMAGE_DIGEST}"
 
 echo "=== Step 6: Generate Signing Keys ==="
 # Generate a key pair with empty password for automation
@@ -94,6 +82,7 @@ printf '\n' | cosign sign --yes --key cosign.key \
   --tlog-upload=false \
   --allow-insecure-registry \
   localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+echo "✅ Image signing completed"
 
 echo "=== Step 8: Verify the Signature ==="
 cosign verify --key cosign.pub \
@@ -134,8 +123,15 @@ else
     echo "Could not determine image sizes for calculation"
 fi
 
-echo "=== Step 12: Clean Up Local Registry ==="
-podman stop registry || echo "Registry may already be stopped"
-podman rm registry || echo "Registry may already be removed"
+echo "=== Cleanup ==="
 
-echo "=== All security scanning and signing steps completed successfully! ==="
+echo "Stopping and removing local registry..."
+podman stop registry 2>/dev/null || echo "Registry may already be stopped"
+podman rm registry 2>/dev/null || echo "Registry may already be removed"
+
+echo "=== Summary ==="
+echo "✅ CVE scanning and SBOM generation completed"
+echo "✅ Image signing and attestation completed" 
+echo "✅ Security validation and verification completed"
+echo ""
+echo "=== Module 01-02 completed successfully! ==="
