@@ -7,7 +7,8 @@
 *Prerequisites:* Environment setup complete (see xref:appendix-a-rhel-setup.adoc[Appendix A]) +
 *Learning Objectives:*
 
-* Install security tools (cosign, syft, grype)
+* Basics of hardened images
+* Comparison with existing images
 * Create a sample Quarkus REST application
 * Write multi-stage Containerfiles with UBI builder + Hummingbird runtime
 * Build minimal container images using Podman and Buildah
@@ -20,101 +21,314 @@
 
 In this sub-module, you'll move from running pre-built images to creating your own Hummingbird-based containers. You'll learn the multi-stage build pattern that uses full UBI images for compilation and Hummingbird images for runtime, achieving dramatic size reductions while maintaining functionality.
 
-We'll also install the security tools (cosign, syft, grype) that you'll use extensively in Sub-Module 1.2 for scanning, SBOM generation, and signing.
+[[types]]
+== Available types of hardened images
 
-[[security-tools]]
-== Security Tools Installation
+There are three main categories of images provided in the collection of hardend images: runtimes, services, and tools. Each of these are built in the same fashion but provide different capabitliies.  Runtimes include various langagues like `java`, `python`, and `dotnet` and also have `-builder` variants to allow for complex application tasks. Services include network based applications like `caddy`, `memcached`, and `haproxy` for depoying minimal versions of common services. Tools include things like `git`, `curl`, and `jq` for running a known containerized version in an isolated manner like within a CI pipeline.
 
-Security is a critical part of modern container workflows. Install tools for image signing, SBOM generation, and vulnerability scanning.
 
-=== Step 1: Install Cosign (Image Signing)
+[[services]]
+=== Services and tools
+Let's start by looking at a simple web service with `caddy`.
 
-Cosign is used to sign and verify container images:
+=== Step 1: Create a simple index.html
 
 [source,bash,role=execute]
 ----
-# Install cosign from GitHub releases
-COSIGN_VERSION=v2.4.1
-curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
-sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
-rm cosign-linux-amd64
+mkdir -p ~/webserver
+cat  > ~/webserver/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Hummingbird</title>
+    <!-- Load Tailwind CSS from CDN for instant styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+    <div class="text-center">
+        <h1 class="text-6xl md:text-8xl font-extrabold text-indigo-700 
+                   hover:scale-105 transition duration-300 ease-in-out">
+            Welcome to Red Hat Hardened Images
+        </h1>
+        <p class="mt-4 text-xl text-gray-500">
+            Your simple Caddy server is running!
+        </p>
+        <p class="mt-5 text-xl text-gray-400">
+	    ....everybody loves hummingbirds
+        </p>
+    </div>
+</body>
 
-# Verify installation
-cosign version
+EOF
+----
+
+With our `index.html` ready to serve, we just need a web server. The `caddy` image can be used for this sort of simple testing by running the default container image and passing the directory as a volume mount. 
+
+[source,bash,role=execute]
+----
+podman run -d --rm --name caddy-server \
+  -p 8080:8080 \
+  -v ~/webserver:/usr/share/caddy:ro,Z \
+  quay.io/hummingbird-hatchling/caddy:latest
+curl http://localhost:8080
+podman stop caddy-server
+----
+
+This will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile for your final webserver.
+
+[source,bash,role=execute]
+----
+cat  > ~/webserver/Containerfile << 'EOF'
+FROM quay.io/hummingbird-hatchling/caddy:latest
+
+COPY index.html /usr/share/caddy/
+EOF
+----
+
+We can simply add the content to be served to the default Caddy location and create the final container. If we needed more complex Caddy configurations, we can also created and add a custom Cdddyfile to overfide the defaults in the image.
+
+[source,bash,role=execute]
+----
+podman build -t my-website -f webserver/Containerfile
+podman run -d --rm --name webserver -p 8080:8080 my-website
+curl http://localhost:8080
+----
+
+Network service images are fairly straightforward, but what about tools? Why would we wnat a containerized version of `curl` available?
+
+On the current system, we have `curl` installed as an RPM. But, what if you were building on a system without `curl` and without the privileges to install new packages? This can be a common occurence in CI/CD runners, systems used to build xoftware in a pipeline often with minimal packages installed.
+
+In that case we could run the same test as we did with the local package using a known good and specific version of `curl` via `podman`
+
+[source,bash,role=execute]
+----
+podman run --rm --net=host {hummingbird-registry}/curl:latest http://localhost:8080
+podman stop webserver
+----
+Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of poosibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
+
+Containerized versions of common tools let's us provide a known good, common set of capabitliies to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact sanme tool image instead of requiring local tools.
+We can be sure we've got the right images by verifing the signature with a tool like `cosign`. We'll cover more on that later.
+
+[[runtimes]]
+=== Simple runtime examples
+While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in three variants: `default`, `builder`, and `fips`. The details will vary from image to image, but the `defautl` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant addes to the `default` both rpm and languga specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles. 
+The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+
+Let's use the `python:builder` image to create a simple Flask application using upstreawm dependencies.
+
+
+[source,bash,role=execute]
+----
+mkdir -p ~/flask
+cat  > ~/flask/app.py << 'EOF'
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return """
+    <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Hummingbird</title>
+    <!-- Load Tailwind CSS from CDN for instant styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+    <div class="text-center">
+        <h1 class="text-6xl md:text-8xl font-extrabold text-indigo-700
+                   hover:scale-105 transition duration-300 ease-in-out">
+            Welcome to Project Hummingbird
+        </h1>
+        <p class="mt-4 text-xl text-gray-500">
+            Your simple Flask application is running!
+        </p>
+        <p class="mt-5 text-xl text-gray-400">
+	    ....everybody loves hummingbirds
+        </p>
+    </div>
+</body>
+</html>
+    """
+
+if __name__ == "__main__":
+    # Listen on all interfaces (0.0.0.0) on port 8080
+    app.run(host="0.0.0.0", port=8080)
+EOF
+----
+
+This is the same index.html we saw in the `caddy` example, just served via Flask instead of Caddy.
+
+
+== Distroless vs distribution base images
+
+Let's build a comparison image using UBI to see the difference. We'll examine another Python Flask image to see what changes we need to make to move this to a hardened image.
+
+[source,bash,role=execute]
+----
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > ~/flask/Containerfile.ubi << 'EOF'
+# Stage 1: Base Image from Red Hat UBI
+FROM registry.access.redhat.com/ubi9/ubi
+
+# Install pip to manage application dependencies
+RUN dnf -y install python3-pip && dnf clean all
+
+# Create a non-root user and group for the application
+# Using a different UID/GID to avoid conflict with existing users in the base image.
+RUN groupadd -r -g 1005 appgroup && \
+    useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Ensure ownership is set to the new non-root user
+# COPY always executes as root
+COPY --chown=appuser:appgroup app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install application dependencies
+USER root
+RUN python3 -m pip install --extra-index-url http://localhost:8000 flask 
+
+# Switch to the non-root user for runtime 
+USER appuser
+
+# Expose the port Flask will listen on
+EXPOSE 8080
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python3", "./app.py"]
+
+EOF
+----
+<.> Install globally as `root` to skip creating a virtual environment
+<.> Use `--index-url` to use our local artifact repository
+<.> Reset the USER with the provded ENV variable
+<.> Standard non-init container configuration
+
+Since we're using a local PyPi mirror, we need to make sure `podman` uses the host's networking to access mirror via `localhost`.
+[source,bash,role=execute]
+----
+# Build UBI-only version
+podman build --net=host -t my-flasksite:ubi -f flask/Containerfile.ubi
+----
+
+=== Examine the changes
+
+The most obvious change is the base image, but there are a few other minor adjustments we need to make.
+
+Our UBI example creates a non-root `appuser` to run the application. The hardened images already provides a default non-root user, so we can skip that step. 
+
+This means we do need to make sure we're running the commands as the correct user for each step however. We can also skip installing `pip` as that's already included in the `default` variant for `python`.
+
+We'll demonstrate this by installing the application dependecies globally as `root` instead of working in a virtual environment. This workflow is fine since we're only ever installing one application in this image, but your choice should make the most sense for your applications and environment.
+
+In practice those changes give us the following Containerfile
+
+[source,bash,role=execute]
+----
+# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+cat > ~/flask/Containerfile.hi << 'EOF'
+# Stage 1: Base Image from Project Hummingbird
+FROM quay.io/hummingbird-hatchling/python:3.14
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the application files to the target directory
+# COPY always executes as root
+COPY --chown=65532 app.py .
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Switch to root from the non-root user to install dependcies
+# By default, these install in /tmp/.local for the non-root user 
+USER root
+RUN python3 -m pip install --index-url http://localhost:8000/simple flask 
+
+# Switch to the default non-root user for runtime 
+USER ${CONTAINER_DEFAULT_USER}
+
+# Expose the port Flask will listen on
+EXPOSE 8080
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./app.py"]
+
+EOF
+----
+
+<.> Change our base image to the hardened `default` image
+<.> Change the user in `COPY` to the provided default instead of adding `appuser`
+<.> Reset the USER with the provded ENV variable
+<.> Standard non-init container configuration
+We can now create the Containerfile to build this application.
+
+
+[source,bash,role=execute]
+----
+podman build --net=host -t my-flasksite:hi -f flask/Containerfile.hi
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
+curl http://localhost:8080
+podman stop flask-demo
+----
+Changing existing Containerfiles to use hardened images can be fairly straightforward. To help understand the default settings for hardened images, we https://gitlab.com/redhat/hummingbird/containers/-/blob/main/images/python-3-14/hummingbird/default/compat.md[provide tables] that compare them to upstream versions. 
+This not only includes the properties, but also the reasoning behind any changes.
+
+
+=== Step 9: Examine our two images
+
+List the images just built. Note that the hardened image is about half the size of the UBI based image.
+
+[source,bash,role=execute]
+----
+podman images my-flasksite
 ----
 
 .*Expected output:*
 ----
-cosign version v2.4.1
+REPOSITORY              TAG         IMAGE ID      CREATED            SIZE
+localhost/my-flasksite  hi          7355f3daefdc  About a minute ago  114 MB
+localhost/my-flasksite  ubi         472a6a9ebee8  9 minutes ago       261 MB
 ----
 
-[TIP]
-====
-**Cosign in Production:**
+[[]]
+== Multi-stage builds with hardened images
 
-* **Development**: Generate key pairs locally (as we'll do in this workshop)
-* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
-* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
-====
+Let's create a simple Quarkus REST application that we'll use for a more realistic multi-stage build. Multi-stage builds are the most common pattern we see when using hardeneg images. 
 
-=== Step 2: Install Syft (SBOM Generation)
+Multi-stage builds allow you to separate the final application artifacts from build time components and to choose the smallest runtimes for production. This keeps with the overall goal of minimal images, reduced attack and risk surfaces. Multi-stage builds provide a good blend of flexibility and control.
 
-Syft generates Software Bill of Materials (SBOMs) from container images:
-
-[source,bash,role=execute]
-----
-# Install syft
-SYFT_VERSION=v1.17.0
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
-
-# Verify installation
-syft version
-----
-
-.*Expected output:*
-----
-syft version 1.17.0
-----
-
-[NOTE]
-====
-**What is an SBOM?**
-
-A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
-
-* **Supply chain security**: Know exactly what's in your images
-* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
-* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
-====
-
-=== Step 3: Install Grype (Vulnerability Scanning)
-
-Grype scans container images for known CVEs:
-
-[source,bash,role=execute]
-----
-# Install grype
-GRYPE_VERSION=v0.88.0
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
-
-# Verify installation
-grype version
-----
-
-.*Expected output:*
-----
-grype version 0.88.0
-----
-
-[TIP]
-====
-Grype downloads a vulnerability database on first run. This may take a few minutes initially. The database is cached locally and updated periodically.
-====
+This will also introduce a new variant, the `builder` image.
 
 [[sample-application]]
 == Create Sample Application
-
-Let's create a simple Quarkus REST application that we'll build into a Hummingbird container.
 
 === Step 4: Scaffold the Project with Quarkus CLI
 
@@ -122,8 +336,6 @@ The Quarkus CLI generates the full project structure -- `pom.xml`, Maven wrapper
 
 [source,bash,role=execute]
 ----
-mkdir -p ~/hummingbird-lab
-cd ~/hummingbird-lab
 quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
     --no-code
@@ -236,26 +448,25 @@ EOF
 == Multi-Stage Containerfile
 
 Now let's create the Containerfile that builds our application using the multi-stage pattern.
+The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment. 
+Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
+Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
 
 === Step 7: Create Multi-Stage Containerfile
 
 [source,bash,role=execute]
 ----
 cat > Containerfile << 'EOF'
-# Multi-stage build: UBI builder -> Hummingbird runtime
-
-# Build arguments for registry flexibility
-ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+# Multi-stage build: builder -> runtime
 
 # ============================================
-# Stage 1: Build stage using full UBI image
+# Stage 1: Build stage using builder variant
 # ============================================
-FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
+FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
-RUN microdnf install -y unzip && microdnf clean all
+RUN dnf install -y unzip && dnf clean all
 
 WORKDIR /build
 
@@ -273,18 +484,18 @@ RUN ./mvnw package -DskipTests -B
 # ============================================
 # Stage 2: Runtime stage using Hummingbird
 # ============================================
-FROM ${RUNTIME_REGISTRY}/openjdk:21-runtime
+FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
 
 WORKDIR /app
 
 # Copy the Quarkus fast-jar layout
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/lib/ ./lib/
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/*.jar ./
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/app/ ./app/
-COPY --from=builder --chown=1001:1001 /build/target/quarkus-app/quarkus/ ./quarkus/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 # Run as non-root user
-USER 1001
+USER 65532
 
 # Expose port
 EXPOSE 8080
@@ -299,11 +510,10 @@ EOF
 
 .*Key Points in this Containerfile:*
 
-* **Build Arguments**: `ARG BUILDER_REGISTRY` and `ARG RUNTIME_REGISTRY` allow switching registries without editing the file -- useful for Buildah and air-gapped environments
 * **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
-* **Unzip Installation**: The UBI9 OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
+* **Unzip Installation**: The OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
 * **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
-* **Security**: Non-root user (1001), proper file ownership with `--chown`
+* **Security**: Non-root user (65532), proper file ownership with `--chown`
 * **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup
 * **Image Naming**: Hummingbird images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
 
@@ -332,7 +542,7 @@ Build your first Hummingbird-based container image:
 
 [source,bash,role=execute]
 ----
-cd ~/hummingbird-lab/sample-app
+cd ~/sample-app
 podman build -t hummingbird-demo:v1 .
 ----
 
@@ -358,20 +568,6 @@ COMMIT hummingbird-demo:v1
 Successfully tagged localhost/hummingbird-demo:v1
 ----
 
-=== Step 9: Verify Image Size
-
-Check the size of your built image:
-
-[source,bash,role=execute]
-----
-podman images | grep hummingbird-demo
-----
-
-.*Expected output:*
-----
-localhost/hummingbird-demo  v1  abc123def456  1 minute ago  272 MB
-----
-
 [[testing-application]]
 == Testing the Application
 
@@ -382,7 +578,7 @@ Run the container and test it:
 [source,bash,role=execute]
 ----
 # Run in background
-podman run -d --name demo -p 8080:8080 hummingbird-demo:v1
+podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
 
 # Wait for Quarkus to start
 sleep 5
@@ -435,52 +631,7 @@ Listening on: http://0.0.0.0:8080
 [source,bash,role=execute]
 ----
 podman stop demo
-podman rm demo
 ----
-
-[[podman-desktop-build]]
-== Building with Podman Desktop GUI
-
-Now let's build the same image using Podman Desktop's visual interface.
-
-=== Podman Desktop Example 4: Build Your App on Top of Hummingbird
-
-. Open Podman Desktop
-. Navigate to **Images** tab
-. Click **Build** button in the top-right
-. In the "Build Image" dialog:
-  - **Containerfile path**: Click **Browse** and select `~/hummingbird-lab/sample-app/Containerfile`
-  - **Build context**: Select `~/hummingbird-lab/sample-app` (the directory containing the Containerfile)
-  - **Image name**: `hummingbird-demo:gui-v1`
-  - **Build arguments** (optional):
-    * Add `BUILDER_REGISTRY=registry.access.redhat.com/ubi9`
-    * Add `RUNTIME_REGISTRY=quay.io/hummingbird-hatchling`
-. Click **Build**
-. Monitor build progress in the GUI:
-  - You'll see each Containerfile step execute in real-time
-  - Stage 1 (builder) will show Maven download and build output
-  - Stage 2 (runtime) will show the COPY operations
-. Once complete, the image `hummingbird-demo:gui-v1` will appear in your **Images** list
-
-.*Key Observation:*
-The Podman Desktop build uses the same Podman engine backend as the CLI, so the result is identical. The GUI provides a visual representation of the build process, which can be helpful for learning and debugging.
-
-[[containerfile-editor]]
-=== Containerfile Visual Editor (Optional)
-
-Some versions of Podman Desktop include a Containerfile editor:
-
-. In the **Images** tab, click **Create**
-. Choose **From Containerfile**
-. Use the visual editor to:
-  - View syntax highlighting
-  - See build arguments highlighted
-  - Get linting warnings for common mistakes
-
-[TIP]
-====
-While the visual editor is convenient, most developers prefer using their IDE (VS Code, IntelliJ, etc.) for Containerfile editing, as it provides better syntax highlighting and linting extensions.
-====
 
 [[summary]]
 == Summary
@@ -509,7 +660,7 @@ Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbir
 * **grype**: Vulnerability scanning
 
 **Best Practices Applied:**
-* Non-root user (UID 1001)
+* Non-root user (UID 65532)
 * Minimal runtime image (no build tools, no package managers, no compiler)
 * Proper file ownership with `--chown`
 * Dependency layer caching for faster rebuilds
