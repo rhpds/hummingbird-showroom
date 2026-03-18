@@ -1,4 +1,6 @@
 #! /bin/bash
+dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
+
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
 pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
@@ -33,7 +35,7 @@ rm cosign-linux-amd64
 cosign version
 
 # Install syft
-SYFT_VERSION=v1.42,2
+SYFT_VERSION=v1.42.2
 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
 
 # Verify installation
