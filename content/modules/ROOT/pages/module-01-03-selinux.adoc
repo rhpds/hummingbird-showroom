@@ -30,6 +30,61 @@ One of the common things developers need to deal with is custom SSL certificates
 
 [source,bash,role=execute]
 ----
+vim Caddyfile 
+{
+    http_port 8080
+    https_port 8443
+}
+
+localhost {
+    tls internal
+    root * /usr/share/caddy
+    file_server
+}
+
+vim Containerfile.caddy 
+FROM quay.io/hummingbird/caddy:latest
+
+COPY Caddyfile /etc/caddy/Caddyfile
+
+podman build -t caddy:ssl -f Containerfile.caddy 
+podman run --replace -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+
+podman run --net=host --rm -it curl https://localhost:8443
+
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
+cat root.key root.crt > ca.pem
+
+vim Containerfile.pem
+FROM quay.io/hummingbird/curl:latest-builder as builder
+
+# Copy the certificate to the image
+COPY ca.pem /tmp/
+
+# Temporarily switch to root to add the CA certificate to the trust store
+USER root
+RUN trust anchor /tmp/ca.pem
+USER ${CONTAINER_DEFAULT_USER}
+
+
+# Runtime stage:
+# Copy the trust store from the builder image to the runtime image
+FROM quay.io/hummingbird/curl:latest
+COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
+
+podman build -t curl:local-ca -f Containerfile.pem 
+podman run --net=host --rm -it curl:local-ca https://localhost:8443
+
+----
+
+[[fips]]
+== Baselines for special use cases
+
+In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the FIPS 140-3 standard.
+
+[source,bash,role=execute]
+----
 # Create directory for FIPS testing
 mkdir -p ~/fips
 cd ~/fips
