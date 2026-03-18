@@ -39,14 +39,20 @@ metadata:
 spec:
   parameters:
   - name: DOCKERFILE
+    description: "Path to Containerfile/Dockerfile"
     default: "Containerfile"
   - name: RUNTIME_IMAGE
+    description: "Hummingbird runtime base image"
     default: "quay.io/hummingbird-hatchling/nodejs-20:latest"
 
-  buildSteps:
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+
+  steps:
   - name: build-image
     image: registry.redhat.io/rhel9/buildah:latest
-    workingDir: $(params.shp-source-root)
+    workingDir: $(params.shp-source-context)
     command:
     - /bin/bash
     args:
@@ -61,56 +67,40 @@ spec:
 
       buildah push \
         --storage-driver=vfs \
-        --digestfile /workspace/image-digest \
+        --digestfile='$(results.shp-image-digest.path)' \
         $(params.shp-output-image) \
         docker://$(params.shp-output-image)
     env:
     - name: STORAGE_DRIVER
       value: vfs
-    volumeMounts:
-    - name: $(params.shp-output-directory)
-      mountPath: /var/lib/containers
     securityContext:
       capabilities:
         add: ["SETFCAP"]
 
   - name: generate-sbom
     image: anchore/syft:latest
-    workingDir: $(params.shp-source-root)
+    workingDir: $(params.shp-source-context)
     command:
-    - /bin/sh
+    - /syft
     args:
-    - -c
-    - |
-      echo "=== Generating SBOM ==="
-      syft $(params.shp-output-image) -o spdx-json > /workspace/sbom.json
-      echo "SBOM generated at /workspace/sbom.json"
-      echo ""
-      echo "=== Package Summary ==="
-      syft $(params.shp-output-image) -o table
-    volumeMounts:
-    - name: workspace
-      mountPath: /workspace
+    - "$(params.shp-output-image)"
+    - "-o"
+    - "table"
 
   - name: scan-vulnerabilities
     image: anchore/grype:latest
-    workingDir: $(params.shp-source-root)
+    workingDir: $(params.shp-source-context)
     command:
-    - /bin/sh
+    - /grype
     args:
-    - -c
-    - |
-      echo "=== Scanning image for vulnerabilities ==="
-      grype $(params.shp-output-image) --only-fixed --fail-on high || true
-
-      echo ""
-      echo "=== Vulnerability scan complete ==="
-      echo "Note: In production, remove '|| true' to fail build on high-severity CVEs"
-    continueOnError: true
+    - "$(params.shp-output-image)"
+    - "--only-fixed"
+    - "--fail-on"
+    - "high"
 
   - name: sign-image
-    image: gcr.io/projectsigstore/cosign:latest
-    workingDir: $(params.shp-source-root)
+    image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    workingDir: $(params.shp-source-context)
     command:
     - /bin/sh
     args:
@@ -125,9 +115,6 @@ spec:
       echo "  cosign attest --yes --predicate /workspace/sbom.json --type spdxjson $(params.shp-output-image)"
       echo ""
       echo "For this workshop, signing is demonstrated in Module 1 with local keys"
-    volumeMounts:
-    - name: workspace
-      mountPath: /workspace
 
   volumes:
   - name: workspace
@@ -142,15 +129,18 @@ clusterbuildstrategy.shipwright.io/hummingbird-secure-build created
 
 .*Security features:*
 
-* **SBOM generation**: Complete package inventory in SPDX format
-* **Vulnerability scanning**: Fails build on high-severity CVEs (when enabled)
-* **Image signing**: Framework for cosign integration (demonstrated, not executed in cluster)
+* **SBOM generation**: Complete package inventory via `syft` (table output in build logs)
+* **Vulnerability scanning**: Fails build on high-severity CVEs via `grype` (distroless images -- tools are invoked directly without a shell)
+* **Image signing**: Framework for cosign integration (demonstrated via echo, not executed in cluster)
 
 [NOTE]
 ====
-**Why signing is commented out:**
+**Why syft/grype/cosign are invoked differently:**
+
+The `anchore/syft` and `anchore/grype` container images are distroless -- they do not contain `/bin/sh`. The strategy invokes the tool binaries directly (`/syft`, `/grype`) rather than via a shell script. The sign-image step uses `ubi-minimal` (which has `/bin/sh`) to display the cosign framework commands.
 
 Cosign signing in a cluster requires:
+
 - Keyless signing with OIDC identity OR
 - KMS integration (AWS KMS, Azure Key Vault, etc.) OR
 - Kubernetes secrets with signing keys
@@ -177,7 +167,7 @@ spec:
   source:
     type: Git
     git:
-      url: https://github.com/shipwright-io/sample-nodejs
+      url: https://github.com/tosin2013/sample-nodejs-hummingbird.git
       revision: main
   strategy:
     name: hummingbird-secure-build
@@ -239,20 +229,20 @@ oc logs $TASKRUN -c step-generate-sbom
 
 .*Expected output (excerpt):*
 ----
-=== Generating SBOM ===
- ✔ Loaded image
- ✔ Parsed image
- ✔ Cataloged packages      [42 packages]
-
-SBOM generated at /workspace/sbom.json
-
-=== Package Summary ===
 NAME                 VERSION      TYPE
-express              4.18.2       npm
-accepts              1.3.8        npm
-nodejs               20.18.0      rpm
+accepts              2.0.0        npm
+bash                 5.3.9-3.hum1 rpm
+body-parser          2.2.2        npm
+express              5.2.1        npm
+glibc                2.42-10.1.hum1  rpm
+nodejs20             1:20.20.0-7.hum1  rpm
 ...
 ----
+
+[NOTE]
+====
+Syft is invoked directly (`/syft`) because the `anchore/syft` image is distroless and does not contain a shell. The output is the standard syft table format showing all cataloged packages (npm dependencies and rpm system packages).
+====
 
 === Step 5: View Vulnerability Scan Results
 
@@ -263,18 +253,13 @@ oc logs $TASKRUN -c step-scan-vulnerabilities
 
 .*Expected output for Hummingbird image:*
 ----
-=== Scanning image for vulnerabilities ===
- ✔ Vulnerability DB        [updated]
- ✔ Loaded image
- ✔ Parsed image
- ✔ Cataloged packages      [42 packages]
- ✔ Scanned for vulnerabilities [0 vulnerability matches]
-  ├── 0 critical, 0 high, 0 medium, 0 low, 0 negligible
-  └── 0 fixed
-
-=== Vulnerability scan complete ===
-Note: In production, remove '|| true' to fail build on high-severity CVEs
+No vulnerabilities found
 ----
+
+[NOTE]
+====
+Grype is invoked directly (`/grype`) because the `anchore/grype` image is distroless. The `--fail-on high` flag causes the step to exit non-zero if high-severity CVEs with available fixes are found. With Hummingbird's zero-CVE base image, the scan reports no vulnerabilities.
+====
 
 [IMPORTANT]
 ====
@@ -286,6 +271,11 @@ The scan shows **0 vulnerabilities** in the base image. This is the power of Hum
 === Step 5b: View Clair Scan Results from Quay
 
 Because you pushed the image to the on-cluster Quay registry, Clair has already scanned it automatically. This provides a second layer of vulnerability assessment without any pipeline configuration.
+
+[NOTE]
+====
+The Quay API requires authentication for private repositories. If the API calls below return `401 Unauthorized`, you can view Clair scan results directly in the Quay console at `+https://{workshop-registry}/repository/{registry-user}/secure-nodejs+` under the **Security Scan** tab.
+====
 
 Query the Clair results via the Quay API:
 
@@ -317,11 +307,27 @@ Packages scanned: 15
 Total vulnerabilities: 0
 ----
 
-You can also view the results in the Quay web console:
+Query Clair scan results via the Quay API:
 
-. Open {workshop-registry-console} in your browser
-. Navigate to *{registry-user}/secure-nodejs* -> *Tags*
-. The *Security Scan* column shows the vulnerability count for each tag
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+curl -sk "https://${QUAY_ROUTE}/api/v1/repository/{registry-user}/secure-nodejs/tag/latest/security?vulnerabilities=true" \
+  | jq '{vulnerabilities: ([.data.Layer.Features[]?.Vulnerabilities[]? | select(. != null)] | length), status: .status}'
+----
+
+.*Expected output:*
+----
+{
+  "vulnerabilities": 0,
+  "status": "scanned"
+}
+----
+
+[NOTE]
+====
+If the scan shows `"status": "queued"`, wait 30-60 seconds and retry the query. Clair scanning happens asynchronously after the image is pushed to the registry.
+====
 
 [NOTE]
 ====
@@ -341,6 +347,21 @@ Using both gives you immediate feedback in the pipeline _and_ continuous monitor
 [source,bash,role=execute]
 ----
 oc new-project hummingbird-production
+----
+
+=== Step 6b: Configure Image Pull Credentials
+
+The production namespace needs access to the private Quay registry:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc create secret docker-registry registry-credentials \
+    --docker-server="{workshop-registry}" \
+    --docker-username="{registry-user}" \
+    --docker-password="{registry-password}" \
+    -n hummingbird-production
+
+oc secrets link default registry-credentials --for=pull -n hummingbird-production
 ----
 
 === Step 7: Deploy with Production Security Context
@@ -367,6 +388,8 @@ spec:
       labels:
         app: production-app
     spec:
+      imagePullSecrets:
+      - name: registry-credentials
       containers:
       - name: app
         image: {workshop-registry}/{registry-user}/secure-nodejs:latest
@@ -468,12 +491,12 @@ oc get route production-app -n hummingbird-production
 [source,bash,role=execute]
 ----
 ROUTE=$(oc get route production-app -n hummingbird-production -o jsonpath='{.spec.host}')
-curl https://$ROUTE
+curl -sk https://$ROUTE
 ----
 
 .*Expected output:*
 ----
-Hello World from Node.js!
+{"nodeVersion":"v20.20.0","expressVersion":"5.2.1","v8Version":"...","platform":"linux","architecture":"x64"}
 ----
 
 [TIP]

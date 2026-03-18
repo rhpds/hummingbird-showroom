@@ -65,17 +65,25 @@ spec:
     - name: SPLIT_LAYERS
       description: "Layer count after splitting"
 
+  volumes:
+    - name: container-storage
+      emptyDir: {}
+
+  stepTemplate:
+    volumeMounts:
+      - name: container-storage
+        mountPath: /var/lib/containers
+    securityContext:
+      privileged: true
+
   steps:
     - name: pull-source
-      image: registry.redhat.io/rhel9/buildah:latest
-      securityContext:
-        capabilities:
-          add: ["SETFCAP"]
+      image: registry.redhat.io/rhel9/podman:latest
       script: |
         #!/bin/bash
         set -euo pipefail
         echo "=== Pulling source image: $(params.SOURCE_IMAGE) ==="
-        podman pull "$(params.SOURCE_IMAGE)"
+        podman pull --tls-verify=false "$(params.SOURCE_IMAGE)"
 
         ORIG_LAYERS=$(podman inspect "$(params.SOURCE_IMAGE)" \
           --format '{{len .RootFS.Layers}}')
@@ -83,10 +91,7 @@ spec:
         echo -n "$ORIG_LAYERS" > $(results.ORIGINAL_LAYERS.path)
 
     - name: run-chunkah
-      image: registry.redhat.io/rhel9/buildah:latest
-      securityContext:
-        capabilities:
-          add: ["SETFCAP"]
+      image: registry.redhat.io/rhel9/podman:latest
       script: |
         #!/bin/bash
         set -euo pipefail
@@ -99,11 +104,14 @@ spec:
         export CHUNKAH_CONFIG_STR="$(podman inspect "$SOURCE")"
 
         podman run --rm \
-          --mount=type=image,src="$SOURCE",dest=/chunkah \
+          --mount=type=image,src="$SOURCE",dst=/chunkah \
           -e CHUNKAH_CONFIG_STR \
           "$(params.CHUNKAH_IMAGE)" build \
             --max-layers "$(params.MAX_LAYERS)" \
           | podman load
+
+        LOADED_ID=$(podman images --format '{{.ID}}' --filter dangling=true | head -1)
+        podman tag "$LOADED_ID" "$SOURCE"
 
         SPLIT_LAYERS=$(podman inspect "$SOURCE" \
           --format '{{len .RootFS.Layers}}')
@@ -111,10 +119,7 @@ spec:
         echo -n "$SPLIT_LAYERS" > $(results.SPLIT_LAYERS.path)
 
     - name: push-split-image
-      image: registry.redhat.io/rhel9/buildah:latest
-      securityContext:
-        capabilities:
-          add: ["SETFCAP"]
+      image: registry.redhat.io/rhel9/podman:latest
       script: |
         #!/bin/bash
         set -euo pipefail
@@ -124,14 +129,15 @@ spec:
 
         podman tag "$(params.SOURCE_IMAGE)" "$OUTPUT"
 
-        buildah push \
+        podman push \
+          --tls-verify=false \
           --compression-format zstd:chunked \
           --compression-level 3 \
+          --digestfile /tmp/push-digest \
           "$OUTPUT" \
           "docker://$OUTPUT"
 
-        DIGEST=$(skopeo inspect "docker://$OUTPUT" \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('Digest','unknown'))")
+        DIGEST=$(cat /tmp/push-digest)
 
         echo "Pushed: $OUTPUT"
         echo "Digest: $DIGEST"
@@ -151,10 +157,75 @@ task.tekton.dev/chunkah-split-task created
 oc get task chunkah-split-task -n hummingbird-builds
 ----
 
-[[run-chunkah-task]]
-== Run the chunkah Task
+[[create-chunkah-pipeline]]
+== Create the chunkah Optimization Pipeline
 
-=== Step 3: Create a TaskRun
+=== Step 3: Create the Pipeline
+
+Wrap the Task in a Pipeline so it appears in the OpenShift Pipelines dashboard:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: chunkah-optimization-pipeline
+  namespace: hummingbird-builds
+  labels:
+    app.kubernetes.io/part-of: hummingbird-workshop
+spec:
+  params:
+    - name: SOURCE_IMAGE
+      type: string
+      description: "Source image to split"
+    - name: OUTPUT_IMAGE
+      type: string
+      description: "Output image with optimised layers"
+    - name: MAX_LAYERS
+      type: string
+      description: "Maximum number of layers after splitting"
+      default: "48"
+  results:
+    - name: ORIGINAL_LAYERS
+      description: "Layer count of the original image"
+      value: "$(tasks.split-layers.results.ORIGINAL_LAYERS)"
+    - name: SPLIT_LAYERS
+      description: "Layer count after splitting"
+      value: "$(tasks.split-layers.results.SPLIT_LAYERS)"
+    - name: SPLIT_IMAGE_DIGEST
+      description: "Digest of the chunkah-split image"
+      value: "$(tasks.split-layers.results.SPLIT_IMAGE_DIGEST)"
+  tasks:
+    - name: split-layers
+      taskRef:
+        name: chunkah-split-task
+      params:
+        - name: SOURCE_IMAGE
+          value: "$(params.SOURCE_IMAGE)"
+        - name: OUTPUT_IMAGE
+          value: "$(params.OUTPUT_IMAGE)"
+        - name: MAX_LAYERS
+          value: "$(params.MAX_LAYERS)"
+EOF
+----
+
+.*Expected output:*
+----
+pipeline.tekton.dev/chunkah-optimization-pipeline created
+----
+
+=== Step 4: Verify the Pipeline
+
+[source,bash,role=execute]
+----
+oc get pipeline chunkah-optimization-pipeline -n hummingbird-builds
+----
+
+[[run-chunkah-pipeline]]
+== Run the chunkah Pipeline
+
+=== Step 5: Create a PipelineRun
 
 Run chunkah against the Node.js image built in earlier sub-modules:
 
@@ -162,55 +233,69 @@ Run chunkah against the Node.js image built in earlier sub-modules:
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
-kind: TaskRun
+kind: PipelineRun
 metadata:
   name: chunkah-split-nodejs
   namespace: hummingbird-builds
 spec:
-  taskRef:
-    name: chunkah-split-task
+  pipelineRef:
+    name: chunkah-optimization-pipeline
   params:
     - name: SOURCE_IMAGE
-      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest"
+      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
     - name: OUTPUT_IMAGE
-      value: "{workshop-registry}/{registry-user}/sample-nodejs:latest-chunked"
+      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked"
     - name: MAX_LAYERS
       value: "48"
 EOF
 ----
 
-=== Step 4: Monitor the TaskRun
+=== Step 6: Monitor the PipelineRun
 
 [source,bash,role=execute]
 ----
-oc get taskrun chunkah-split-nodejs -w
+oc get pipelinerun chunkah-split-nodejs -w
 ----
 
 Wait for STATUS to show `True` (Succeeded), then press `Ctrl+C`.
 
-=== Step 5: View Results
+You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds` namespace.
+
+=== Step 7: View Results
 
 [source,bash,role=execute]
 ----
-oc get taskrun chunkah-split-nodejs \
-  -o jsonpath='{.status.results}' | python3 -m json.tool
+oc get pipelinerun chunkah-split-nodejs \
+  -o jsonpath='{.status.pipelineResults}' | python3 -m json.tool
 ----
 
 .*Expected output (example):*
 ----
 [
-    { "name": "ORIGINAL_LAYERS", "value": "4" },
-    { "name": "SPLIT_LAYERS", "value": "28" },
-    { "name": "SPLIT_IMAGE_DIGEST", "value": "sha256:abc123..." }
+    { "name": "ORIGINAL_LAYERS", "value": "34" },
+    { "name": "SPLIT_LAYERS", "value": "37" },
+    { "name": "SPLIT_IMAGE_DIGEST", "value": "sha256:45fd243c..." }
 ]
 ----
+
+NOTE: Hummingbird base images are already built with fine-grained layers (30+), so the increase after chunkah is modest. chunkah restructures layers by RPM package groupings for optimal pull deduplication.
 
 View the detailed logs:
 
 [source,bash,role=execute]
 ----
-oc logs chunkah-split-nodejs -c step-run-chunkah
+oc logs chunkah-split-nodejs-split-layers-pod -c step-run-chunkah
 ----
+
+[TIP]
+====
+If the pod name above doesn't match, find it with:
+
+[source,bash,role=execute]
+----
+oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n hummingbird-builds
+----
+====
 
 [[pipeline-integration]]
 == Exercise 2: Pipeline Integration
@@ -232,7 +317,7 @@ The chunkah Task fits into the build pipeline **after** the image build and **be
 [Cosign Sign] -> [Deploy]
 ----
 
-=== Step 6: Pipeline YAML (Reference)
+=== Step 8: Pipeline YAML (Reference)
 
 In a full pipeline, chunkah is inserted between the build and scan tasks:
 
@@ -297,26 +382,26 @@ The vulnerability scan runs on the **split** image, not the original. Since chun
 [[verify-optimization]]
 == Exercise 3: Verify Layer Optimisation
 
-=== Step 7: Compare Layer Counts
+=== Step 9: Compare Layer Counts
 
 Use `skopeo inspect` to compare the original and split images in the registry:
 
 [source,bash,role=execute,subs="attributes"]
 ----
 echo "=== Original image ==="
-skopeo inspect "docker://{workshop-registry}/{registry-user}/sample-nodejs:latest" 2>/dev/null \
+skopeo inspect --tls-verify=false "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest" 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 
 echo ""
 echo "=== After chunkah ==="
-skopeo inspect "docker://{workshop-registry}/{registry-user}/sample-nodejs:latest-chunked" 2>/dev/null \
+skopeo inspect --tls-verify=false "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked" 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 ----
 
 .*Expected result:*
-The split image will have significantly more layers (20-48 vs 3-4), but the total compressed size will be similar. The benefit appears on subsequent pulls when only changed layers need to be fetched.
+The split image will have more layers than the original. With Hummingbird base images (which already have 30+ fine-grained layers), the increase is modest (e.g. 34 to 37) because chunkah restructures by RPM package groupings. The total compressed size is similar. The benefit appears on subsequent pulls when only changed layers need to be fetched.
 
 [[options-reference]]
 == Options Reference
@@ -430,7 +515,7 @@ podman pull quay.io/jlebon/chunkah:v0.2.0
 **Issue: zstd:chunked push fails**
 [source,bash]
 ----
-buildah --version
+podman --version
 
-buildah push --compression-format zstd:chunked --help
+podman push --help | grep compression
 ----

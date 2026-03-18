@@ -3,23 +3,30 @@
 .*Appendix Overview*
 [sidebar]
 --
-*Purpose:* Prepare an OpenShift {openshift-version} cluster with Shipwright for Module 2 (Platform Engineering) +
+*Purpose:* Prepare an OpenShift {openshift-version} cluster with the full workshop stack for Module 2 (Platform Engineering) +
 *Duration:* 5-20 minutes depending on the option chosen +
 *Required for:* Module 2 labs (Buildpacks, Custom Strategies, Security Pipeline)
 
 *What gets configured:*
 
-* OpenShift cluster access verified
+* OpenShift HA cluster access verified (3+ nodes required)
 * `hummingbird-builds` namespace created
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
+* OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
+* Red Hat Quay operator installed (on-cluster registry with Clair, ODF-backed storage)
+* Red Hat Advanced Cluster Security (ACS) operator installed (for Sub-Module 2.7)
+* Red Hat Trusted Artifact Signer (RHTAS) operator installed (for Sub-Module 2.6)
+* Keycloak `trusted-artifact-signer` realm configured for RHTAS OIDC
+* RHTAS CLI tools (`cosign`, `rekor-cli`, `ec`) installed
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
 * Red Hat Quay on-cluster registry with Clair vulnerability scanning
+* Configurable multi-user workshop support (`NUM_USERS` environment variable)
 * Registry credentials and pipeline ServiceAccount linkage
-* _(Optional)_ Red Hat Advanced Cluster Security (ACS) for Sub-Module 2.7
+* ACS Central, SecuredCluster, and admission control configured
 --
 
-Choose one of the three options below to prepare your OpenShift platform environment. Option 1 is the fastest path.
+Choose one of the options below to prepare your OpenShift platform environment. Option 1 provisions the cluster; then use Option 2 (automated) or Option 3 (manual) to install the workshop components.
 
 [[option-1-rhdp]]
 == Option 1: RHDP Pre-Provisioned Environment (Recommended)
@@ -42,7 +49,7 @@ The **Red Hat Demo Platform (RHDP)** provides a ready-to-use OpenShift {openshif
 
 === After Provisioning
 
-The RHDP OpenShift cluster provides a clean OpenShift {openshift-version} environment. You will still need to install the {shipwright-operator} operator and create the workshop namespace. Use Option 2 (script) or Option 3 (manual steps) below to complete the setup.
+The RHDP OpenShift cluster provides a clean OpenShift {openshift-version} environment. You will still need to install the workshop operators and configure the registry. Use Option 2 (Kustomize bootstrap) or Option 3 (manual steps) below to complete the setup.
 
 Verify your cluster access:
 
@@ -53,170 +60,39 @@ oc version
 oc auth can-i create clusterrole
 ----
 
-[[option-2-script]]
-== Option 2: Automation Script
+[[option-2-kustomize]]
+== Option 2: Kustomize Bootstrap (Full Stack)
 
-Run a single script to install the operator, create the namespace, and verify everything is ready. Requires `oc` CLI with cluster-admin access.
+The `bootstrap/` directory in this repository contains Kustomize overlays that install **all** operators (Pipelines, Builds/Shipwright, Quay, ODF, ACS), deploy NooBaa for S3 object storage, deploy Quay with Clair and ODF-backed storage, deploy ACS with admission control, and configure registry credentials -- all in one run.
 
-You can either download the script and run it, or copy-paste the inline version below.
-
-=== Download and Run
+[IMPORTANT]
+====
+An **HA cluster with 3+ nodes** is required. ODF (OpenShift Data Foundation) provides S3-compatible object storage via NooBaa, which Quay uses for image blob storage. This does not work on Single Node OpenShift (SNO).
+====
 
 [source,bash,role=execute]
 ----
-curl -LO https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/main/content/modules/ROOT/assets/attachments/setup-openshift-platform.sh
-chmod +x setup-openshift-platform.sh
-./setup-openshift-platform.sh
+git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
+cd zero-cve-hummingbird-showroom
+./bootstrap/setup-all.sh
 ----
 
-Or download directly: link:{attachmentsdir}/setup-openshift-platform.sh[setup-openshift-platform.sh^]
+For multi-user workshops, set the `NUM_USERS` environment variable to create multiple Quay accounts and registry credential secrets:
 
-=== Or Copy-Paste Inline
-
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute]
 ----
-bash << 'SETUP_SCRIPT'
-#!/bin/bash
-set -euo pipefail
-
-echo "=== Hummingbird Workshop: OpenShift Platform Setup ==="
-echo ""
-
-# --- Verify Cluster Access ---
-echo "[1/6] Verifying OpenShift cluster access..."
-if ! oc whoami > /dev/null 2>&1; then
-    echo "ERROR: Not logged in to OpenShift. Run: oc login <api-url> -u <user>"
-    exit 1
-fi
-echo "  Logged in as: $(oc whoami)"
-echo "  Server: $(oc whoami --show-server)"
-
-# --- Verify Cluster-Admin ---
-echo "[2/6] Verifying cluster-admin privileges..."
-if ! oc auth can-i create clusterrole > /dev/null 2>&1; then
-    echo "ERROR: cluster-admin privileges required."
-    exit 1
-fi
-echo "  cluster-admin: confirmed"
-
-# --- Create Namespace ---
-echo "[3/6] Creating hummingbird-builds namespace..."
-if oc get project hummingbird-builds > /dev/null 2>&1; then
-    echo "  Namespace already exists, switching to it..."
-    oc project hummingbird-builds
-else
-    oc new-project hummingbird-builds
-fi
-
-# --- Install OpenShift Pipelines (Tekton) ---
-echo "[4/6] Verifying/Installing OpenShift Pipelines (Tekton)..."
-if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
-    echo "  OpenShift Pipelines already installed and running."
-else
-    echo "  Installing OpenShift Pipelines operator..."
-    cat << 'EOF' | oc apply -f -
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: openshift-pipelines-operator
-  namespace: openshift-operators
-spec:
-  channel: latest
-  name: openshift-pipelines-operator-rh
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
-
-    echo "  Waiting for OpenShift Pipelines to become ready (up to 5 minutes)..."
-    for i in $(seq 1 60); do
-        if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
-            echo "  OpenShift Pipelines installed successfully."
-            break
-        fi
-        if [ "$i" -eq 60 ]; then
-            echo "  WARNING: OpenShift Pipelines not yet ready. Check: oc get pods -n openshift-pipelines"
-        fi
-        sleep 5
-    done
-fi
-
-# --- Install Builds Operator ---
-echo "[5/6] Installing Builds for Red Hat OpenShift operator..."
-cat << 'EOF' | oc apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: openshift-builds
----
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: openshift-builds-operator-group
-  namespace: openshift-builds
-spec:
-  targetNamespaces:
-  - openshift-builds
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: openshift-builds-operator
-  namespace: openshift-builds
-spec:
-  channel: stable
-  name: openshift-builds-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
-
-echo "  Waiting for operator to reach Succeeded phase (up to 5 minutes)..."
-for i in $(seq 1 60); do
-    PHASE=$(oc get csv -n openshift-builds -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-    if [ "$PHASE" = "Succeeded" ]; then
-        echo "  Operator installed successfully."
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        echo "  WARNING: Operator not yet in Succeeded phase. Check with: oc get csv -n openshift-builds"
-    fi
-    sleep 5
-done
-
-# --- Verify CRDs ---
-echo "[6/6] Verifying Shipwright CRDs and Tekton..."
-for CRD in builds.shipwright.io buildruns.shipwright.io buildstrategies.shipwright.io clusterbuildstrategies.shipwright.io; do
-    if oc get crd "$CRD" > /dev/null 2>&1; then
-        echo "  $CRD: found"
-    else
-        echo "  $CRD: NOT FOUND (operator may still be installing)"
-    fi
-done
-
-TEKTON_STATUS="unknown"
-if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
-    TEKTON_STATUS="running"
-    echo "  OpenShift Pipelines (Tekton): running"
-else
-    TEKTON_STATUS="not ready"
-    echo "  OpenShift Pipelines (Tekton): NOT READY"
-fi
-
-echo ""
-echo "=== Setup Complete ==="
-echo "Cluster:    $(oc whoami --show-server)"
-echo "User:       $(oc whoami)"
-echo "Namespace:  hummingbird-builds"
-echo "Builds:     $(oc get csv -n openshift-builds -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo 'installing...')"
-echo "Pipelines:  $TEKTON_STATUS"
-echo ""
-echo "Proceed to Module 2 to start the workshop labs."
-SETUP_SCRIPT
+NUM_USERS=10 ./bootstrap/setup-all.sh
 ----
+
+The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
+
+[TIP]
+====
+If the Quay user initialization fails (e.g., on a cluster where Quay was previously deployed), the script will attempt to create the account via the Quay user creation API. If that also fails, open the Quay console URL shown at the end of the script, click **Create Account**, and register with username `workshopuser` and password `workshoppass123`.
+====
 
 [[option-3-manual]]
-== Option 3: Manual Steps
+== Option 3: Manual Steps (Full Stack)
 
 Follow the detailed steps below if you prefer to configure each component individually, or if you need to troubleshoot a specific part of the setup.
 
@@ -306,39 +182,17 @@ In production, you might use separate namespaces for different teams or environm
 [[operator-install]]
 === Operator Installation
 
-Install the {shipwright-operator} operator from OperatorHub.
+Install all five operators (OpenShift Pipelines, Builds/Shipwright, Quay, ODF, ACS) using the Kustomize overlays from the workshop repository.
 
-==== Step 5: Install Operator via CLI
+==== Step 5: Install All Operators via Kustomize
 
-[source,yaml,role=execute]
+Clone the workshop repository (if you haven't already) and apply the operator manifests:
+
+[source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: openshift-builds
----
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: openshift-builds-operator-group
-  namespace: openshift-builds
-spec:
-  targetNamespaces:
-  - openshift-builds
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: openshift-builds-operator
-  namespace: openshift-builds
-spec:
-  channel: stable
-  name: openshift-builds-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
+git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
+cd zero-cve-hummingbird-showroom
+oc apply -k bootstrap/01-operators/
 ----
 
 .*Expected output:*
@@ -346,55 +200,77 @@ EOF
 namespace/openshift-builds created
 operatorgroup.operators.coreos.com/openshift-builds-operator-group created
 subscription.operators.coreos.com/openshift-builds-operator created
+namespace/quay created
+operatorgroup.operators.coreos.com/quay-operator-group created
+subscription.operators.coreos.com/quay-operator created
+subscription.operators.coreos.com/openshift-pipelines-operator-rh created
+namespace/openshift-storage created
+subscription.operators.coreos.com/odf-operator created
+namespace/rhacs-operator created
+operatorgroup.operators.coreos.com/rhacs-operator created
+subscription.operators.coreos.com/rhacs-operator created
 ----
 
 [NOTE]
 ====
-**What these resources do:**
+This single command installs five operators:
 
-* **Namespace**: Dedicated namespace for the operator
-* **OperatorGroup**: Defines which namespaces the operator watches
-* **Subscription**: Tells OpenShift to install and manage the operator from the `stable` channel
+* **OpenShift Pipelines** (Tekton): CI/CD pipeline engine
+* **Builds for Red Hat OpenShift** (Shipwright): Container image build system
+* **Red Hat Quay**: On-cluster container registry with Clair vulnerability scanning
+* **OpenShift Data Foundation** (ODF): S3-compatible object storage via NooBaa for Quay
+* **Red Hat Advanced Cluster Security** (ACS): Vulnerability scanning and admission control
+
+The Kustomize overlays reference the https://github.com/tosin2013/gitops-catalog[gitops-catalog] for Pipelines, ODF, and ACS, and use local manifests for Builds and Quay.
 ====
 
-==== Alternative: Install via Web Console
+==== Step 6: Verify All Operators
 
-If you prefer the GUI:
-
-. Access the OpenShift web console: {openshift-console}
-. Log in with your credentials
-. Navigate to **Operators** -> **OperatorHub**
-. Search for "Builds for Red Hat OpenShift"
-. Click **Install**
-. Select **Automatic** approval strategy
-. Choose namespace: `openshift-builds`
-. Click **Install**
-
-==== Step 6: Verify Operator Installation
-
-Wait for the operator to be ready (this may take 2-3 minutes):
+Wait for each operator to reach the `Succeeded` phase (this may take 3-5 minutes):
 
 [source,bash,role=execute]
 ----
-oc get csv -n openshift-builds -w
-----
+echo "=== Checking Builds operator ==="
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n openshift-builds -l operators.coreos.com/openshift-builds-operator.openshift-builds -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then echo "Builds operator: Succeeded"; break; fi
+    if [ "$i" -eq 60 ]; then echo "WARNING: Builds operator not ready"; fi
+    sleep 5
+done
 
-.*Expected output:*
-----
-NAME                              DISPLAY                          VERSION   PHASE
-openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Installing
-openshift-builds-operator.v1.1.0  Builds for Red Hat OpenShift     1.1.0     Succeeded
-----
+echo "=== Checking Pipelines operator ==="
+if oc get pods -n openshift-pipelines 2>/dev/null | grep -q Running; then
+    echo "OpenShift Pipelines: Running"
+else
+    echo "OpenShift Pipelines: Waiting... (check: oc get pods -n openshift-pipelines)"
+fi
 
-Press `Ctrl+C` to stop watching once you see `Succeeded`.
+echo "=== Checking Quay operator ==="
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n quay -l operators.coreos.com/quay-operator.quay -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then echo "Quay operator: Succeeded"; break; fi
+    if [ "$i" -eq 60 ]; then echo "WARNING: Quay operator not ready"; fi
+    sleep 5
+done
+
+echo "=== Checking ACS operator ==="
+for i in $(seq 1 60); do
+    PHASE=$(oc get csv -n rhacs-operator -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Succeeded" ]; then echo "ACS operator: Succeeded"; break; fi
+    if [ "$i" -eq 60 ]; then echo "WARNING: ACS operator not ready"; fi
+    sleep 5
+done
+----
 
 [TIP]
 ====
-If the operator stays in `Installing` phase for more than 5 minutes, check events:
+If any operator stays in `Installing` phase for more than 5 minutes, check events in its namespace:
 
 [source,bash]
 ----
 oc get events -n openshift-builds --sort-by=.metadata.creationTimestamp
+oc get events -n quay --sort-by=.metadata.creationTimestamp
+oc get events -n rhacs-operator --sort-by=.metadata.creationTimestamp
 ----
 ====
 
@@ -423,61 +299,6 @@ These four CRDs are the foundation of Shipwright:
 * **ClusterBuildStrategy** (cluster-scoped): How to build images across the cluster
 * **Build**: What to build, from where, to where
 * **BuildRun**: Executes a Build
-====
-
-==== Step 8: Install OpenShift Pipelines (Tekton)
-
-Shipwright and Module 2's Tekton-based labs require OpenShift Pipelines. Check if it's already installed:
-
-[source,bash,role=execute]
-----
-oc get pods -n openshift-pipelines
-----
-
-If pods are running, Tekton is already installed and you can skip to Step 9. Otherwise, install it:
-
-[source,yaml,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: openshift-pipelines-operator
-  namespace: openshift-operators
-spec:
-  channel: latest
-  name: openshift-pipelines-operator-rh
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
-----
-
-.*Expected output:*
-----
-subscription.operators.coreos.com/openshift-pipelines-operator created
-----
-
-Wait for OpenShift Pipelines to become ready (2-3 minutes):
-
-[source,bash,role=execute]
-----
-oc get pods -n openshift-pipelines -w
-----
-
-.*Expected output:*
-----
-NAME                                           READY   STATUS    RESTARTS   AGE
-tekton-pipelines-controller-...                1/1     Running   0          2m
-tekton-pipelines-webhook-...                   1/1     Running   0          2m
-tekton-triggers-controller-...                 1/1     Running   0          2m
-----
-
-Press `Ctrl+C` once you see the pods in `Running` state.
-
-[NOTE]
-====
-OpenShift Pipelines may already be installed on some clusters (especially OpenShift 4.19+). The Subscription is idempotent -- applying it when Tekton is already present has no effect.
 ====
 
 [[build-resources]]
@@ -523,7 +344,7 @@ BuildRun: "myapp-build-run-abc123"
   - Image: <on-cluster-quay>/myorg/myapp:latest@sha256:...
 ----
 
-==== Step 9: List Pre-installed BuildStrategies
+==== Step 8: List Pre-installed BuildStrategies
 
 [source,bash,role=execute]
 ----
@@ -543,7 +364,7 @@ source-to-image         5m
 These are starting points provided by the operator. In the Module 2 labs, you'll create custom strategies optimized for Hummingbird runtimes.
 ====
 
-==== Step 10: Inspect a BuildStrategy
+==== Step 9: Inspect a BuildStrategy
 
 Examine the `buildah` strategy that comes pre-installed:
 
@@ -562,6 +383,650 @@ oc get clusterbuildstrategy buildah -o yaml | head -50
 ====
 BuildStrategies use **Tekton Task** syntax. Each step runs in a container with specific tools (buildah, git, etc.). This is how Shipwright integrates with the OpenShift Pipelines ecosystem.
 ====
+
+[[quay-setup]]
+=== Red Hat Quay On-Cluster Registry Setup
+
+All Module 2 labs push built images to an on-cluster Quay registry. Quay provides validated TLS via the OpenShift ingress, integrated Clair vulnerability scanning, and a web console for browsing repositories and scan results.
+
+[NOTE]
+====
+The Quay operator was already installed in Step 5. The following steps deploy and configure the Quay registry instance.
+====
+
+==== Step 10: Deploy NooBaa for Quay Object Storage
+
+ODF provides S3-compatible object storage via NooBaa. Deploy a standalone NooBaa instance that Quay will use for image blob storage:
+
+[source,bash,role=execute]
+----
+oc create namespace openshift-storage 2>/dev/null || true
+oc apply -k bootstrap/02a-odf-noobaa/
+----
+
+Wait for NooBaa to become ready:
+
+[source,bash,role=execute]
+----
+echo "Waiting for NooBaa..."
+for i in $(seq 1 60); do
+    PHASE=$(oc get noobaa noobaa -n openshift-storage -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+    if [ "$PHASE" = "Ready" ]; then echo "NooBaa: Ready"; break; fi
+    echo "  Phase: ${PHASE} (${i}/60)"
+    sleep 5
+done
+----
+
+==== Step 11: Create Quay Configuration Bundle
+
+Create a configuration secret for the Quay registry. With ODF providing object storage, no manual storage configuration is needed:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-config-bundle
+  namespace: quay
+stringData:
+  config.yaml: |
+    FEATURE_USER_INITIALIZE: true
+    CREATE_PRIVATE_REPO_ON_PUSH: true
+    CREATE_NAMESPACE_ON_PUSH: true
+    SUPER_USERS:
+      - workshopuser
+EOF
+----
+
+[NOTE]
+====
+`CREATE_PRIVATE_REPO_ON_PUSH` and `CREATE_NAMESPACE_ON_PUSH` allow Shipwright builds to push images without manually pre-creating repositories in Quay. Storage is handled automatically by ODF/NooBaa via the `objectstorage: managed: true` setting in the QuayRegistry CR.
+====
+
+==== Step 12: Deploy QuayRegistry Instance
+
+Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle dependencies (PostgreSQL, Redis, Clair, object storage via ODF) automatically:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: quay.redhat.com/v1
+kind: QuayRegistry
+metadata:
+  name: quay-registry
+  namespace: quay
+spec:
+  configBundleSecret: quay-config-bundle
+  components:
+    - kind: clair
+      managed: true
+    - kind: postgres
+      managed: true
+    - kind: redis
+      managed: true
+    - kind: objectstorage
+      managed: true
+    - kind: route
+      managed: true
+    - kind: tls
+      managed: true
+    - kind: horizontalpodautoscaler
+      managed: false
+    - kind: mirror
+      managed: false
+    - kind: monitoring
+      managed: false
+EOF
+----
+
+[NOTE]
+====
+Setting `objectstorage: managed: true` tells the Quay operator to automatically create an `ObjectBucketClaim` using ODF/NooBaa for S3-compatible blob storage. This eliminates the LocalStorage limitations (single-replica requirement, ephemeral data). Setting `tls: managed: true` means OpenShift provisions TLS certificates via the cluster ingress CA. All clients that trust the cluster CA (including pods running inside the cluster) can push and pull over HTTPS without `--tls-verify=false`.
+====
+
+Wait for Quay to become ready (this typically takes 3-5 minutes):
+
+[source,bash,role=execute]
+----
+echo "Waiting for Quay registry pods..."
+oc wait --for=condition=Available deployment -l quay-operator/quayregistry=quay-registry -n quay --timeout=300s 2>/dev/null || \
+  echo "Still starting -- check: oc get pods -n quay"
+----
+
+==== Step 12: Get the Quay Registry Route
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route quay-registry-quay-quay -n {quay-namespace} -o jsonpath='{.spec.host}' 2>/dev/null || \
+  oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+echo "Quay registry: $QUAY_ROUTE"
+echo "Quay console:  https://$QUAY_ROUTE"
+----
+
+[TIP]
+====
+Bookmark the Quay console URL. You will use it throughout Module 2 to browse repositories, inspect image tags, and view Clair vulnerability scan results.
+====
+
+==== Step 13: Create a Workshop User
+
+Create a Quay user account for the workshop via the API:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "workshopuser",
+    "password": "workshoppass123",
+    "email": "workshop@example.com",
+    "access_token": true
+  }' | python3 -m json.tool
+----
+
+[NOTE]
+====
+The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns `"Cannot initialize user in a non-empty database"`, the first user was already created. In that case, open the Quay console in your browser:
+
+[source,bash,role=execute,subs="attributes"]
+----
+echo "https://$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')"
+----
+
+Click **Create Account** at the bottom of the login page and register with:
+
+* **Username:** `{registry-user}`
+* **Password:** `{registry-password}`
+* **Email:** `workshop@example.com`
+
+image::module-02/quay-create-account.png[Quay Create Account page,500,align="center"]
+
+After creating the account you will be logged in and see the Repositories dashboard:
+
+image::module-02/quay-repositories-dashboard.png[Quay Repositories dashboard,700,align="center"]
+====
+
+==== Step 14: Create Registry Credentials Secret
+
+Create the `registry-credentials` secret that all Module 2 labs reference for pushing images:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+oc create secret docker-registry registry-credentials \
+  --docker-server="${QUAY_ROUTE}" \
+  --docker-username={registry-user} \
+  --docker-password={registry-password} \
+  -n hummingbird-builds
+----
+
+.*Expected output:*
+----
+secret/registry-credentials created
+----
+
+==== Step 15: Link Secret to Pipeline ServiceAccount
+
+[source,bash,role=execute]
+----
+oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
+----
+
+[NOTE]
+====
+The `pipeline` ServiceAccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns. Linking the secret allows builds to push images to the on-cluster Quay registry.
+====
+
+==== Step 16: Verify Registry Access
+
+Confirm you can authenticate to the on-cluster Quay registry:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
+
+podman login "${QUAY_ROUTE}" \
+  --username={registry-user} \
+  --password={registry-password}
+----
+
+.*Expected output:*
+----
+Login Succeeded!
+----
+
+[IMPORTANT]
+====
+Notice that no `--tls-verify=false` flag is needed. The on-cluster Quay registry uses TLS certificates issued by the OpenShift cluster ingress CA, which Podman trusts automatically when running on a cluster node or when the cluster CA has been added to the local trust store.
+====
+
+Quay includes **Clair** as its built-in vulnerability scanner. Every image pushed to the registry is automatically scanned for CVEs. You do not need to install or configure Clair separately -- it was deployed as part of the QuayRegistry CR above (`clair: managed: true`).
+
+You will use Clair scan results in xref:module-02-03-security-pipeline.adoc[Sub-Module 2.3] alongside the grype-based pipeline scanning.
+
+To verify Clair is running:
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc get pods -n {quay-namespace} -l quay-component=clair-app
+----
+
+.*Expected output:*
+----
+NAME                                          READY   STATUS    RESTARTS   AGE
+quay-registry-clair-app-...                   1/1     Running   0          ...
+----
+
+[[acs-setup]]
+=== Red Hat Advanced Cluster Security (ACS) Setup
+
+[NOTE]
+====
+This section is only required if you plan to complete **xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**. You can skip it for all other Module 2 labs.
+====
+
+Red Hat Advanced Cluster Security for Kubernetes (RHACS) provides vulnerability scanning, policy enforcement, and admission control. Sub-Module 2.7 uses ACS to enforce a zero-CVE posture on the cluster.
+
+[NOTE]
+====
+The ACS operator was already installed in Step 5. The following steps deploy and configure the ACS Central and SecuredCluster instances.
+====
+
+==== Step 17: Deploy ACS Central
+
+Create the Central custom resource, which deploys the ACS management console and scanner:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stackrox
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: Central
+metadata:
+  name: stackrox-central-services
+  namespace: stackrox
+spec:
+  central:
+    exposure:
+      loadBalancer:
+        enabled: false
+      route:
+        enabled: true
+    persistence:
+      persistentVolumeClaim:
+        claimName: stackrox-db
+  scanner:
+    analyzer:
+      scaling:
+        autoScaling: Enabled
+        maxReplicas: 3
+        minReplicas: 1
+        replicas: 1
+    scannerComponent: Enabled
+EOF
+----
+
+[NOTE]
+====
+The `stackrox` namespace is created here for the ACS instance resources. The ACS **operator** itself runs in the `rhacs-operator` namespace (installed in Step 5).
+====
+
+Wait for Central to become ready (this typically takes 3-5 minutes):
+
+[source,bash,role=execute]
+----
+echo "Waiting for ACS Central pods..."
+oc wait --for=condition=Available deployment/central -n stackrox --timeout=300s
+----
+
+==== Step 18: Retrieve the ACS Admin Password
+
+[source,bash,role=execute]
+----
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+echo "ACS Central admin password: $ACS_PASSWORD"
+----
+
+[IMPORTANT]
+====
+Save this password -- you will need it to log in to ACS Central and to generate API tokens for `roxctl`.
+====
+
+==== Step 19: Access ACS Central
+
+[source,bash,role=execute,subs="attributes"]
+----
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+echo "ACS Central URL: https://$ACS_ROUTE"
+----
+
+Open the URL in your browser and log in with username `admin` and the password from Step 18.
+
+==== Step 20: Generate Cluster Init Bundle
+
+The SecuredCluster requires TLS secrets (an init bundle) to authenticate with Central. Generate and apply the bundle via the Central API:
+
+[source,bash,role=execute]
+----
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+
+curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/v1/cluster-init/init-bundles" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"name": "workshop-cluster-init-bundle"}' \
+  | python3 -c "import json,base64,sys; d=json.load(sys.stdin); open('/tmp/init-bundle.yaml','w').write(base64.b64decode(d['kubectlBundle']).decode())"
+
+oc apply -f /tmp/init-bundle.yaml -n stackrox
+rm -f /tmp/init-bundle.yaml
+----
+
+.*Expected output:*
+----
+secret/collector-tls created
+secret/sensor-tls created
+secret/admission-control-tls created
+----
+
+[IMPORTANT]
+====
+Without the init bundle, the SecuredCluster will remain stuck in an `Irreconcilable` state with the message "init-bundle secrets missing". This step must be completed before deploying the SecuredCluster.
+====
+
+==== Step 21: Deploy the Secured Cluster Services
+
+Create the SecuredCluster CR:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: platform.stackrox.io/v1alpha1
+kind: SecuredCluster
+metadata:
+  name: stackrox-secured-cluster-services
+  namespace: stackrox
+spec:
+  clusterName: workshop-cluster
+  admissionControl:
+    listenOnCreates: true
+    listenOnUpdates: true
+    listenOnEvents: true
+    contactImageScanners: ScanIfMissing
+    timeoutSeconds: 20
+    bypass: BreakGlassAnnotation
+  perNode:
+    collector:
+      collection: EBPF
+      imageFlavor: Regular
+    taintToleration: TolerateTaints
+EOF
+----
+
+Wait for the admission controller to start:
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=Available deployment/admission-control -n stackrox --timeout=300s
+----
+
+==== Step 22: Install the roxctl CLI
+
+[source,bash,role=execute]
+----
+ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+
+curl -sk "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
+chmod +x roxctl
+sudo mv roxctl /usr/local/bin/
+
+roxctl version
+----
+
+==== Step 23: Verify ACS Installation
+
+[source,bash,role=execute]
+----
+oc get pods -n stackrox
+----
+
+.*Expected output:*
+----
+NAME                                 READY   STATUS    RESTARTS   AGE
+admission-control-...                1/1     Running   0          ...
+central-...                          1/1     Running   0          ...
+collector-...                        2/2     Running   0          ...
+scanner-...                          1/1     Running   0          ...
+scanner-db-...                       1/1     Running   0          ...
+sensor-...                           1/1     Running   0          ...
+----
+
+Verify the admission controller webhook is registered:
+
+[source,bash,role=execute]
+----
+oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
+----
+
+.*Expected output:*
+----
+NAME                         WEBHOOKS   AGE
+stackrox-validating-webhook  1          ...
+----
+
+[TIP]
+====
+If the webhook does not appear, check that `listenOnCreates` is set to `true` in the SecuredCluster spec and that the admission controller pod is running.
+====
+
+Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress].
+
+[[rhtas-setup]]
+=== Red Hat Trusted Artifact Signer (RHTAS) Setup
+
+[NOTE]
+====
+This section is only required if you plan to complete **xref:module-02-06-rhtas.adoc[Sub-Module 2.6: Keyless Signing with RHTAS]**. You can skip it for all other Module 2 labs.
+====
+
+Red Hat Trusted Artifact Signer (RHTAS) provides keyless signing infrastructure for container images using the Sigstore project. It deploys Fulcio (certificate authority), Rekor (transparency log), CTlog (certificate transparency), and TUF (trust root distribution) on-cluster.
+
+[NOTE]
+====
+If you used Option 2 (Kustomize Bootstrap), the RHTAS operator and Keycloak realm were installed automatically. Verify them with the steps below and skip to <<rhtas-cli-tools>>.
+====
+
+==== Step 24: Install the RHTAS Operator
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trusted-artifact-signer
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhtas-operator-group
+  namespace: trusted-artifact-signer
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhtas-operator
+  namespace: trusted-artifact-signer
+spec:
+  channel: stable
+  name: rhtas-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+.*Expected output:*
+----
+namespace/trusted-artifact-signer created
+operatorgroup.operators.coreos.com/rhtas-operator-group created
+subscription.operators.coreos.com/rhtas-operator created
+----
+
+Wait for the operator to install (2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=AtLatestKnown subscription/rhtas-operator \
+  -n trusted-artifact-signer --timeout=300s
+
+oc get csv -n trusted-artifact-signer
+----
+
+.*Expected output:*
+----
+NAME                    DISPLAY                              VERSION   REPLACES   PHASE
+rhtas-operator.v1.x.x   Red Hat Trusted Artifact Signer      1.x.x                Succeeded
+----
+
+==== Step 25: Create the Keycloak Realm for RHTAS
+
+The RHTAS Fulcio service needs an OIDC issuer for human user signing. Create a `trusted-artifact-signer` realm in Keycloak:
+
+[source,yaml,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: KeycloakRealmImport
+metadata:
+  name: trusted-artifact-signer
+  namespace: keycloak
+spec:
+  keycloakCRName: keycloak
+  realm:
+    id: trusted-artifact-signer
+    realm: trusted-artifact-signer
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: true
+    duplicateEmailsAllowed: false
+    sslRequired: external
+    clients:
+      - clientId: trusted-artifact-signer
+        clientAuthenticatorType: client-secret
+        enabled: true
+        publicClient: true
+        protocol: openid-connect
+        directAccessGrantsEnabled: true
+        standardFlowEnabled: true
+        frontchannelLogout: false
+        redirectUris:
+          - "*"
+        webOrigins:
+          - "*"
+    roles:
+      realm:
+        - name: user
+          description: Default user role
+    users:
+      - username: sigstore-user
+        email: sigstore@example.com
+        emailVerified: true
+        enabled: true
+        credentials:
+          - type: password
+            value: sigstore-user
+            temporary: false
+        realmRoles:
+          - user
+EOF
+----
+
+.*Expected output:*
+----
+keycloakrealmimport.k8s.keycloak.org/trusted-artifact-signer created
+----
+
+Wait for the realm import to complete:
+
+[source,bash,role=execute]
+----
+for i in $(seq 1 30); do
+    STATUS=$(oc get keycloakrealmimport trusted-artifact-signer -n keycloak \
+      -o jsonpath='{.status.conditions[?(@.type=="Done")].status}' 2>/dev/null || echo "Pending")
+    if [ "$STATUS" = "True" ]; then echo "Keycloak realm: Ready"; break; fi
+    echo "  Status: ${STATUS} (${i}/30)"
+    sleep 5
+done
+----
+
+Verify the realm is accessible:
+
+[source,bash,role=execute]
+----
+KEYCLOAK_URL=$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')
+curl -sk "https://${KEYCLOAK_URL}/realms/trusted-artifact-signer/.well-known/openid-configuration" | python3 -m json.tool | head -5
+----
+
+[[rhtas-cli-tools]]
+==== Step 26: Download RHTAS CLI Tools
+
+After the RHTAS operator is installed, download `cosign`, `rekor-cli`, and `ec` (Enterprise Contract) from the operator's clientserver route:
+
+[source,bash,role=execute]
+----
+DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
+  -l app=trusted-artifact-signer-clientserver \
+  -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
+
+if [ -z "$DOWNLOADS_URL" ]; then
+    echo "RHTAS clientserver route not yet available. Waiting..."
+    for i in $(seq 1 30); do
+        DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
+          -l app=trusted-artifact-signer-clientserver \
+          -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
+        if [ -n "$DOWNLOADS_URL" ]; then break; fi
+        sleep 10
+    done
+fi
+
+echo "Downloads URL: https://${DOWNLOADS_URL}"
+
+# Download cosign
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/cosign-amd64.gz" -o cosign-amd64.gz
+gunzip cosign-amd64.gz && chmod +x cosign-amd64
+sudo mv cosign-amd64 /usr/local/bin/cosign
+
+# Download rekor-cli
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/rekor-cli-amd64.gz" -o rekor-cli-amd64.gz
+gunzip rekor-cli-amd64.gz && chmod +x rekor-cli-amd64
+sudo mv rekor-cli-amd64 /usr/local/bin/rekor-cli
+
+# Download ec (Enterprise Contract CLI)
+curl -sSL "https://${DOWNLOADS_URL}/clients/linux/ec-amd64.gz" -o ec-amd64.gz
+gunzip ec-amd64.gz && chmod +x ec-amd64
+sudo mv ec-amd64 /usr/local/bin/ec
+
+# Verify installations
+cosign version
+rekor-cli version
+ec version
+----
+
+[NOTE]
+====
+The RHTAS operator serves CLI binaries that are version-matched to the deployed Sigstore stack. Always use these binaries rather than downloading from upstream to ensure compatibility. If the clientserver route is not yet available, wait 1-2 minutes for the operator to finish initializing.
+====
+
+Your RHTAS environment is ready. Proceed to xref:module-02-06-rhtas.adoc[Sub-Module 2.6: Keyless Signing with RHTAS].
 
 [[additional-resources]]
 === Additional Resources
@@ -601,460 +1066,48 @@ oc auth can-i create clusterbuildstrategy
 oc auth can-i '*' '*' --all-namespaces
 ----
 
-[[quay-setup]]
-== Red Hat Quay On-Cluster Registry Setup
-
-All Module 2 labs push built images to an on-cluster Quay registry. Quay provides validated TLS via the OpenShift ingress, integrated Clair vulnerability scanning, and a web console for browsing repositories and scan results.
-
-=== Step 1: Install the Quay Operator
-
-[source,yaml,role=execute]
+**Issue: Quay pods not starting**
+[source,bash]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: quay
----
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: quay-operator-group
-  namespace: quay
-spec:
-  targetNamespaces:
-  - quay
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: quay-operator
-  namespace: quay
-spec:
-  channel: stable-3.13
-  name: quay-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
+oc get pods -n quay
+
+oc get events -n quay --sort-by=.metadata.creationTimestamp
+
+oc get quayregistry -n quay -o yaml
 ----
 
-.*Expected output:*
+**Issue: ACS SecuredCluster stuck in Irreconcilable**
+[source,bash]
 ----
-namespace/quay created
-operatorgroup.operators.coreos.com/quay-operator-group created
-subscription.operators.coreos.com/quay-operator created
-----
+oc get securedcluster -n stackrox -o yaml
 
-Wait for the operator to reach the `Succeeded` phase:
-
-[source,bash,role=execute]
-----
-echo "Waiting for Quay operator..."
-for i in $(seq 1 60); do
-    PHASE=$(oc get csv -n quay -l operators.coreos.com/quay-operator.quay -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-    if [ "$PHASE" = "Succeeded" ]; then
-        echo "Quay operator installed successfully."
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        echo "WARNING: Operator not yet ready. Check: oc get csv -n quay"
-    fi
-    sleep 5
-done
+oc get secret sensor-tls -n stackrox
 ----
 
-=== Step 2: Deploy QuayRegistry Instance
+If `sensor-tls` does not exist, the init bundle was not applied. Return to Step 20 to generate and apply it.
 
-Create a QuayRegistry custom resource. The `managed` configuration lets the operator handle all dependencies (PostgreSQL, Redis, object storage, Clair) automatically:
-
-[source,yaml,role=execute]
+**Issue: RHTAS operator not installing**
+[source,bash]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: quay.redhat.com/v1
-kind: QuayRegistry
-metadata:
-  name: quay-registry
-  namespace: quay
-spec:
-  configBundleSecret: quay-config-bundle
-  components:
-    - kind: clair
-      managed: true
-    - kind: postgres
-      managed: true
-    - kind: redis
-      managed: true
-    - kind: objectstorage
-      managed: true
-    - kind: route
-      managed: true
-    - kind: tls
-      managed: true
-    - kind: horizontalpodautoscaler
-      managed: true
-    - kind: mirror
-      managed: false
-    - kind: monitoring
-      managed: false
-EOF
+oc get csv -n trusted-artifact-signer
+
+oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
 ----
 
-[NOTE]
-====
-Setting `tls: managed: true` means OpenShift provisions TLS certificates via the cluster ingress CA. All clients that trust the cluster CA (including pods running inside the cluster) can push and pull over HTTPS without `--tls-verify=false`.
-====
-
-Wait for Quay to become ready (this typically takes 3-5 minutes):
-
-[source,bash,role=execute]
+**Issue: RHTAS clientserver route not available**
+[source,bash]
 ----
-echo "Waiting for Quay registry pods..."
-oc wait --for=condition=Available deployment -l quay-operator/quayregistry=quay-registry -n quay --timeout=300s 2>/dev/null || \
-  echo "Still starting -- check: oc get pods -n quay"
+oc get route -n trusted-artifact-signer
+
+oc get pods -n trusted-artifact-signer
 ----
 
-=== Step 3: Get the Quay Registry Route
+The clientserver pod must be running before CLI tools can be downloaded. Wait for the operator to finish initialization.
 
-[source,bash,role=execute,subs="attributes"]
+**Issue: Keycloak realm import failing**
+[source,bash]
 ----
-QUAY_ROUTE=$(oc get route quay-registry-quay-quay -n {quay-namespace} -o jsonpath='{.spec.host}' 2>/dev/null || \
-  oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-echo "Quay registry: $QUAY_ROUTE"
-echo "Quay console:  https://$QUAY_ROUTE"
+oc get keycloakrealmimport trusted-artifact-signer -n keycloak -o yaml
+
+oc logs -l app=keycloak -n keycloak --tail=50
 ----
-
-[TIP]
-====
-Bookmark the Quay console URL. You will use it throughout Module 2 to browse repositories, inspect image tags, and view Clair vulnerability scan results.
-====
-
-=== Step 4: Create a Workshop User and Organisation
-
-Create a Quay user account for the workshop via the API:
-
-[source,bash,role=execute,subs="attributes"]
-----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
-curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "username": "workshopuser",
-    "password": "workshoppass123",
-    "email": "workshop@example.com",
-    "access_token": true
-  }' | python3 -m json.tool
-----
-
-[NOTE]
-====
-The `/api/v1/user/initialize` endpoint only works when Quay has no existing users (fresh install). If it returns an error, the first user was already created. Log in to the Quay console to create additional users or organisations manually.
-====
-
-=== Step 5: Create Registry Credentials Secret
-
-Create the `registry-credentials` secret that all Module 2 labs reference for pushing images:
-
-[source,bash,role=execute,subs="attributes"]
-----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
-oc create secret docker-registry registry-credentials \
-  --docker-server="${QUAY_ROUTE}" \
-  --docker-username={registry-user} \
-  --docker-password={registry-password} \
-  -n hummingbird-builds
-----
-
-.*Expected output:*
-----
-secret/registry-credentials created
-----
-
-=== Step 6: Link Secret to Pipeline ServiceAccount
-
-[source,bash,role=execute]
-----
-oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
-----
-
-[NOTE]
-====
-The `pipeline` ServiceAccount is created automatically by OpenShift Pipelines and is used by all Tekton-based builds, including Shipwright BuildRuns. Linking the secret allows builds to push images to the on-cluster Quay registry.
-====
-
-=== Step 7: Verify Registry Access
-
-Confirm you can authenticate to the on-cluster Quay registry:
-
-[source,bash,role=execute,subs="attributes"]
-----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
-podman login "${QUAY_ROUTE}" \
-  --username={registry-user} \
-  --password={registry-password}
-----
-
-.*Expected output:*
-----
-Login Succeeded!
-----
-
-[IMPORTANT]
-====
-Notice that no `--tls-verify=false` flag is needed. The on-cluster Quay registry uses TLS certificates issued by the OpenShift cluster ingress CA, which Podman trusts automatically when running on a cluster node or when the cluster CA has been added to the local trust store.
-====
-
-=== Clair Vulnerability Scanning
-
-Quay includes **Clair** as its built-in vulnerability scanner. Every image pushed to the registry is automatically scanned for CVEs. You do not need to install or configure Clair separately -- it was deployed as part of the QuayRegistry CR above (`clair: managed: true`).
-
-You will use Clair scan results in xref:module-02-03-security-pipeline.adoc[Sub-Module 2.3] alongside the grype-based pipeline scanning.
-
-To verify Clair is running:
-
-[source,bash,role=execute,subs="attributes"]
-----
-oc get pods -n {quay-namespace} -l quay-component=clair-app
-----
-
-.*Expected output:*
-----
-NAME                                          READY   STATUS    RESTARTS   AGE
-quay-registry-clair-app-...                   1/1     Running   0          ...
-----
-
-[[acs-setup]]
-== Optional: Red Hat Advanced Cluster Security (ACS) Setup
-
-[NOTE]
-====
-This section is only required if you plan to complete **xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**. You can skip it for all other Module 2 labs.
-====
-
-Red Hat Advanced Cluster Security for Kubernetes (RHACS) provides vulnerability scanning, policy enforcement, and admission control. Sub-Module 2.7 uses ACS to enforce a zero-CVE posture on the cluster.
-
-=== Step 1: Install the ACS Operator
-
-[source,yaml,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: stackrox
----
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: rhacs-operator-group
-  namespace: stackrox
-spec:
-  targetNamespaces:
-  - stackrox
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: rhacs-operator
-  namespace: stackrox
-spec:
-  channel: stable
-  name: rhacs-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
-EOF
-----
-
-.*Expected output:*
-----
-namespace/stackrox created
-operatorgroup.operators.coreos.com/rhacs-operator-group created
-subscription.operators.coreos.com/rhacs-operator created
-----
-
-Wait for the operator to reach the `Succeeded` phase:
-
-[source,bash,role=execute]
-----
-echo "Waiting for ACS operator..."
-for i in $(seq 1 60); do
-    PHASE=$(oc get csv -n stackrox -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-    if [ "$PHASE" = "Succeeded" ]; then
-        echo "ACS operator installed successfully."
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        echo "WARNING: Operator not yet ready. Check: oc get csv -n stackrox"
-    fi
-    sleep 5
-done
-----
-
-=== Step 2: Deploy ACS Central
-
-Create the Central custom resource, which deploys the ACS management console and scanner:
-
-[source,yaml,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: platform.stackrox.io/v1alpha1
-kind: Central
-metadata:
-  name: stackrox-central-services
-  namespace: stackrox
-spec:
-  central:
-    exposure:
-      loadBalancer:
-        enabled: false
-      route:
-        enabled: true
-    persistence:
-      persistentVolumeClaim:
-        claimName: stackrox-db
-  scanner:
-    analyzer:
-      scaling:
-        autoScaling: Enabled
-        maxReplicas: 3
-        minReplicas: 1
-        replicas: 1
-    scannerComponent: Enabled
-EOF
-----
-
-Wait for Central to become ready (this typically takes 3-5 minutes):
-
-[source,bash,role=execute]
-----
-echo "Waiting for ACS Central pods..."
-oc wait --for=condition=Available deployment/central -n stackrox --timeout=300s
-----
-
-=== Step 3: Retrieve the ACS Admin Password
-
-[source,bash,role=execute]
-----
-ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
-echo "ACS Central admin password: $ACS_PASSWORD"
-----
-
-[IMPORTANT]
-====
-Save this password -- you will need it to log in to ACS Central and to generate API tokens for `roxctl`.
-====
-
-=== Step 4: Access ACS Central
-
-[source,bash,role=execute,subs="attributes"]
-----
-ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
-echo "ACS Central URL: https://$ACS_ROUTE"
-----
-
-Open the URL in your browser and log in with username `admin` and the password from Step 3.
-
-=== Step 5: Deploy the Secured Cluster Services
-
-The Secured Cluster bundle connects your OpenShift cluster to ACS Central for runtime monitoring and admission control:
-
-. In ACS Central, navigate to *Platform Configuration* -> *Clusters*
-. Click *New Cluster*
-. Name: `workshop-cluster`
-. Set the Central API Endpoint to `central.stackrox.svc:443`
-. Click *Next* and download the YAML bundle
-. Apply the bundle:
-
-[source,bash,role=execute]
-----
-oc apply -R -f sensor-bundle/
-----
-
-Alternatively, create the SecuredCluster CR directly:
-
-[source,yaml,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: platform.stackrox.io/v1alpha1
-kind: SecuredCluster
-metadata:
-  name: stackrox-secured-cluster-services
-  namespace: stackrox
-spec:
-  clusterName: workshop-cluster
-  admissionControl:
-    listenOnCreates: true
-    listenOnUpdates: true
-    listenOnEvents: true
-    contactImageScanners: ScanIfMissing
-    timeoutSeconds: 20
-    bypass: BreakGlassAnnotation
-  perNode:
-    collector:
-      collection: EBPF
-      imageFlavor: Regular
-    taintToleration: TolerateTaints
-EOF
-----
-
-Wait for the admission controller to start:
-
-[source,bash,role=execute]
-----
-oc wait --for=condition=Available deployment/admission-control -n stackrox --timeout=300s
-----
-
-=== Step 6: Install the roxctl CLI
-
-[source,bash,role=execute]
-----
-ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
-
-curl -sk "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
-chmod +x roxctl
-sudo mv roxctl /usr/local/bin/
-
-roxctl version
-----
-
-=== Step 7: Verify ACS Installation
-
-[source,bash,role=execute]
-----
-oc get pods -n stackrox
-----
-
-.*Expected output:*
-----
-NAME                                 READY   STATUS    RESTARTS   AGE
-admission-control-...                1/1     Running   0          ...
-central-...                          1/1     Running   0          ...
-collector-...                        2/2     Running   0          ...
-scanner-...                          1/1     Running   0          ...
-scanner-db-...                       1/1     Running   0          ...
-sensor-...                           1/1     Running   0          ...
-----
-
-Verify the admission controller webhook is registered:
-
-[source,bash,role=execute]
-----
-oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
-----
-
-.*Expected output:*
-----
-NAME                         WEBHOOKS   AGE
-stackrox-validating-webhook  1          ...
-----
-
-[TIP]
-====
-If the webhook does not appear, check that `listenOnCreates` is set to `true` in the SecuredCluster spec and that the admission controller pod is running.
-====
-
-Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress].

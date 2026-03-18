@@ -1,30 +1,34 @@
-= Sub-Module 2.1: Cloud Native Buildpacks with Hummingbird
+= Sub-Module 2.1: Building with Hummingbird on OpenShift
 
 .*Sub-Module Overview*
 [sidebar]
 --
-*Duration:* ~12 minutes +
+*Duration:* ~15 minutes +
 *Prerequisites:* Environment setup complete (see xref:appendix-b-openshift-setup.adoc[Appendix B]) +
 *Learning Objectives:*
 
 * Verify on-cluster Quay registry credentials for pushing built images
-* Define ClusterBuildStrategy using Buildpacks with Hummingbird runtimes
-* Build Node.js application from git using Buildpacks
+* Understand the pre-installed `buildah` ClusterBuildStrategy
+* Build a Quarkus application from Git using Shipwright and a multi-stage Containerfile
 * Monitor build execution and verify pushed image
-* Deploy built image to OpenShift
+* Deploy the Hummingbird-based image to OpenShift
 --
 
 [[introduction]]
 == Introduction
 
-**Cloud Native Buildpacks** provide "source-to-image" capabilities without requiring Dockerfiles. They auto-detect application types (Node.js, Python, Java, Go, etc.) and build optimized images using best practices.
+In Module 1, you built Quarkus applications locally using Podman with multi-stage Containerfiles: a full builder image for compilation and a minimal Hummingbird runtime for production. In this sub-module, you'll bring that same pattern to **OpenShift** using **Shipwright Builds**.
 
-In this sub-module, you'll create a ClusterBuildStrategy that combines Buildpacks' convenience with Hummingbird's minimal, hardened runtime images, getting the best of both worlds: zero-config builds with production-grade security.
+Shipwright provides a Kubernetes-native build framework built on Tekton. Instead of running `podman build` on a developer workstation, you define a `Build` resource pointing to a Git repository and a `ClusterBuildStrategy`, then trigger a `BuildRun`. The Shipwright operator handles the rest -- cloning the source, running the build, and pushing the image to the registry.
+
+The pre-installed `buildah` ClusterBuildStrategy (shipped with the Builds for Red Hat OpenShift operator) works with any standard Containerfile, making it the natural choice for the multi-stage Hummingbird pattern you already know.
 
 [[registry-secret]]
 == Registry Configuration
 
 The on-cluster Quay registry and `registry-credentials` secret should already be configured from xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B: Quay Setup]. Verify the secret exists and is linked:
+
+=== Step 1: Verify Registry Credentials
 
 [source,bash,role=execute]
 ----
@@ -45,105 +49,66 @@ Mountable secrets:   registry-credentials
 If the secret does not exist, return to xref:appendix-b-openshift-setup.adoc#quay-setup[Appendix B: Quay Setup] and complete Steps 5-6 to create the secret and link it to the `pipeline` ServiceAccount.
 ====
 
-[[buildpacks-strategy]]
-== Create Hummingbird Buildpacks Strategy
+[[verify-strategy]]
+== Verify Pre-Installed BuildStrategy
 
-=== Step 3: Create ClusterBuildStrategy
+=== Step 2: List Available ClusterBuildStrategies
 
-Create a custom ClusterBuildStrategy that uses Buildpacks with Hummingbird runtimes:
-
-[source,yaml,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: shipwright.io/v1beta1
-kind: ClusterBuildStrategy
-metadata:
-  name: buildpacks-hummingbird
-spec:
-  parameters:
-  - name: APP_IMAGE
-    description: The name of the application image to be built
-  - name: BUILDER_IMAGE
-    description: The Buildpacks builder image
-    default: "paketobuildpacks/builder-jammy-base:latest"
-  - name: RUN_IMAGE
-    description: The Hummingbird runtime image
-    default: "quay.io/hummingbird-hatchling/nodejs-20:latest"
-  - name: SOURCE_SUBPATH
-    description: A subpath within the source directory
-    default: "."
-  - name: ENV_VARS
-    description: Environment variables for the build
-    type: array
-    defaults: []
-
-  buildSteps:
-  - name: build-and-push
-    image: $(params.BUILDER_IMAGE)
-    imagePullPolicy: Always
-    workingDir: $(params.shp-source-root)
-    command:
-    - /cnb/lifecycle/creator
-    args:
-    - -app=$(params.shp-source-root)/$(params.SOURCE_SUBPATH)
-    - -run-image=$(params.RUN_IMAGE)
-    - $(params.APP_IMAGE)
-    env:
-    - name: CNB_PLATFORM_API
-      value: "0.13"
-    - name: DOCKER_CONFIG
-      value: /workspace/.docker
-    volumeMounts:
-    - name: $(params.shp-output-directory)
-      mountPath: /workspace
-      readOnly: false
-    securityContext:
-      runAsUser: 1000
-      runAsGroup: 1000
-EOF
-----
-
-.*Expected output:*
-----
-clusterbuildstrategy.shipwright.io/buildpacks-hummingbird created
-----
-
-.*What this strategy does:*
-
-* Uses **Paketo Buildpacks** builder image to auto-detect application type
-* Configures **Hummingbird runtime images** for the final container via `RUN_IMAGE` parameter
-* Runs builds as **non-root user** (1000)
-* Outputs directly to specified registry
-
-[NOTE]
-====
-**Buildpacks Lifecycle Phases:**
-
-1. **DETECTING**: Identifies application type (Node.js, Python, Java, etc.)
-2. **ANALYZING**: Checks for cached layers from previous builds
-3. **BUILDING**: Installs dependencies, compiles code
-4. **EXPORTING**: Creates final image layers with Hummingbird runtime
-====
-
-=== Step 4: Verify ClusterBuildStrategy
+The Builds for Red Hat OpenShift operator ships with several pre-installed strategies. Verify they are available:
 
 [source,bash,role=execute]
 ----
-oc get clusterbuildstrategy buildpacks-hummingbird
+oc get clusterbuildstrategy
 ----
 
 .*Expected output:*
 ----
-NAME                      AGE
-buildpacks-hummingbird    30s
+NAME                  AGE
+buildah               ...
+buildpacks            ...
+buildpacks-extender   ...
+source-to-image       ...
 ----
+
+The `buildah` strategy is the one we'll use. It builds from a Containerfile (or Dockerfile) using Red Hat's `ubi9/buildah` image and pushes the result to the configured registry.
+
+=== Step 3: Inspect the buildah Strategy
+
+[source,bash,role=execute]
+----
+oc get clusterbuildstrategy buildah -o jsonpath='{.spec.parameters[*].name}' | tr ' ' '\n'
+----
+
+.*Expected output:*
+----
+build-args
+registries-block
+registries-insecure
+registries-search
+dockerfile
+storage-driver
+target
+----
+
+.*Key parameters:*
+
+* **`dockerfile`**: Path to the Containerfile (default: `Dockerfile`). We'll override this to `Containerfile`.
+* **`build-args`**: Pass `ARG` values to the Containerfile (e.g., override builder/runtime images).
+* **`registries-insecure`**: Mark registries that don't have valid TLS (needed for the on-cluster Quay with self-signed certs).
+
+[NOTE]
+====
+**Why use the pre-installed strategy?**
+
+The `buildah` strategy ships with the operator and is maintained by Red Hat. It runs as root (required for container builds), handles registry auth via Tekton credential injection, and supports all standard Containerfile features. No custom strategy creation needed.
+====
 
 [[create-build]]
 == Create Build Resource
 
-=== Step 5: Create Build
+=== Step 4: Create Build
 
-Create a Build resource pointing to a sample Node.js application:
+Create a Build resource pointing to the sample Quarkus application with a Hummingbird multi-stage Containerfile:
 
 [source,yaml,role=execute,subs="attributes"]
 ----
@@ -151,22 +116,22 @@ cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
-  name: sample-nodejs-app
+  name: sample-quarkus-app
   namespace: hummingbird-builds
 spec:
   source:
     type: Git
     git:
-      url: https://github.com/shipwright-io/sample-nodejs
+      url: https://github.com/tosin2013/sample-quarkus-hummingbird
       revision: main
   strategy:
-    name: buildpacks-hummingbird
+    name: buildah
     kind: ClusterBuildStrategy
   paramValues:
-  - name: RUN_IMAGE
-    value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+  - name: dockerfile
+    value: "Containerfile"
   output:
-    image: {workshop-registry}/{registry-user}/sample-nodejs:latest
+    image: {workshop-registry}/{registry-user}/sample-quarkus:latest
     credentials:
       name: registry-credentials
 EOF
@@ -174,21 +139,30 @@ EOF
 
 .*Expected output:*
 ----
-build.shipwright.io/sample-nodejs-app created
+build.shipwright.io/sample-quarkus-app created
 ----
 
 .*What this Build defines:*
 
-* **Source**: Git repository with Node.js application
-* **Strategy**: Use `buildpacks-hummingbird` ClusterBuildStrategy
-* **Runtime**: Hummingbird Node.js 20 image
-* **Output**: Push to `{workshop-registry}/{registry-user}/sample-nodejs:latest`
-* **Credentials**: Use `registry-credentials` secret for push
+* **Source**: Git repository containing a Quarkus REST application with a multi-stage Containerfile
+* **Strategy**: Pre-installed `buildah` ClusterBuildStrategy
+* **Containerfile**: Multi-stage build using `quay.io/hummingbird-hatchling/openjdk:21-builder` (Stage 1) and `quay.io/hummingbird-hatchling/openjdk:21-runtime` (Stage 2)
+* **Output**: Push to `{workshop-registry}/{registry-user}/sample-quarkus:latest`
+* **Credentials**: Use `registry-credentials` secret for registry push
+
+[NOTE]
+====
+**The Containerfile in the repository follows the same multi-stage pattern from Module 1:**
+
+* **Stage 1 (Builder)**: Uses `hummingbird-hatchling/openjdk:21-builder` which includes JDK 21, bash, and dnf. The Maven wrapper (`./mvnw`) downloads Maven and compiles the Quarkus application.
+* **Stage 2 (Runtime)**: Uses `hummingbird-hatchling/openjdk:21-runtime` which is distroless -- no shell, no package manager. Only the compiled JAR and runtime dependencies are copied from Stage 1.
+* The final image runs as **non-root** (UID 65532, the Hummingbird default).
+====
 
 [[execute-build]]
 == Execute BuildRun
 
-=== Step 6: Trigger a BuildRun
+=== Step 5: Trigger a BuildRun
 
 Execute the build by creating a BuildRun resource:
 
@@ -198,113 +172,101 @@ cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
-  name: sample-nodejs-app-run-1
+  name: sample-quarkus-app-run-1
   namespace: hummingbird-builds
 spec:
   build:
-    name: sample-nodejs-app
+    name: sample-quarkus-app
 EOF
 ----
 
 .*Expected output:*
 ----
-buildrun.shipwright.io/sample-nodejs-app-run-1 created
+buildrun.shipwright.io/sample-quarkus-app-run-1 created
 ----
 
-=== Step 7: Monitor BuildRun Progress
+=== Step 6: Monitor BuildRun Progress
 
 Watch the build execution:
 
 [source,bash,role=execute]
 ----
-oc get buildrun sample-nodejs-app-run-1 -w
+oc get buildrun sample-quarkus-app-run-1 -w
 ----
 
 .*Expected output:*
 ----
-NAME                        SUCCEEDED   REASON      STARTTIME   COMPLETIONTIME
-sample-nodejs-app-run-1     Unknown     Pending     2s
-sample-nodejs-app-run-1     Unknown     Running     15s
-sample-nodejs-app-run-1     True        Succeeded   2m30s       5s
+NAME                         SUCCEEDED   REASON      STARTTIME   COMPLETIONTIME
+sample-quarkus-app-run-1     Unknown     Pending     2s
+sample-quarkus-app-run-1     Unknown     Running     15s
+sample-quarkus-app-run-1     True        Succeeded   5m          5s
 ----
 
 Press `Ctrl+C` once you see `Succeeded`.
 
 [TIP]
 ====
-Typical build times:
-- **First build**: 2-4 minutes (pulls builder and runtime images, no cache)
-- **Subsequent builds**: 1-2 minutes (leverages cached layers)
+Typical build times for the Quarkus application:
+
+- **First build**: 4-6 minutes (pulls Hummingbird builder/runtime images, downloads Maven and dependencies)
+- **Subsequent builds**: 2-3 minutes (image layers cached, Maven dependencies may be re-downloaded)
+
+The first build is slower because the Hummingbird builder image and all Maven dependencies must be pulled. This is normal.
 ====
 
 [[view-build-logs]]
 == View Build Logs
 
-=== Step 8: View Detailed Build Logs
+=== Step 7: View Detailed Build Logs
 
 Check detailed build logs:
 
 [source,bash,role=execute]
 ----
-# Get the TaskRun created by BuildRun
-TASKRUN=$(oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.taskRunName}')
+BUILDRUN_POD=$(oc get buildrun sample-quarkus-app-run-1 -o jsonpath='{.status.taskRunName}')-pod
 
-# View logs
-oc logs -f $TASKRUN --all-containers
+oc logs $BUILDRUN_POD -n hummingbird-builds --all-containers
 ----
 
 .*Expected log excerpts:*
 ----
-===> DETECTING
+[INFO] Building image ...
+STEP 1/11: FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
 ...
-[detector] ======== Results ========
-[detector] pass: paketo-buildpacks/node-engine@2.0.0
-[detector] pass: paketo-buildpacks/npm-install@1.2.0
+STEP 4/11: RUN ./mvnw package -DskipTests -Dmaven.repo.local=/build/.m2
 ...
-===> ANALYZING
+[INFO] [io.quarkus.deployment.QuarkusAugmentor] Quarkus augmentation completed in ...ms
+[INFO] BUILD SUCCESS
 ...
-===> RESTORING
+STEP 6/11: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
 ...
-===> BUILDING
-[builder] Paketo Buildpack for Node Engine 2.0.0
-[builder]   Resolving Node Engine version
-[builder]     Candidate version sources (in priority order):
-[builder]       package.json -> ">=20.0.0"
-[builder]     Selected Node Engine version: 20.18.0
+STEP 10/11: USER 65532
+STEP 11/11: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 ...
-[builder] Paketo Buildpack for NPM Install 1.2.0
-[builder]   Installing node_modules
-[builder]     Running 'npm ci --only=production'
-...
-===> EXPORTING
-[exporter] Adding layer 'paketo-buildpacks/node-engine:nodejs'
-[exporter] Reusing layer 'paketo-buildpacks/npm-install:modules'
-...
-[exporter] Successfully built image .../sample-nodejs:latest
+[INFO] Pushing image ...
 ----
 
 [NOTE]
 ====
-**Key Buildpacks Phases:**
+**Key build phases visible in the logs:**
 
-* **DETECTING**: Auto-detects Node.js via `package.json`
-* **BUILDING**: Runs `npm ci` to install dependencies
-* **EXPORTING**: Creates final image layers with **Hummingbird runtime**
+* **Stage 1**: The Hummingbird builder image is pulled, Maven downloads dependencies, and Quarkus compiles the application.
+* **Stage 2**: The distroless Hummingbird runtime image is pulled, and only the compiled artifacts are copied in.
+* **Push**: The final image (containing only the JRE runtime + your compiled app) is pushed to the on-cluster Quay registry.
 
-The runtime image is swapped out automatically thanks to the `RUN_IMAGE` parameter!
+This is the same multi-stage pattern from Module 1, now running as an automated Shipwright build on OpenShift.
 ====
 
 [[verify-image]]
 == Verify Built Image
 
-=== Step 9: Get Image Digest
+=== Step 8: Get Image Digest
 
 Confirm the image was pushed successfully:
 
 [source,bash,role=execute]
 ----
-# Get the image digest
-oc get buildrun sample-nodejs-app-run-1 -o jsonpath='{.status.output.digest}'
+oc get buildrun sample-quarkus-app-run-1 -o jsonpath='{.status.output.digest}'
 echo ""
 ----
 
@@ -315,75 +277,116 @@ sha256:abc123def456789...
 
 [TIP]
 ====
-You can also check your on-cluster Quay console to confirm the image is present:
-1. Open {workshop-registry-console} in your browser
-2. Navigate to your repository: `{registry-user}/sample-nodejs`
-3. You should see the `latest` tag with a recent push timestamp
+Verify the image was pushed to Quay via the Docker v2 registry API:
+
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+TOKEN=$(curl -sk "https://${QUAY_ROUTE}/v2/auth?service=${QUAY_ROUTE}&scope=repository:{registry-user}/sample-quarkus:pull" \
+  -u "{registry-user}:{registry-password}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  "https://${QUAY_ROUTE}/v2/{registry-user}/sample-quarkus/tags/list" | python3 -m json.tool
+----
+
+.*Expected output:*
+----
+{
+    "name": "workshopuser/sample-quarkus",
+    "tags": [
+        "latest"
+    ]
+}
+----
+
+NOTE: The Quay repository is created as **private** by default. The v2 registry API is used here because it supports standard Docker token authentication without requiring an OAuth application token.
 ====
 
-=== Step 10: Inspect Image Layers and Labels
+=== Step 9: Inspect Image with skopeo
 
 Use `skopeo` to examine the built image and confirm it uses the Hummingbird runtime:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-skopeo inspect docker://{workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null \
-  | head -40 \
-  || echo "Note: skopeo not available in cluster - check the Quay console"
+skopeo inspect docker://{workshop-registry}/{registry-user}/sample-quarkus:latest 2>/dev/null \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(f'Architecture: {d.get(\"Architecture\")}')
+print(f'OS: {d.get(\"Os\")}')
+print(f'Layers: {len(d.get(\"Layers\",[]))}')
+labels = d.get('Labels',{})
+for k,v in sorted(labels.items()):
+    if 'hummingbird' in k.lower():
+        print(f'Label {k}: {v}')
+" \
+  || echo "Note: skopeo inspect requires TLS trust for the on-cluster registry"
 ----
 
 [NOTE]
 ====
-The image labels should reference the Hummingbird runtime. The layer count will be lower than a typical UBI-based image because Hummingbird strips unnecessary packages. This is the same `skopeo inspect` workflow you'd use in Module 1 to verify local builds.
+The image labels from the Hummingbird base image (e.g., `io.hummingbird-project.*`) are inherited by the final image. This provides built-in provenance showing which Hummingbird runtime was used.
 ====
 
 [[deploy-application]]
 == Deploy Built Image
 
-=== Step 11: Deploy to OpenShift
+=== Step 10: Deploy to OpenShift
 
-Deploy your Hummingbird-built application:
+Deploy your Hummingbird-built application. First, link the registry credentials to the `default` ServiceAccount so pods can pull the image from the private Quay repository:
+
+[source,bash,role=execute]
+----
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds
+----
+
+Now create the deployment, service, and route:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-# Create deployment
-oc create deployment sample-nodejs \
-  --image={workshop-registry}/{registry-user}/sample-nodejs:latest \
+oc create deployment sample-quarkus \
+  --image={workshop-registry}/{registry-user}/sample-quarkus:latest \
   -n hummingbird-builds
 
-# Expose service
-oc expose deployment sample-nodejs --port=8080 -n hummingbird-builds
+oc expose deployment sample-quarkus --port=8080 -n hummingbird-builds
 
-# Create route
-oc expose service sample-nodejs -n hummingbird-builds
+oc expose service sample-quarkus -n hummingbird-builds
 ----
 
-=== Step 12: Get Route URL
+[NOTE]
+====
+The `oc secrets link default registry-credentials --for=pull` step is required because Quay creates repositories as **private** by default (`CREATE_PRIVATE_REPO_ON_PUSH: true`). Without linking the pull secret to the `default` ServiceAccount, pods will fail with `ImagePullBackOff`.
+====
+
+=== Step 11: Test the Application
 
 [source,bash,role=execute]
 ----
-oc get route sample-nodejs -o jsonpath='{.spec.host}'
-echo ""
+ROUTE=$(oc get route sample-quarkus -o jsonpath='{.spec.host}')
+echo "Application URL: http://$ROUTE"
+curl -s http://$ROUTE/hello | python3 -m json.tool
 ----
 
 .*Expected output:*
 ----
-sample-nodejs-hummingbird-builds.apps.cluster-abc123.example.com
+{
+    "message": "Hello from Hummingbird!",
+    "runtime": "Quarkus + JDK 21.0.10"
+}
 ----
 
-=== Step 13: Test the Application
-
-Test your deployed application:
+Also verify the Quarkus health endpoint:
 
 [source,bash,role=execute]
 ----
-ROUTE=$(oc get route sample-nodejs -o jsonpath='{.spec.host}')
-curl http://$ROUTE
+curl -s http://$ROUTE/q/health | python3 -m json.tool
 ----
 
 .*Expected output:*
 ----
-Hello World from Node.js!
+{
+    "status": "UP",
+    "checks": [...]
+}
 ----
 
 [TIP]
@@ -392,71 +395,73 @@ If you get a timeout, the application may still be starting. Check pod status:
 
 [source,bash]
 ----
-oc get pods -l app=sample-nodejs
-oc logs -l app=sample-nodejs
+oc get pods -l app=sample-quarkus -n hummingbird-builds
+oc logs -l app=sample-quarkus -n hummingbird-builds
 ----
 ====
 
-[[verify-hummingbird-runtime]]
+[[verify-runtime]]
 == Verify Hummingbird Runtime
 
-=== Step 14: Confirm Image Size
-
-Verify the built image uses the Hummingbird runtime:
+=== Step 12: Check Image in Quay Console
 
 [source,bash,role=execute,subs="attributes"]
 ----
-# Pull and inspect image size
-podman pull {workshop-registry}/{registry-user}/sample-nodejs:latest 2>/dev/null || echo "Note: Run on a machine with podman to verify size"
-
-# Alternative: Check in Quay console
-echo "Check image size at: {workshop-registry-console}/repository/{registry-user}/sample-nodejs"
+echo "Check image at: {workshop-registry-console}/repository/{registry-user}/sample-quarkus"
+echo ""
+echo "Check Quay Security Scanner results for CVE counts."
 ----
-
-.*Expected size:* ~95-120 MB (vs 400MB+ for full UBI Node.js)
 
 [NOTE]
 ====
-The image size is dramatically reduced because:
-1. Buildpacks detected Node.js and installed only production dependencies
-2. The `RUN_IMAGE` parameter swapped in the Hummingbird runtime
-3. No build tools or package managers in the final image
+**Hummingbird Runtime Advantages:**
+
+The image uses `quay.io/hummingbird-hatchling/openjdk:21-runtime` -- a distroless image containing only the JRE and essential libraries. Compared to a full `registry.access.redhat.com/ubi9/openjdk-21` image:
+
+* **Dramatically fewer packages** -- no shell, no package manager, no build tools
+* **Near-zero CVE baseline** -- fewer packages means fewer vulnerabilities
+* **Non-root by default** -- runs as UID 65532
+* **Content-based layers** -- uses chunkah for efficient pull deduplication
+
+NOTE: Standard vulnerability scanners (including Quay/Clair) may not yet fully support Hummingbird's Fedora-based packages. The Hummingbird project provides custom scanning tools (`syft-hummingbird.sh`) for accurate results. See https://gitlab.com/redhat/hummingbird/containers[the Hummingbird repository^] for details.
 ====
 
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 2.1 and built your first application with Buildpacks and Hummingbird!
+Congratulations! You've built and deployed your first Hummingbird application on OpenShift using Shipwright!
 
 .*What You've Accomplished*
 ✅ Verified on-cluster Quay registry credentials linked to pipeline ServiceAccount +
-✅ Created ClusterBuildStrategy using Buildpacks with Hummingbird +
-✅ Created Build resource pointing to git repository +
-✅ Executed BuildRun and monitored progress +
-✅ Viewed detailed build logs showing Buildpacks phases +
-✅ Verified image pushed to registry +
-✅ Inspected image layers and labels with skopeo +
-✅ Deployed built image to OpenShift +
-✅ Tested running application via Route +
-✅ Confirmed Hummingbird runtime usage (95-120MB image)
+✅ Inspected the pre-installed `buildah` ClusterBuildStrategy +
+✅ Created a Build resource pointing to a Quarkus application Git repository +
+✅ Executed a BuildRun and monitored progress +
+✅ Viewed detailed build logs showing the multi-stage Containerfile in action +
+✅ Verified the image was pushed to Quay with the correct digest +
+✅ Inspected the image with skopeo to confirm Hummingbird labels +
+✅ Deployed the Hummingbird-built image to OpenShift +
+✅ Tested the running Quarkus application via Route
 
 .*Key Takeaways*
 
-**Buildpacks + Hummingbird = Best of Both Worlds:**
-* **Zero-config builds**: No Dockerfile needed, auto-detects language
-* **Minimal runtime**: Hummingbird reduces image size by 70-80%
-* **Production-ready**: Proper security, non-root user, optimized layers
+**Module 1 Pattern on OpenShift:**
+
+* The same multi-stage Containerfile pattern (builder + Hummingbird runtime) works seamlessly with Shipwright
+* No need to learn a new build system -- the `buildah` strategy builds standard Containerfiles
+* The Hummingbird distroless runtime provides a near-zero CVE baseline
 
 **Developer Experience:**
-* Simple YAML to trigger builds
-* No CI/CD expertise required
-* Builds run securely within cluster
-* Automatic dependency installation
+
+* Simple YAML to trigger builds from Git
+* Pre-installed strategy -- no custom build infrastructure needed
+* Builds run securely within the cluster
+* Quarkus health endpoints work out of the box for Kubernetes probes
 
 **Platform Engineering:**
-* ClusterBuildStrategy enforces organizational standards
-* All teams get Hummingbird benefits automatically
-* Centralized build configuration
+
+* ClusterBuildStrategy enforces organizational build standards
+* All teams use Hummingbird runtimes automatically
+* Registry credentials managed centrally via Kubernetes secrets
 
 === Next Sub-Module
 
@@ -468,21 +473,20 @@ Create a ClusterBuildStrategy with language auto-detection, conditional Hummingb
 
 === Additional Resources
 
-*Cloud Native Buildpacks:*
-* https://buildpacks.io/[Cloud Native Buildpacks Official Site^]
-* https://paketo.io/[Paketo Buildpacks^]
-* https://buildpacks.io/docs/concepts/[Buildpacks Concepts^]
+*Project Hummingbird:*
+* https://hummingbird-project.io/[Project Hummingbird Official Site^]
+* https://gitlab.com/redhat/hummingbird/containers[Hummingbird Containers Repository^]
+* https://quay.io/organization/hummingbird-hatchling[Hummingbird Image Registry^]
 
 *Shipwright Builds:*
 * https://shipwright.io/docs/build/buildstrategies/[BuildStrategy Documentation^]
-* https://github.com/redhat-openshift-builds/strategy-catalog[OpenShift Build Strategy Catalog^]
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/builds_using_shipwright/index[Builds for OpenShift^]
 
 === Troubleshooting
 
 **Issue: BuildRun fails with registry push error**
 [source,bash]
 ----
-# Verify secret exists and is linked
 oc get secret registry-credentials -n hummingbird-builds
 oc describe sa pipeline -n hummingbird-builds | grep registry-credentials
 
@@ -500,25 +504,53 @@ oc secrets link pipeline registry-credentials -n hummingbird-builds
 **Issue: BuildRun stuck in Pending**
 [source,bash]
 ----
-# Check Tekton pipeline pods
 oc get pods -n openshift-pipelines
-
-# Check events
 oc get events -n hummingbird-builds --sort-by=.metadata.creationTimestamp
+oc describe buildrun sample-quarkus-app-run-1 -n hummingbird-builds
+----
 
-# Describe buildrun for details
-oc describe buildrun sample-nodejs-app-run-1 -n hummingbird-builds
+**Issue: BuildRun fails with BLOB_UPLOAD_INVALID**
+
+This typically indicates a problem with the NooBaa object storage backend used by Quay:
+
+[source,bash]
+----
+oc get backingstore -n openshift-storage
+oc get noobaa -n openshift-storage -o jsonpath='{.items[0].status.phase}'
+
+# If backing store shows Rejected/ALL_NODES_OFFLINE, wait for recovery
+# Once NooBaa returns to Ready/OPTIMAL, delete the failed BuildRun and retry
+oc delete buildrun sample-quarkus-app-run-1 -n hummingbird-builds
+# Then re-create the BuildRun (Step 5)
+----
+
+**Issue: Maven build fails with "permission denied" on mvnw**
+
+The Maven wrapper script must be executable in the Git repository. If you see this error, ensure the repo has the correct permissions:
+
+[source,bash]
+----
+# On the machine where the repo is managed:
+chmod +x mvnw
+git add mvnw
+git commit -m "Fix mvnw permissions"
+git push
+----
+
+**Issue: Deployment pod stuck in ImagePullBackOff**
+
+The on-cluster Quay registry creates repositories as **private** by default. The `default` ServiceAccount needs pull credentials:
+
+[source,bash]
+----
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds
+oc delete pod -l app=sample-quarkus -n hummingbird-builds
 ----
 
 **Issue: Application not responding**
 [source,bash]
 ----
-# Check pod status
-oc get pods -l app=sample-nodejs -n hummingbird-builds
-
-# View pod logs
-oc logs -l app=sample-nodejs -n hummingbird-builds
-
-# Check route
-oc get route sample-nodejs -n hummingbird-builds
+oc get pods -l app=sample-quarkus -n hummingbird-builds
+oc logs -l app=sample-quarkus -n hummingbird-builds
+oc get route sample-quarkus -n hummingbird-builds
 ----
