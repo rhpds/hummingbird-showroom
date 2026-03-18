@@ -108,6 +108,7 @@ Each module includes:
 * Hands-on labs (30-35 minutes)
 * Verification and summary (5 minutes)
 
+////
 == Environment Setup
 
 [IMPORTANT]
@@ -122,29 +123,33 @@ See xref:appendix-a-rhel-setup.adoc[Appendix A] for RHDP details, automation scr
 https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[Deploy OpenShift Cluster (AWS) via RHDP^] +
 See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automation scripts, or manual setup steps.
 ====
+////
 
 === Lab Environment Access
-
+////
 [NOTE]
 ====
 If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
 ====
-
+////
 ==== OpenShift Console (Module 2)
 
-Your OpenShift console is available at: {openshift-console}
+Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}.
 
 *Credentials:*
 
-* *Username:* `{openshift-user}`
-* *Password:* `{openshift-password}`
+* *Username:* `{user}`
+* *Password:* `{password}`
 
 ==== Registry Credentials
 
 For pushing images to registries:
 
-* *Registry User:* `{registry-user}`
-* *Registry Password:* `{registry-password}`
+* *Red Hat Quay* is available at {quay_console_url}.
+
+You will need to register with Quay as user `{user}`. To make things easier use password `{password}` (the same as your OpenShift credentials).
+// * *Registry User:* `{user}`
+// * *Registry Password:* `{registry-password}`
 
 ==== GUID Information
 
