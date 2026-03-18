@@ -164,7 +164,7 @@ You can use `Ctrl-]` to exit the VM console at any time.
 
 ==== OpenShift Console (Module 2)
 
-Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}.
+Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}[window=blank].
 
 *Credentials:*
 
@@ -175,7 +175,7 @@ Your OpenShift console is available on the right or if you prefer a separate win
 
 For pushing images to registries:
 
-* *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}.
+* *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}[window=blank].
 
 You will need to register with Quay as user `{user}`. To make things easier use password `{password}` (the same as your OpenShift credentials).
 // * *Registry User:* `{user}`
