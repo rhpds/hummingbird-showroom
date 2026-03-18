@@ -160,7 +160,14 @@ virtctl console rhel-{user}
 [TIP]
 ====
 You can use `Ctrl-]` to exit the VM console at any time.
+
+Hit `Enter` once you are connected to see the login prompt.
 ====
+
+. Log into the VM using the following credentials:
+ 
+* *Username*: `rhel`
+* *Password*: `{password}`
 
 ==== OpenShift Console (Module 2)
 
@@ -211,7 +218,7 @@ Your unique lab environment identifier: `{guid}`
 
 *Registries:*
 
-* Workshop Registry (on-cluster Quay): `{workshop-registry}`
+* Workshop Registry (on-cluster Quay): `{quay_console_url}`
 * Hummingbird Source Registry: `{hummingbird-registry}`
 * UBI Registry: `{ubi-registry}`
 
