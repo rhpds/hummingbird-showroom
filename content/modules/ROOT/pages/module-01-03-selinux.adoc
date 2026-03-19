@@ -5,7 +5,7 @@
 --
 *Duration:* ~12 minutes +
 
-* Installng custom CA bundles in images
+* Installing custom CA bundles in images
 * Using special security focused variants
 * Generate custom SELinux policies from `podman inspect` output
 * Prepare host directories with proper SELinux labels for bind mounts
@@ -50,7 +50,7 @@ COPY index.html /usr/share/caddy/
 EOF
 
 
-podman build -t caddy:ssl -f ~/webserver/Containerfile
+podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
 podman run -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
 ----
 
@@ -92,7 +92,7 @@ FROM {hummingbird-registry}/curl:latest
 COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 EOF
 
-podman build -t curl:local-ca -f ~/Containerfile.pem 
+podman build -t curl:local-ca -f ~/Containerfile.pem ~
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
 ----
 
@@ -101,9 +101,9 @@ podman run --net=host --rm -it curl:local-ca https://localhost:8443
 
 In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the FIPS 140-3 standard.
 
-The `fips` variant changes the algorithms available in the container and also uses the validated FIPS proivider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
 
-In this lab, the host and cluster are *not* in FIPS mode, howver the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
+In this lab, the host and cluster are *not* in FIPS mode, however the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
 
 [source,bash,role=execute]
 ----
@@ -111,10 +111,16 @@ cat /proc/sys/crypto/fips_enabled
 ----
 
 We've built a python application to demonstrate the differences an application would see based on the use of a `default` or `fips` variant. The only difference between our two containers is the source image.
+
+[NOTE]
+====
+The `test-fips.py` file is provided in your lab environment at `~/fips/test-fips.py`.
+====
+
 [source,bash,role=execute,subs=attributes+]
 ----
-# Create standard Python Containerfile  
-cat > ~/fips/Containerfile << "EOF"
+# Create standard Python Containerfile
+cat > ~/fips/Containerfile << 'EOF'
 FROM {hummingbird-registry}/python:3.14
 
 COPY test-fips.py .
@@ -131,7 +137,7 @@ EOF
 [source,bash,role=execute,subs=attributes+]
 ----
 # Create FIPS-enabled Python Containerfile
-cat > ~/fips/Containerfile.fips << "EOF"
+cat > ~/fips/Containerfile.fips << 'EOF'
 FROM  {hummingbird-registry}/python:3.14-fips
 
 COPY test-fips.py .
@@ -148,8 +154,8 @@ EOF
 We can build these and tag them so we can tell them apart
 [source,bash,role=execute]
 ----
-podman build -t fips:no -f ~/fips/Containerfile 
-podman build -t fips:yes -f ~/fips/Containerfile.fips 
+podman build -t fips:no -f ~/fips/Containerfile ~/fips
+podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
 ----
 
 Running our application, we can see that MD5 and other methods considered less secure are disallowed in our `fips` based container.
