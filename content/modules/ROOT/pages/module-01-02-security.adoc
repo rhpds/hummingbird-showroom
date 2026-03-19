@@ -26,7 +26,7 @@ The tools we're using in this module use the Podman API to find and inspect imag
 systemctl --user enable --now podman.socket
 ----
 
-Let's create a new diretory to hold our work.
+Let's create a new directory to hold our work.
 [source,bash,role=execute]
 ----
 cd ~/scanning
@@ -34,15 +34,12 @@ cd ~/scanning
 
 We've worked with several different vendors to ensure our CVE feeds available and supported. In this lab, we're going to use the open source versions of Anchore's `syft` and `grype` tools as they are easily available. These are already installed on the system.
 
-Grype scans container images for known CVEs:
-Syft generates Software Bill of Materials (SBOMs) from container images:
+Grype scans container images for known CVEs.
+Syft generates Software Bill of Materials (SBOMs) from container images.
 [source,bash,role=execute]
 ----
 grype version
 syft version
-----
-.*Expected output:*
-----
 ----
 
 Let's build our sample quarkus app using the UBI openjdk image so we can do some comparisons with the hardened multi-stage build. 
@@ -69,7 +66,7 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 # Build UBI-only version
-podman build -f ~/sample-app/Containerfile.ubi -t demo-ubi:v1 
+podman build -f ~/sample-app/Containerfile.ubi -t demo-ubi:v1 ~/sample-app
 ----
 
 [[vulnerability-scanning]]
@@ -215,7 +212,7 @@ Cosign signs and verifies images stored in OCI registries. Since our image lives
 * **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
 ====
 
-=== Step 5: Start a Local Registry and Push the Image
+=== Step 4: Start a Local Registry and Push the Image
 
 [source,bash,role=execute]
 ----
@@ -226,7 +223,7 @@ podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
 podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
 podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
 
-# Capture the image digest COSIGN_PASSWORD=for use with cosign
+# Capture the image digest for use with cosign
 IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
 echo "Image digest: ${IMAGE_DIGEST}"
 ----
@@ -245,7 +242,7 @@ Image digest: sha256:abc123...
 We capture the image **digest** (`sha256:...`) rather than relying on the `:v1` tag. Cosign requires (and future versions will enforce) digest-based references so you always sign exactly the image you intend. The `IMAGE_DIGEST` variable is used in all subsequent cosign commands.
 ====
 
-=== Step 6: Generate Signing Keys
+=== Step 5: Generate Signing Keys
 
 Generate a key pair for testing (in production, use keyless signing or KMS), for the purposes of this lab we'll set an empty password via the environment variable.
 
@@ -274,9 +271,9 @@ Public key written to cosign.pub
 For this workshop, we use local keys for simplicity. Never commit `cosign.key` to git!
 ====
 
-=== Step 7: Sign the Image
+=== Step 6: Sign the Image
 
-Sign your image with cosign using the digest captured in Step 5. The `--tlog-upload=false` flag skips the Rekor transparency log (which requires internet access to the Sigstore public instance), and `--allow-insecure-registry` allows HTTP access to our local registry:
+Sign your image with cosign using the digest captured in Step 4. The `--tlog-upload=false` flag skips the Rekor transparency log (which requires internet access to the Sigstore public instance), and `--allow-insecure-registry` allows HTTP access to our local registry:
 
 [source,bash,role=execute]
 ----
@@ -297,7 +294,7 @@ Pushing signature to: localhost:5000/hummingbird-demo
 The `--tlog-upload=false` flag is used here because we are working with a local registry that does not have access to the Sigstore Rekor transparency log. In production with a public or enterprise registry, omit this flag so signatures are recorded in the transparency log for auditability.
 ====
 
-=== Step 8: Verify the Signature
+=== Step 7: Verify the Signature
 
 Verify the image signature. The `--insecure-ignore-tlog=true` flag matches our signing choice to skip the transparency log:
 
@@ -329,7 +326,7 @@ The tlog **WARNING** is expected. We skipped the Rekor transparency log when sig
 [[sbom-attestation]]
 == Attach SBOM as Attestation
 
-=== Step 9: Attach SBOM Attestation
+=== Step 8: Attach SBOM Attestation
 
 Attach the SBOM as a signed attestation:
 
@@ -361,7 +358,7 @@ An attestation is metadata about an image (like an SBOM, scan results, or build 
 This proves the SBOM came from the same trusted source as the image.
 ====
 
-=== Step 10: Verify SBOM Attestation
+=== Step 9: Verify SBOM Attestation
 
 Verify the SBOM attestation:
 
@@ -392,7 +389,7 @@ This confirms:
 [[size-comparison]]
 == Image Size and Vulnerability Comparison
 
-=== Step 12: Clean Up Local Registry
+=== Step 10: Clean Up Local Registry
 
 Once you're done with signing and attestation, you can stop the local registry:
 
