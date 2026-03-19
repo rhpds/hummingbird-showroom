@@ -1,0 +1,1374 @@
+= Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* ~35-40 minutes +
+*Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline); Sub-Module 2.4 (Tekton) recommended +
+*Learning Objectives:*
+
+* Deploy Renovate Bot as a scheduled Tekton Pipeline that scans repos for stale dependencies
+* Configure custom managers for Containerfile image refs, Tekton bundle versions, and language-level packages
+* Build a Tekton EventListener that validates Renovate PRs with Buildah, Grype, Cosign, and Skopeo
+* Implement digest-verified image promotion using Skopeo
+* Test the full Renovate → build → scan → sign → promote loop locally with Podman
+--
+
+[[introduction]]
+== Introduction
+
+Keeping base images, pipeline tasks, and application dependencies up to date is the *other half* of zero-CVE. You can build the most hardened container image in the world, but if your Hummingbird runtime pins an image tag from six months ago, you are running with every CVE that has been fixed since.
+
+**Renovate Bot** solves this by continuously scanning your repositories for outdated references and opening pull requests when updates are available. In this sub-module you will run Renovate as a Tekton Pipeline -- using Podman rootless throughout, with Buildah and Skopeo as the container toolchain. No Docker daemon, no privileged pods.
+
+=== Architecture Overview
+
+----
+Renovate Bot (Tekton CronJob trigger)
+    │
+    ├── Scans GitHub repos for stale deps
+    ├── Detects outdated Hummingbird/UBI image refs in Containerfiles
+    ├── Detects outdated Tekton Task bundle versions
+    └── Opens PRs on GitHub
+           │
+           ▼
+Tekton EventListener (GitHub webhook)
+    │
+    └── Renovate PR opened → triggers validation pipeline
+           │
+           ├── buildah build (multi-stage UBI → Hummingbird)
+           ├── grype scan
+           ├── cosign sign + syft attest
+           └── skopeo promote on merge
+----
+
+=== What You Will Build
+
+----
+Part 1: Renovate Config in Your GitOps Repo (~5 min)
+  -> renovate.json with custom managers for Containerfiles, Tekton, and packages
+
+Part 2: Renovate as a Tekton Pipeline (~8 min)
+  -> Secret, ConfigMap, Task, Pipeline, CronJob with RBAC
+
+Part 3: Tekton EventListener for Renovate PRs (~8 min)
+  -> CEL-filtered triggers for PR opened and PR merged
+
+Part 4: Full Build Pipeline with Buildah + Skopeo (~10 min)
+  -> Clone, build, scan, SBOM, sign, promote — all Podman-native
+
+Part 5: Testing the Full Loop Locally with Podman (~5 min)
+  -> Simulate the entire pipeline on your workstation
+----
+
+=== Step 0: Log in to OpenShift
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc login --server={openshift-api}
+----
+
+Verify the connection:
+
+[source,bash,role=execute]
+----
+oc whoami
+oc project
+----
+
+[[renovate-config]]
+== Part 1: Renovate Config in Your GitOps Repo
+
+Place this at the root of each repo Renovate will scan. It covers Containerfile image refs, Tekton bundle versions, and npm/pip/maven dependencies all in one.
+
+=== Step 1: Create the Renovate Configuration
+
+[source,bash,role=execute]
+----
+cat > renovate.json << 'RENOVATE_EOF'
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+
+  "timezone": "America/New_York",
+  "schedule": ["after 6am and before 9am on weekdays"],
+
+  "labels": ["renovate", "dependencies"],
+  "assignees": ["your-github-username"],
+
+  "customManagers": [
+    {
+      "description": "Track Hummingbird runtime image versions in Containerfiles",
+      "customType": "regex",
+      "fileMatch": ["(^|/)Containerfile$", "(^|/)Dockerfile$"],
+      "matchStrings": [
+        "FROM\\s+(?<depName>quay\\.io/hummingbird-hatchling/[^:@\\s]+):(?<currentValue>[^\\s@]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Track UBI builder image versions in Containerfiles",
+      "customType": "regex",
+      "fileMatch": ["(^|/)Containerfile$", "(^|/)Dockerfile$"],
+      "matchStrings": [
+        "FROM\\s+(?<depName>registry\\.access\\.redhat\\.com/ubi[^:@\\s]+):(?<currentValue>[^\\s@]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Track Tekton ClusterTask bundle image refs",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$", "\\.tekton/.*\\.ya?ml$"],
+      "matchStrings": [
+        "image:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Track Tekton Pipeline/Task bundle refs",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$"],
+      "matchStrings": [
+        "bundle:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Track grype, syft, cosign tool image versions",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$", "\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "GRYPE_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?",
+        "SYFT_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?",
+        "COSIGN_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+
+  "packageRules": [
+    {
+      "description": "Group all Hummingbird image updates into one PR",
+      "matchPackagePatterns": ["quay.io/hummingbird-hatchling/.*"],
+      "groupName": "Hummingbird runtime images",
+      "automerge": false,
+      "labels": ["renovate", "hummingbird", "security"]
+    },
+    {
+      "description": "Group all UBI builder image updates",
+      "matchPackagePatterns": ["registry.access.redhat.com/ubi.*"],
+      "groupName": "UBI builder images",
+      "automerge": false,
+      "labels": ["renovate", "ubi", "builder"]
+    },
+    {
+      "description": "Group Tekton tool image updates",
+      "matchFileNames": ["tekton/**", ".tekton/**"],
+      "groupName": "Tekton pipeline images",
+      "automerge": false,
+      "labels": ["renovate", "tekton"]
+    },
+    {
+      "description": "Automerge patch-level npm updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Never automerge major version bumps",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["renovate", "major-update", "needs-review"]
+    }
+  ]
+}
+RENOVATE_EOF
+----
+
+[TIP]
+====
+**Key design decisions in this config:**
+
+* **Custom regex managers** detect image references that Renovate's built-in managers miss (Containerfile `FROM` lines, Tekton `bundle:` refs, tool version env vars).
+* **Package rules** group related updates into single PRs to reduce noise -- all Hummingbird images update together, all UBI images update together.
+* **Automerge** is enabled only for patch-level npm updates. Major version bumps always require human review.
+* **Schedule** restricts PR creation to weekday mornings so your team reviews them during working hours.
+====
+
+[[renovate-tekton-pipeline]]
+== Part 2: Renovate as a Tekton Pipeline
+
+=== Step 1: Create the GitHub Token Secret
+
+Renovate needs a GitHub Personal Access Token with `repo`, `read:org`, and `read:packages` scopes.
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: renovate-github-token
+  namespace: tekton-pipelines
+type: Opaque
+stringData:
+  RENOVATE_TOKEN: "ghp_yourTokenHere"
+  GITHUB_COM_TOKEN: "ghp_yourTokenHere"
+EOF
+----
+
+[IMPORTANT]
+====
+Replace `ghp_yourTokenHere` with your actual GitHub PAT. Create one at https://github.com/settings/tokens with scopes: `repo`, `read:org`, `read:packages`.
+
+For production environments, use a GitHub App installation token instead of a PAT for better security and rate limits.
+====
+
+=== Step 2: Create the Renovate ConfigMap
+
+Store the global config (what repos to scan, platform settings) in a ConfigMap so you can update it without rebuilding the Task:
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: renovate-config
+  namespace: tekton-pipelines
+data:
+  config.js: |
+    module.exports = {
+      platform: 'github',
+      onboarding: false,
+      requireConfig: 'optional',
+
+      repositories: [
+        'your-org/your-app-repo',
+        'your-org/your-infra-repo',
+        'your-org/your-gitops-repo',
+      ],
+
+      gitAuthor: 'Renovate Bot <renovate@your-org.com>',
+      labels: ['renovate'],
+
+      prConcurrentLimit: 5,
+      prHourlyLimit: 2,
+
+      cacheDir: '/tmp/renovate-cache',
+      baseDir: '/tmp/renovate',
+    };
+EOF
+----
+
+[NOTE]
+====
+The `repositories` array lists every repo Renovate will scan. Each repo uses its own `renovate.json` (from Part 1) for per-repo configuration. The global config here handles platform and auth only.
+====
+
+=== Step 3: Create the Renovate Tekton Task
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: renovate-scan
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: renovate-image
+      type: string
+      default: "ghcr.io/renovatebot/renovate:latest"
+    - name: log-level
+      type: string
+      default: "info"
+
+  workspaces:
+    - name: renovate-config
+      description: ConfigMap mounted with config.js
+    - name: renovate-cache
+      description: PVC for caching dependency lookups between runs
+      optional: true
+
+  steps:
+    - name: run-renovate
+      image: $(params.renovate-image)
+
+      securityContext:
+        runAsNonRoot: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+
+      env:
+        - name: RENOVATE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: renovate-github-token
+              key: RENOVATE_TOKEN
+        - name: GITHUB_COM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: renovate-github-token
+              key: GITHUB_COM_TOKEN
+        - name: RENOVATE_PLATFORM
+          value: github
+        - name: LOG_LEVEL
+          value: $(params.log-level)
+        - name: RENOVATE_CONFIG_FILE
+          value: /workspace/renovate-config/config.js
+        - name: RENOVATE_CACHE_DIR
+          value: /workspace/renovate-cache
+
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "=== Renovate Bot starting ==="
+        echo "Image: $(params.renovate-image)"
+        echo "Log level: $(params.log-level)"
+        echo "Config: $RENOVATE_CONFIG_FILE"
+
+        node -e "
+          const config = require('$RENOVATE_CONFIG_FILE');
+          console.log('Repositories to scan:');
+          (config.repositories || []).forEach(r => console.log(' -', r));
+        "
+
+        echo ""
+        echo "=== Starting scan ==="
+        renovate
+
+        echo ""
+        echo "=== Renovate scan complete ==="
+EOF
+----
+
+=== Step 4: Create the Renovate Pipeline
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: renovate-pipeline
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: renovate-image
+      type: string
+      default: "ghcr.io/renovatebot/renovate:latest"
+    - name: log-level
+      type: string
+      default: "info"
+
+  workspaces:
+    - name: renovate-config
+    - name: renovate-cache
+
+  tasks:
+    - name: renovate
+      taskRef:
+        name: renovate-scan
+      params:
+        - name: renovate-image
+          value: $(params.renovate-image)
+        - name: log-level
+          value: $(params.log-level)
+      workspaces:
+        - name: renovate-config
+          workspace: renovate-config
+        - name: renovate-cache
+          workspace: renovate-cache
+EOF
+----
+
+=== Step 5: Create the CronJob Trigger with RBAC
+
+This creates the ServiceAccount, Role, RoleBinding, PVC, and CronJob that triggers the Renovate pipeline on a schedule:
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: renovate-trigger-sa
+  namespace: tekton-pipelines
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: renovate-trigger-role
+  namespace: tekton-pipelines
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create", "list", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: renovate-trigger-rolebinding
+  namespace: tekton-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: renovate-trigger-sa
+roleRef:
+  kind: Role
+  name: renovate-trigger-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: renovate-cache-pvc
+  namespace: tekton-pipelines
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: renovate-scheduler
+  namespace: tekton-pipelines
+spec:
+  schedule: "0 7 * * 1-5"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: renovate-trigger-sa
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:latest
+              command: ["bash", "-c"]
+              args:
+                - |
+                  kubectl create -f - << PIPELINERUN
+                  apiVersion: tekton.dev/v1beta1
+                  kind: PipelineRun
+                  metadata:
+                    generateName: renovate-scheduled-
+                    namespace: tekton-pipelines
+                  spec:
+                    pipelineRef:
+                      name: renovate-pipeline
+                    params:
+                      - name: log-level
+                        value: "info"
+                    workspaces:
+                      - name: renovate-config
+                        configMap:
+                          name: renovate-config
+                      - name: renovate-cache
+                        persistentVolumeClaim:
+                          claimName: renovate-cache-pvc
+                  PIPELINERUN
+EOF
+----
+
+.*Expected output:*
+----
+serviceaccount/renovate-trigger-sa created
+role.rbac.authorization.k8s.io/renovate-trigger-role created
+rolebinding.rbac.authorization.k8s.io/renovate-trigger-rolebinding created
+persistentvolumeclaim/renovate-cache-pvc created
+cronjob.batch/renovate-scheduler created
+----
+
+[TIP]
+====
+The CronJob runs weekdays at 7am -- before your team starts work. The `concurrencyPolicy: Forbid` prevents overlapping runs if a previous scan is still in progress.
+
+The PVC persists the dependency cache between runs, significantly speeding up subsequent scans.
+====
+
+[[event-listener]]
+== Part 3: Tekton EventListener for Renovate PRs
+
+When Renovate opens a PR, this EventListener triggers your Buildah/Skopeo build pipeline to validate the dependency update before it can be merged.
+
+=== Step 1: Create the EventListener
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: renovate-pr-listener
+  namespace: tekton-pipelines
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+
+    - name: renovate-pr-validate
+      interceptors:
+        - ref:
+            name: github
+          params:
+            - name: secretRef
+              value:
+                secretName: github-webhook-secret
+                secretKey: webhook-secret
+            - name: eventTypes
+              value: ["pull_request"]
+
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              value: >
+                body.action in ['opened', 'synchronize', 'reopened'] &&
+                body.pull_request.user.login in [
+                  'renovate[bot]',
+                  'renovate-bot',
+                  'app/renovate'
+                ]
+            - name: overlays
+              value:
+                - key: branch_name
+                  expression: "body.pull_request.head.ref"
+                - key: is_image_update
+                  expression: >
+                    body.pull_request.title.contains('Containerfile') ||
+                    body.pull_request.title.contains('hummingbird') ||
+                    body.pull_request.title.contains('ubi9')
+
+      bindings:
+        - ref: renovate-pr-binding
+      template:
+        ref: renovate-pr-template
+
+    - name: renovate-pr-merged
+      interceptors:
+        - ref:
+            name: github
+          params:
+            - name: secretRef
+              value:
+                secretName: github-webhook-secret
+                secretKey: webhook-secret
+            - name: eventTypes
+              value: ["pull_request"]
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              value: >
+                body.action == 'closed' &&
+                body.pull_request.merged == true &&
+                body.pull_request.user.login in ['renovate[bot]', 'renovate-bot']
+      bindings:
+        - ref: renovate-merge-binding
+      template:
+        ref: renovate-merge-template
+EOF
+----
+
+=== Step 2: Create TriggerBindings
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: renovate-pr-binding
+spec:
+  params:
+    - name: git-url
+      value: $(body.pull_request.head.repo.clone_url)
+    - name: git-revision
+      value: $(body.pull_request.head.sha)
+    - name: pr-number
+      value: $(body.pull_request.number)
+    - name: app-name
+      value: $(body.repository.name)
+    - name: base-branch
+      value: $(body.pull_request.base.ref)
+    - name: pr-title
+      value: $(body.pull_request.title)
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: renovate-merge-binding
+spec:
+  params:
+    - name: git-url
+      value: $(body.pull_request.head.repo.clone_url)
+    - name: git-revision
+      value: $(body.pull_request.merge_commit_sha)
+    - name: app-name
+      value: $(body.repository.name)
+EOF
+----
+
+=== Step 3: Create TriggerTemplates
+
+The PR validation template triggers the full build pipeline with a PR-specific image tag:
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: renovate-pr-template
+spec:
+  params:
+    - name: git-url
+    - name: git-revision
+    - name: pr-number
+    - name: app-name
+    - name: base-branch
+    - name: pr-title
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: renovate-pr-validate-
+        namespace: tekton-pipelines
+        labels:
+          renovate-pr: "$(tt.params.pr-number)"
+          app: "$(tt.params.app-name)"
+        annotations:
+          renovate-pr-title: "$(tt.params.pr-title)"
+      spec:
+        pipelineRef:
+          name: hummingbird-build-pipeline
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: app-name
+            value: $(tt.params.app-name)
+          - name: builder-registry
+            value: "registry.access.redhat.com/ubi9"
+          - name: runtime-registry
+            value: "quay.io/hummingbird-hatchling"
+          - name: image-tag
+            value: "pr-$(tt.params.pr-number)"
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: 1Gi
+          - name: registry-credentials
+            secret:
+              secretName: internal-registry-credentials
+          - name: cosign-keys
+            secret:
+              secretName: cosign-signing-keys
+EOF
+----
+
+The merge promotion template runs the same pipeline but with `image-tag: latest`, which activates the Skopeo promote step:
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: renovate-merge-template
+spec:
+  params:
+    - name: git-url
+    - name: git-revision
+    - name: app-name
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: renovate-merge-promote-
+        namespace: tekton-pipelines
+      spec:
+        pipelineRef:
+          name: hummingbird-build-pipeline
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: app-name
+            value: $(tt.params.app-name)
+          - name: image-tag
+            value: "latest"
+          - name: builder-registry
+            value: "registry.access.redhat.com/ubi9"
+          - name: runtime-registry
+            value: "quay.io/hummingbird-hatchling"
+        workspaces:
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                resources:
+                  requests:
+                    storage: 1Gi
+          - name: registry-credentials
+            secret:
+              secretName: internal-registry-credentials
+          - name: cosign-keys
+            secret:
+              secretName: cosign-signing-keys
+EOF
+----
+
+[NOTE]
+====
+**Two triggers, one pipeline:** Both the PR validation and merge promotion use the same `hummingbird-build-pipeline`. The difference is the `image-tag` parameter:
+
+* PR builds use `pr-<number>` -- the Skopeo promote step is skipped via a `when` condition
+* Merge builds use `latest` -- the promote step runs and copies the image to its final tag
+====
+
+[[build-pipeline]]
+== Part 4: Full Build Pipeline with Buildah + Skopeo
+
+This is the pipeline that runs when Renovate opens a PR. It uses Buildah and Skopeo throughout -- no Docker daemon.
+
+=== Step 1: Create the Build Pipeline
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: hummingbird-build-pipeline
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+      default: main
+    - name: app-name
+      type: string
+    - name: image-registry
+      type: string
+      default: "registry.internal.example.com:5000/apps"
+    - name: image-tag
+      type: string
+      default: "latest"
+    - name: builder-registry
+      type: string
+      default: "registry.access.redhat.com/ubi9"
+    - name: runtime-registry
+      type: string
+      default: "quay.io/hummingbird-hatchling"
+
+  workspaces:
+    - name: source
+    - name: registry-credentials
+    - name: cosign-keys
+
+  results:
+    - name: image-digest
+      value: $(tasks.build.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build.results.IMAGE_URL)
+
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+      workspaces:
+        - name: output
+          workspace: source
+
+    - name: build
+      runAfter: [clone]
+      taskRef:
+        name: buildah-podman-task
+      params:
+        - name: IMAGE
+          value: "$(params.image-registry)/$(params.app-name):$(params.image-tag)"
+        - name: BUILDER_REGISTRY
+          value: $(params.builder-registry)
+        - name: RUNTIME_REGISTRY
+          value: $(params.runtime-registry)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: scan
+      runAfter: [build]
+      taskRef:
+        name: grype-scan-task
+      params:
+        - name: IMAGE
+          value: "$(tasks.build.results.IMAGE_URL)"
+        - name: FAIL_ON
+          value: "high"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: sbom
+      runAfter: [build]
+      taskRef:
+        name: syft-sbom-task
+      params:
+        - name: IMAGE
+          value: "$(tasks.build.results.IMAGE_URL)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: sign
+      runAfter: [scan, sbom]
+      taskRef:
+        name: cosign-sign-attest-task
+      params:
+        - name: IMAGE
+          value: "$(tasks.build.results.IMAGE_URL)"
+        - name: IMAGE_DIGEST
+          value: "$(tasks.build.results.IMAGE_DIGEST)"
+      workspaces:
+        - name: cosign-keys
+          workspace: cosign-keys
+
+    - name: promote
+      runAfter: [sign]
+      when:
+        - input: "$(params.image-tag)"
+          operator: in
+          values: ["latest"]
+      taskRef:
+        name: skopeo-promote-task
+      params:
+        - name: SRC_IMAGE
+          value: "$(tasks.build.results.IMAGE_URL)"
+        - name: DST_IMAGE
+          value: "$(params.image-registry)/$(params.app-name):$(tasks.clone.results.commit)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials
+EOF
+----
+
+[TIP]
+====
+**Pipeline flow:**
+
+1. **clone** -- fetch source from the Renovate PR branch
+2. **build** -- Buildah multi-stage build (UBI builder → Hummingbird runtime)
+3. **scan** + **sbom** -- run in parallel after build (Grype CVE scan + Syft SBOM generation)
+4. **sign** -- Cosign signs the image and attests the SBOM (waits for both scan and sbom)
+5. **promote** -- Skopeo copies to final tag with digest verification (only on merge, not PR builds)
+====
+
+=== Step 2: Create the Buildah Task (Podman-native)
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: buildah-podman-task
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: BUILDER_REGISTRY
+      type: string
+    - name: RUNTIME_REGISTRY
+      type: string
+    - name: CONTAINERFILE
+      type: string
+      default: ./Containerfile
+    - name: BUILDAH_IMAGE
+      type: string
+      default: "registry.internal.example.com:5000/tools/buildah:latest"
+
+  results:
+    - name: IMAGE_DIGEST
+    - name: IMAGE_URL
+
+  workspaces:
+    - name: source
+    - name: registry-credentials
+
+  stepTemplate:
+    env:
+      - name: REGISTRY_AUTH_FILE
+        value: /workspace/registry-credentials/.dockerconfigjson
+      - name: BUILDAH_FORMAT
+        value: oci
+      - name: BUILDAH_LAYERS
+        value: "true"
+
+  steps:
+    - name: build-and-push
+      image: $(params.BUILDAH_IMAGE)
+      workingDir: /workspace/source
+      securityContext:
+        capabilities:
+          add: ["SETFCAP"]
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "=== Buildah version ==="
+        buildah version
+
+        echo "=== Building: $(params.IMAGE) ==="
+        buildah build \
+          --authfile    "$REGISTRY_AUTH_FILE" \
+          --build-arg   "BUILDER_REGISTRY=$(params.BUILDER_REGISTRY)" \
+          --build-arg   "RUNTIME_REGISTRY=$(params.RUNTIME_REGISTRY)" \
+          --layers \
+          --format      oci \
+          --tag         "$(params.IMAGE)" \
+          --file        "$(params.CONTAINERFILE)" \
+          .
+
+        echo "=== Layer summary ==="
+        buildah history "$(params.IMAGE)"
+
+        echo "=== Pushing: $(params.IMAGE) ==="
+        buildah push \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          "$(params.IMAGE)" \
+          "docker://$(params.IMAGE)"
+
+        DIGEST=$(buildah inspect \
+          --format '{{.FromImageDigest}}' "$(params.IMAGE)")
+        echo "Digest: $DIGEST"
+
+        echo -n "$DIGEST"       > $(results.IMAGE_DIGEST.path)
+        echo -n "$(params.IMAGE)" > $(results.IMAGE_URL.path)
+EOF
+----
+
+=== Step 3: Create the Grype Scan Task
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: grype-scan-task
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: FAIL_ON
+      type: string
+      default: "high"
+    - name: GRYPE_IMAGE
+      type: string
+      default: "registry.internal.example.com:5000/tools/grype:latest"
+
+  workspaces:
+    - name: registry-credentials
+
+  steps:
+    - name: scan
+      image: $(params.GRYPE_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+        - name: GRYPE_DB_UPDATE_URL
+          value: "https://registry.internal.example.com/grype-db"
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "=== CVE Scan: $(params.IMAGE) ==="
+
+        grype "$(params.IMAGE)" \
+          --fail-on "$(params.FAIL_ON)" \
+          --output table
+
+        echo ""
+        echo "=== CVE Summary (JSON) ==="
+        grype "$(params.IMAGE)" --output json \
+          | jq '{
+              image:    "$(params.IMAGE)",
+              critical: [.matches[] | select(.vulnerability.severity=="Critical")] | length,
+              high:     [.matches[] | select(.vulnerability.severity=="High")] | length,
+              medium:   [.matches[] | select(.vulnerability.severity=="Medium")] | length,
+              low:      [.matches[] | select(.vulnerability.severity=="Low")] | length
+            }'
+EOF
+----
+
+=== Step 4: Create the Syft SBOM Task
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: syft-sbom-task
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: SYFT_IMAGE
+      type: string
+      default: "registry.internal.example.com:5000/tools/syft:latest"
+
+  workspaces:
+    - name: registry-credentials
+
+  results:
+    - name: SBOM_PATH
+
+  steps:
+    - name: generate-sbom
+      image: $(params.SYFT_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        SBOM_PATH="/workspace/sbom-$(date +%s).spdx.json"
+
+        echo "=== Generating SBOM for $(params.IMAGE) ==="
+        syft "$(params.IMAGE)" \
+          --output "spdx-json=$SBOM_PATH"
+
+        PKG_COUNT=$(jq '.packages | length' "$SBOM_PATH")
+        echo "Package count: $PKG_COUNT"
+
+        echo -n "$SBOM_PATH" > $(results.SBOM_PATH.path)
+EOF
+----
+
+=== Step 5: Create the Cosign Sign + Attest Task
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: cosign-sign-attest-task
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: IMAGE_DIGEST
+      type: string
+    - name: COSIGN_IMAGE
+      type: string
+      default: "registry.internal.example.com:5000/tools/cosign:latest"
+
+  workspaces:
+    - name: cosign-keys
+
+  steps:
+    - name: sign-and-attest
+      image: $(params.COSIGN_IMAGE)
+      env:
+        - name: COSIGN_KEY
+          value: /workspace/cosign-keys/cosign.key
+        - name: COSIGN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cosign-signing-keys
+              key: password
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        IMAGE_REF="$(params.IMAGE)@$(params.IMAGE_DIGEST)"
+        echo "=== Signing: $IMAGE_REF ==="
+
+        cosign sign \
+          --yes \
+          --key "$COSIGN_KEY" \
+          "$IMAGE_REF"
+
+        echo "=== Generating SBOM for attestation ==="
+        syft "$IMAGE_REF" --output "spdx-json=/tmp/sbom.spdx.json"
+
+        echo "=== Attaching SBOM attestation ==="
+        cosign attest \
+          --yes \
+          --key "$COSIGN_KEY" \
+          --predicate /tmp/sbom.spdx.json \
+          --type spdxjson \
+          "$IMAGE_REF"
+
+        echo "=== Verifying signature ==="
+        cosign verify \
+          --key /workspace/cosign-keys/cosign.pub \
+          "$IMAGE_REF" \
+          | jq '.[0] | {subject: .critical.identity, image: .critical.image}'
+EOF
+----
+
+=== Step 6: Create the Skopeo Promote Task
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: skopeo-promote-task
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: SRC_IMAGE
+      type: string
+    - name: DST_IMAGE
+      type: string
+    - name: SKOPEO_IMAGE
+      type: string
+      default: "registry.internal.example.com:5000/tools/skopeo:latest"
+
+  workspaces:
+    - name: registry-credentials
+
+  steps:
+    - name: promote
+      image: $(params.SKOPEO_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "=== Promoting ==="
+        echo "  src: $(params.SRC_IMAGE)"
+        echo "  dst: $(params.DST_IMAGE)"
+
+        SRC_DIGEST=$(skopeo inspect \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          "docker://$(params.SRC_IMAGE)" \
+          | jq -r '.Digest')
+        echo "Source digest: $SRC_DIGEST"
+
+        skopeo copy \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --multi-arch all \
+          "docker://$(params.SRC_IMAGE)" \
+          "docker://$(params.DST_IMAGE)"
+
+        DST_DIGEST=$(skopeo inspect \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          "docker://$(params.DST_IMAGE)" \
+          | jq -r '.Digest')
+        echo "Dest digest: $DST_DIGEST"
+
+        if [ "$SRC_DIGEST" != "$DST_DIGEST" ]; then
+          echo "ERROR: digest mismatch — promotion failed integrity check"
+          exit 1
+        fi
+
+        echo "Digest integrity verified"
+EOF
+----
+
+[[local-testing]]
+== Part 5: Testing the Full Loop Locally with Podman
+
+Before deploying to a cluster, you can simulate the entire Renovate -> build -> scan -> sign loop locally using Podman.
+
+=== Step 1: Simulate What Renovate Would Detect
+
+[source,bash,role=execute]
+----
+CURRENT_TAG=$(grep 'hummingbird-hatchling' Containerfile | head -1 | grep -oP ':\K[^\s]+')
+LATEST_DIGEST=$(skopeo inspect \
+  docker://quay.io/hummingbird-hatchling/nodejs-20:latest \
+  | jq -r '.Digest')
+
+echo "Containerfile tag:  $CURRENT_TAG"
+echo "Latest digest:      $LATEST_DIGEST"
+----
+
+=== Step 2: Build the Updated Image
+
+[source,bash,role=execute]
+----
+hb-build \
+  --tag myapp:renovate-test \
+  --file Containerfile \
+  .
+----
+
+=== Step 3: Scan for CVEs
+
+[source,bash,role=execute]
+----
+hb-scan myapp:renovate-test
+----
+
+=== Step 4: Generate SBOM
+
+[source,bash,role=execute]
+----
+hb-sbom myapp:renovate-test /tmp/myapp-sbom.spdx.json
+----
+
+=== Step 5: Sign and Attest
+
+[source,bash,role=execute]
+----
+cosign sign \
+  --key ~/.config/containers/signing/cosign.key \
+  localhost/myapp:renovate-test
+
+cosign attest \
+  --key ~/.config/containers/signing/cosign.key \
+  --predicate /tmp/myapp-sbom.spdx.json \
+  --type spdxjson \
+  localhost/myapp:renovate-test
+----
+
+=== Step 6: Verify Everything Is Clean
+
+[source,bash,role=execute]
+----
+cosign verify \
+  --key ~/.config/containers/signing/cosign.pub \
+  localhost/myapp:renovate-test
+
+cosign verify-attestation \
+  --key ~/.config/containers/signing/cosign.pub \
+  --type spdxjson \
+  localhost/myapp:renovate-test \
+  | jq '.payload | @base64d | fromjson | .predicate.packages | length'
+
+echo "Full loop validated locally"
+----
+
+[NOTE]
+====
+Make sure you have generated a cosign key pair before running the sign/verify steps:
+
+[source,bash]
+----
+mkdir -p ~/.config/containers/signing
+cd ~/.config/containers/signing
+cosign generate-key-pair
+----
+====
+
+[[end-to-end-flow]]
+== How the Full Loop Works End to End
+
+----
+Daily 7am CronJob
+    └── Creates PipelineRun for renovate-pipeline
+          └── renovate-scan Task runs in-cluster
+                └── Scans all repos in renovate config
+                      └── Finds: nodejs-20 updated in hummingbird-hatchling
+                            └── Opens PR: "chore(deps): update hummingbird nodejs-20"
+
+GitHub Webhook → Tekton EventListener
+    └── CEL filter: user == 'renovate[bot]' AND action == 'opened'
+          └── Creates PipelineRun: renovate-pr-validate-xxxxx
+                ├── git-clone Task
+                ├── buildah-podman-task
+                │     └── buildah build with new Hummingbird base
+                ├── grype-scan-task
+                │     └── 0 CVEs  (or pipeline fails here)
+                ├── syft-sbom-task
+                │     └── SBOM generated
+                ├── cosign-sign-attest-task
+                │     └── Image signed + SBOM attested
+                └── skopeo-promote-task (skipped — this is a PR build)
+                      └── Tagged as pr-1234 in registry
+
+PR passes all checks → developer approves → Merge
+
+GitHub Webhook → Tekton EventListener
+    └── CEL filter: action == 'closed' AND merged == true AND renovate[bot]
+          └── Creates PipelineRun: renovate-merge-promote-xxxxx
+                └── Same pipeline, image-tag = 'latest'
+                      └── skopeo-promote-task runs this time
+                            └── SHA-tagged image promoted to :latest
+                                  └── Digest verified before and after
+----
+
+The key discipline is that **Renovate never merges anything directly** -- it opens PRs, the Tekton pipeline validates the updated Hummingbird base actually builds and scans clean, a human approves, and only then does the merge trigger the promotion. The grype scan is your safety net: if a new Hummingbird image somehow introduced a regression or a CVE slipped through, the pipeline catches it before it reaches production.
+
+[[summary]]
+== Summary
+
+=== What You Have Accomplished
+
+* Deployed **Renovate Bot as a Tekton Pipeline** that runs on a schedule and scans repos for stale Containerfile image refs, Tekton bundle versions, and language-level dependencies
+* Created **custom regex managers** that detect Hummingbird runtime images, UBI builder images, and security tool versions that standard package managers miss
+* Built a **Tekton EventListener** with CEL filters that triggers validation builds only for Renovate PRs
+* Implemented a **full Buildah + Skopeo build pipeline** -- clone, build, CVE scan, SBOM generation, cosign signing, and digest-verified promotion -- with no Docker daemon
+* Tested the **complete loop locally** with Podman before deploying to the cluster
+
+=== Key Takeaways
+
+[cols="1,2",options="header"]
+|===
+| Concept | Explanation
+
+| **Renovate + Tekton**
+| Renovate runs as a scheduled Tekton Task, scanning repos and opening PRs. No external SaaS dependency -- everything runs in your cluster.
+
+| **Buildah + Skopeo**
+| The entire container toolchain is Podman-native. Buildah builds OCI images, Skopeo copies and inspects them. No Docker socket, no privileged containers.
+
+| **Digest-Verified Promotion**
+| Skopeo compares source and destination digests after copy. If they differ, the promotion fails. This prevents silent corruption during image transfer.
+
+| **PR Validation Gate**
+| Renovate PRs trigger the same build pipeline as production merges. The grype scan fails the pipeline if any high/critical CVEs are found, preventing bad updates from merging.
+
+| **CronJob Scheduling**
+| A Kubernetes CronJob triggers the Renovate pipeline on a schedule. The PVC caches dependency lookups between runs for faster subsequent scans.
+|===
+
+=== Next Steps
+
+1. **Replace placeholder tokens** in the Secret and ConfigMap with your actual GitHub PAT and repository list
+2. **Configure the GitHub webhook** to point at your EventListener ingress URL
+3. **Customize `renovate.json`** in each repo to match your specific dependency patterns
+4. **Add Slack/Teams notifications** using Tekton Results or a notification Task at the end of the pipeline
+5. **Integrate with ACS** (xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7]) to enforce policies on Renovate-built images
+
+---
+
+[.text-center]
+*Congratulations!* You have deployed an automated dependency update pipeline that keeps your Hummingbird containers up to date with zero-CVE confidence.

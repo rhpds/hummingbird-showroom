@@ -29,6 +29,7 @@ This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, b
 * **2.2 Custom Multi-Language Strategies** -- Auto-detection for Node.js, Python, Java, Go
 * **2.3 Security Pipeline & Production** -- SBOM generation, vulnerability scanning, image signing
 * **2.4 SELinux Policy CI/CD with Tekton** -- Automated udica policy generation in pipelines
+* **2.8 Automated Dependency Updates with Renovate + Podman** -- Renovate Bot as Tekton pipeline with Buildah/Skopeo toolchain
 
 === Optional Exercises
 
@@ -38,6 +39,7 @@ This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, b
 * **1.8 Layering Tomcat on Hummingbird**
 * **2.5 chunkah in CI/CD Pipelines** -- Automated layer splitting in Tekton pipelines
 * **2.6 Keyless Signing with RHTAS**
+* **2.7 The Immutable Fortress -- Zero-CVE with ACS**
 
 === Appendix: Environment Setup
 
@@ -116,3 +118,6 @@ This edition of the workshop has been developed using:
 * Hummingbird runtime images from `quay.io/hummingbird-hatchling`
 * udica 0.2.8+
 * chunkah 0.2.0
+* Renovate Bot (self-hosted via Tekton)
+* Buildah / Skopeo (Podman-native container toolchain)
+* Tekton Triggers (EventListener, TriggerBindings, TriggerTemplates)

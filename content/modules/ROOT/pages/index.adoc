@@ -237,6 +237,7 @@ Ready to begin? Make sure your environment is prepared (see <<Environment Setup>
   - xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
   - xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
   - xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
+  - xref:module-02-08-renovate-podman.adoc[2.8: Automated Dependency Updates with Renovate + Podman (~35 min)]
 
 * **Optional: Module 1 Exercises (RHEL)** - Additional hands-on labs for RHEL environments
   - xref:module-01-05-chunkah.adoc[1.5: Content-Based Layer Splitting with chunkah (~15 min)]
