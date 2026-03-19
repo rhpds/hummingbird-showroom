@@ -41,6 +41,10 @@ asciidoc:
     rhtas-signing-sa: 'rhtas-signer'
     rhtas-builds-namespace: 'hummingbird-builds'
 
+    # Gitea (in-cluster Git service)
+    gitea-namespace: 'gitea'
+    gitea-admin-user: 'gitea-admin'
+
     # Placeholders for lab environment
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'

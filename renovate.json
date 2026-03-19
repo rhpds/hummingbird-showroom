@@ -1,0 +1,98 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+
+  "timezone": "America/New_York",
+  "schedule": ["* 6-8 * * 1-5"],
+
+  "labels": ["renovate", "dependencies"],
+  "assignees": ["your-username"],
+
+  "customManagers": [
+    {
+      "description": "Track Hummingbird runtime image versions in Containerfiles",
+      "customType": "regex",
+      "fileMatch": ["(^|/)Containerfile$", "(^|/)Dockerfile$"],
+      "matchStrings": [
+        "FROM\\s+(?<depName>quay\\.io/hummingbird-hatchling/[^:@\\s]+):(?<currentValue>[^\\s@]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Track UBI builder image versions in Containerfiles",
+      "customType": "regex",
+      "fileMatch": ["(^|/)Containerfile$", "(^|/)Dockerfile$"],
+      "matchStrings": [
+        "FROM\\s+(?<depName>registry\\.access\\.redhat\\.com/ubi[^:@\\s]+):(?<currentValue>[^\\s@]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "description": "Track Tekton ClusterTask bundle image refs",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$", "\\.tekton/.*\\.ya?ml$"],
+      "matchStrings": [
+        "image:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Track Tekton Pipeline/Task bundle refs",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$"],
+      "matchStrings": [
+        "bundle:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Track grype, syft, cosign tool image versions",
+      "customType": "regex",
+      "fileMatch": ["tekton/.*\\.ya?ml$", "\\.(github|gitea)/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "GRYPE_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?",
+        "SYFT_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?",
+        "COSIGN_IMAGE:\\s+['\"]?(?<depName>[^:'\"\\s]+):(?<currentValue>[^'\"\\s]+)['\"]?"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+
+  "packageRules": [
+    {
+      "description": "Group all Hummingbird image updates into one PR",
+      "matchPackagePatterns": ["quay.io/hummingbird-hatchling/.*"],
+      "groupName": "Hummingbird runtime images",
+      "automerge": false,
+      "labels": ["renovate", "hummingbird", "security"]
+    },
+    {
+      "description": "Group all UBI builder image updates",
+      "matchPackagePatterns": ["registry.access.redhat.com/ubi.*"],
+      "groupName": "UBI builder images",
+      "automerge": false,
+      "labels": ["renovate", "ubi", "builder"]
+    },
+    {
+      "description": "Group Tekton tool image updates",
+      "matchFileNames": ["tekton/**", ".tekton/**"],
+      "groupName": "Tekton pipeline images",
+      "automerge": false,
+      "labels": ["renovate", "tekton"]
+    },
+    {
+      "description": "Automerge patch-level npm updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Never automerge major version bumps",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["renovate", "major-update", "needs-review"]
+    }
+  ]
+}

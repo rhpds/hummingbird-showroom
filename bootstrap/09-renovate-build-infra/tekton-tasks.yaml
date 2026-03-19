@@ -1,0 +1,301 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: renovate-scan
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: renovate-image
+      type: string
+      default: "ghcr.io/renovatebot/renovate:latest"
+    - name: log-level
+      type: string
+      default: "info"
+  workspaces:
+    - name: renovate-config
+      description: ConfigMap mounted with config.js
+    - name: renovate-cache
+      description: PVC for caching dependency lookups between runs
+      optional: true
+  steps:
+    - name: run-renovate
+      image: $(params.renovate-image)
+      securityContext:
+        runAsNonRoot: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      env:
+        - name: RENOVATE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: renovate-gitea-token
+              key: RENOVATE_TOKEN
+        - name: RENOVATE_PLATFORM
+          value: gitea
+        - name: RENOVATE_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: renovate-env
+              key: RENOVATE_ENDPOINT
+              optional: true
+        - name: LOG_LEVEL
+          value: $(params.log-level)
+        - name: RENOVATE_CONFIG_FILE
+          value: /workspace/renovate-config/config.js
+        - name: RENOVATE_CACHE_DIR
+          value: /workspace/renovate-cache
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        echo "=== Renovate Bot starting ==="
+        echo "Config: $RENOVATE_CONFIG_FILE"
+        node -e "
+          const config = require('$RENOVATE_CONFIG_FILE');
+          console.log('Repositories to scan:');
+          (config.repositories || []).forEach(r => console.log(' -', r));
+        "
+        echo ""
+        echo "=== Starting scan ==="
+        renovate
+        echo ""
+        echo "=== Renovate scan complete ==="
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-podman-task
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: BUILDER_REGISTRY
+      type: string
+    - name: RUNTIME_REGISTRY
+      type: string
+    - name: CONTAINERFILE
+      type: string
+      default: ./Containerfile
+    - name: BUILDAH_IMAGE
+      type: string
+      default: "registry.redhat.io/rhel9/buildah:latest"
+  results:
+    - name: IMAGE_DIGEST
+    - name: IMAGE_URL
+  workspaces:
+    - name: source
+    - name: registry-credentials
+  stepTemplate:
+    env:
+      - name: REGISTRY_AUTH_FILE
+        value: /workspace/registry-credentials/.dockerconfigjson
+      - name: BUILDAH_FORMAT
+        value: oci
+      - name: BUILDAH_LAYERS
+        value: "true"
+      - name: STORAGE_DRIVER
+        value: vfs
+  steps:
+    - name: build-and-push
+      image: $(params.BUILDAH_IMAGE)
+      workingDir: /workspace/source
+      securityContext:
+        capabilities:
+          add: ["SETFCAP"]
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        echo "=== Buildah version ==="
+        buildah version
+        echo "=== Building: $(params.IMAGE) ==="
+        buildah build \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --storage-driver vfs \
+          --build-arg "BUILDER_REGISTRY=$(params.BUILDER_REGISTRY)" \
+          --build-arg "RUNTIME_REGISTRY=$(params.RUNTIME_REGISTRY)" \
+          --layers \
+          --format oci \
+          --tag "$(params.IMAGE)" \
+          --file "$(params.CONTAINERFILE)" \
+          .
+        echo "=== Pushing: $(params.IMAGE) ==="
+        buildah push \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --storage-driver vfs \
+          --tls-verify=false \
+          --digestfile /tmp/image-digest \
+          "$(params.IMAGE)" \
+          "docker://$(params.IMAGE)"
+        DIGEST=$(cat /tmp/image-digest)
+        echo "Pushed digest: $DIGEST"
+        echo -n "$DIGEST" > $(results.IMAGE_DIGEST.path)
+        echo -n "$(params.IMAGE)" > $(results.IMAGE_URL.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: grype-scan-task
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: FAIL_ON
+      type: string
+      default: "critical"
+    - name: GRYPE_IMAGE
+      type: string
+      default: "anchore/grype:latest"
+  workspaces:
+    - name: registry-credentials
+  steps:
+    - name: scan
+      image: $(params.GRYPE_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+      command: ["/grype"]
+      args:
+        - "registry:$(params.IMAGE)"
+        - "--fail-on"
+        - "$(params.FAIL_ON)"
+        - "--output"
+        - "table"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: syft-sbom-task
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: SYFT_IMAGE
+      type: string
+      default: "anchore/syft:latest"
+  workspaces:
+    - name: registry-credentials
+  results:
+    - name: SBOM_PATH
+  steps:
+    - name: generate-sbom
+      image: $(params.SYFT_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+      command: ["/syft"]
+      args:
+        - "registry:$(params.IMAGE)"
+        - "--output"
+        - "spdx-json=/workspace/sbom.spdx.json"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: cosign-sign-attest-task
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: IMAGE
+      type: string
+    - name: IMAGE_DIGEST
+      type: string
+    - name: COSIGN_IMAGE
+      type: string
+      default: "bitnami/cosign:latest"
+  workspaces:
+    - name: cosign-keys
+  steps:
+    - name: sign
+      image: $(params.COSIGN_IMAGE)
+      env:
+        - name: COSIGN_KEY
+          value: /workspace/cosign-keys/cosign.key
+        - name: COSIGN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cosign-signing-keys
+              key: password
+      command: ["cosign"]
+      args:
+        - "sign"
+        - "--yes"
+        - "--key"
+        - "/workspace/cosign-keys/cosign.key"
+        - "--allow-insecure-registry"
+        - "$(params.IMAGE)@$(params.IMAGE_DIGEST)"
+    - name: verify
+      image: $(params.COSIGN_IMAGE)
+      command: ["cosign"]
+      args:
+        - "verify"
+        - "--key"
+        - "/workspace/cosign-keys/cosign.pub"
+        - "--allow-insecure-registry"
+        - "$(params.IMAGE)@$(params.IMAGE_DIGEST)"
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: skopeo-promote-task
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: SRC_IMAGE
+      type: string
+    - name: DST_IMAGE
+      type: string
+    - name: SKOPEO_IMAGE
+      type: string
+      default: "quay.io/skopeo/stable:latest"
+  workspaces:
+    - name: registry-credentials
+  steps:
+    - name: promote
+      image: $(params.SKOPEO_IMAGE)
+      env:
+        - name: REGISTRY_AUTH_FILE
+          value: /workspace/registry-credentials/.dockerconfigjson
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        echo "=== Promoting ==="
+        echo "  src: $(params.SRC_IMAGE)"
+        echo "  dst: $(params.DST_IMAGE)"
+        SRC_DIGEST=$(skopeo inspect \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --tls-verify=false \
+          --format '{{.Digest}}' \
+          "docker://$(params.SRC_IMAGE)")
+        echo "Source digest: $SRC_DIGEST"
+        skopeo copy \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --src-tls-verify=false \
+          --dest-tls-verify=false \
+          "docker://$(params.SRC_IMAGE)" \
+          "docker://$(params.DST_IMAGE)"
+        DST_DIGEST=$(skopeo inspect \
+          --authfile "$REGISTRY_AUTH_FILE" \
+          --tls-verify=false \
+          --format '{{.Digest}}' \
+          "docker://$(params.DST_IMAGE)")
+        echo "Dest digest: $DST_DIGEST"
+        if [ "$SRC_DIGEST" != "$DST_DIGEST" ]; then
+          echo "ERROR: digest mismatch — promotion failed integrity check"
+          exit 1
+        fi
+        echo "Digest integrity verified"

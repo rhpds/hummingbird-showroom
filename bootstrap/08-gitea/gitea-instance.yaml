@@ -1,0 +1,19 @@
+apiVersion: gpte.opentlc.com/v1
+kind: Gitea
+metadata:
+  name: gitea-server
+  namespace: gitea
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  giteaSsl: true
+  giteaAdminUser: gitea-admin
+  giteaAdminPassword: openshift
+  giteaAdminEmail: gitea-admin@example.com
+  giteaCreateUsers: true
+  giteaGenerateUserFormat: "lab-user-%d"
+  giteaUserNumber: 1
+  giteaUserPassword: openshift
+  postgresqlVolumeSize: 4Gi
+  giteaVolumeSize: 4Gi
+  giteaImage: quay.io/rhpds/openshift-gitea:latest

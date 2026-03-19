@@ -36,3 +36,6 @@ package-lock.json
 
 # Ignore yarn.lock for Yarn
 yarn.lock
+
+# Trusted Libraries module (kept locally for reuse, not part of published workshop)
+module-02-08-trusted-libraries.adoc
