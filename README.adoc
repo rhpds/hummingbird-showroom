@@ -85,6 +85,18 @@ On SELinux systems, append `:z` to the volume mount.
 
 ----
 zero-cve-hummingbird-showroom/
+├── bootstrap/                           # GitOps bootstrap (ArgoCD sync-waves)
+│   ├── 01-namespaces/
+│   ├── 02-operators/
+│   ├── ...
+│   ├── 08-gitea/                        # Gitea operator + instance
+│   ├── 09-renovate-build-infra/         # Renovate build pipeline infra
+│   │   ├── namespace.yaml               #   renovate-pipelines namespace
+│   │   ├── rbac.yaml                    #   ServiceAccounts, Roles, ClusterRoles
+│   │   ├── tekton-tasks.yaml            #   Buildah, Grype, Syft, Cosign, Skopeo tasks
+│   │   ├── tekton-pipelines.yaml        #   renovate-pipeline + hummingbird-build-pipeline
+│   │   └── post-config-job.yaml         #   PostSync: Quay creds + Cosign key generation
+│   └── kustomization.yaml
 ├── content/
 │   ├── antora.yml                       # Antora component descriptor
 │   ├── lib/                             # Antora extensions
@@ -101,6 +113,7 @@ zero-cve-hummingbird-showroom/
 │       └── assets/
 │           ├── attachments/             # Downloadable scripts
 │           └── images/                  # Screenshots and diagrams
+├── renovate.json                        # Renovate Bot dependency scanning config
 ├── site.yml                             # Antora site configuration
 ├── ui-config.yml                        # Showroom UI configuration
 ├── .github/workflows/gh-pages.yml       # GitHub Actions for Pages
