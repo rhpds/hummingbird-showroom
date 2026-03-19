@@ -3,7 +3,7 @@
   "extends": ["config:base"],
 
   "timezone": "America/New_York",
-  "schedule": ["after 6am and before 9am on weekdays"],
+  "schedule": ["* 6-8 * * 1-5"],
 
   "labels": ["renovate", "dependencies"],
   "assignees": ["your-username"],
