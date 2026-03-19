@@ -1,0 +1,146 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: renovate-pipeline
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  workspaces:
+    - name: renovate-config
+    - name: renovate-cache
+  params:
+    - name: log-level
+      type: string
+      default: "info"
+  tasks:
+    - name: renovate-scan
+      taskRef:
+        name: renovate-scan
+      params:
+        - name: log-level
+          value: $(params.log-level)
+      workspaces:
+        - name: renovate-config
+          workspace: renovate-config
+        - name: renovate-cache
+          workspace: renovate-cache
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: hummingbird-build-pipeline
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: git-revision
+      type: string
+      default: main
+    - name: image-name
+      type: string
+    - name: image-tag
+      type: string
+      default: latest
+    - name: builder-registry
+      type: string
+      default: "registry.access.redhat.com/ubi9"
+    - name: runtime-registry
+      type: string
+      default: "quay.io/hummingbird-hatchling"
+    - name: promote-image
+      type: string
+      default: ""
+  workspaces:
+    - name: shared-workspace
+    - name: registry-credentials
+    - name: cosign-keys
+  tasks:
+    - name: fetch-source
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      params:
+        - name: URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: SSL_VERIFY
+          value: "false"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+
+    - name: build-push
+      runAfter: [fetch-source]
+      taskRef:
+        name: buildah-podman-task
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):$(params.image-tag)"
+        - name: BUILDER_REGISTRY
+          value: $(params.builder-registry)
+        - name: RUNTIME_REGISTRY
+          value: $(params.runtime-registry)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: cve-scan
+      runAfter: [build-push]
+      taskRef:
+        name: grype-scan-task
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):$(params.image-tag)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: generate-sbom
+      runAfter: [build-push]
+      taskRef:
+        name: syft-sbom-task
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):$(params.image-tag)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials
+
+    - name: sign-image
+      runAfter: [cve-scan, generate-sbom]
+      taskRef:
+        name: cosign-sign-attest-task
+      params:
+        - name: IMAGE
+          value: "$(params.image-name):$(params.image-tag)"
+        - name: IMAGE_DIGEST
+          value: $(tasks.build-push.results.IMAGE_DIGEST)
+      workspaces:
+        - name: cosign-keys
+          workspace: cosign-keys
+
+    - name: promote
+      runAfter: [sign-image]
+      taskRef:
+        name: skopeo-promote-task
+      params:
+        - name: SRC_IMAGE
+          value: "$(params.image-name):$(params.image-tag)"
+        - name: DST_IMAGE
+          value: "$(params.promote-image):$(params.image-tag)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-credentials

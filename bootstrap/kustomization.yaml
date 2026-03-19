@@ -11,3 +11,4 @@ resources:
   - 06-rhtas-operator
   - 07-keycloak-rhtas
   - 08-gitea
+  - 09-renovate-build-infra

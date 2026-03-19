@@ -28,6 +28,11 @@ This module supports both **GitHub** and **Gitea** (in-cluster) as the Git platf
 If using Gitea, complete the Gitea setup in xref:appendix-b-openshift-setup.adoc#gitea-setup[Appendix B] first.
 ====
 
+[IMPORTANT]
+====
+**Bootstrap prerequisite:** The workshop bootstrap (`09-renovate-build-infra`) automatically provisions the `renovate-pipelines` namespace, the build pipeline and its tasks, registry credentials for Quay, and cosign signing keys. Verify the bootstrap has completed before starting this module -- see xref:appendix-b-openshift-setup.adoc#verify-renovate-infra[Appendix B, Step 35].
+====
+
 === Architecture Overview
 
 ----
@@ -231,7 +236,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: renovate-github-token
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 type: Opaque
 stringData:
   RENOVATE_TOKEN: "ghp_yourTokenHere"
@@ -257,7 +262,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: renovate-gitea-token
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 type: Opaque
 stringData:
   RENOVATE_TOKEN: "your-gitea-pat-here"
@@ -287,7 +292,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: renovate-config
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 data:
   config.js: |
     module.exports = {
@@ -326,7 +331,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: renovate-config
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 data:
   config.js: |
     module.exports = {
@@ -379,7 +384,7 @@ apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: renovate-scan
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   params:
     - name: renovate-image
@@ -463,7 +468,7 @@ apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: renovate-scan
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   params:
     - name: renovate-image
@@ -547,7 +552,7 @@ apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: renovate-pipeline
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   params:
     - name: renovate-image
@@ -589,13 +594,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: renovate-trigger-sa
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: renovate-trigger-role
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 rules:
   - apiGroups: ["tekton.dev"]
     resources: ["pipelineruns"]
@@ -605,7 +610,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: renovate-trigger-rolebinding
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 subjects:
   - kind: ServiceAccount
     name: renovate-trigger-sa
@@ -618,7 +623,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: renovate-cache-pvc
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -629,7 +634,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: renovate-scheduler
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   schedule: "0 7 * * 1-5"
   concurrencyPolicy: Forbid
@@ -650,7 +655,7 @@ spec:
                   kind: PipelineRun
                   metadata:
                     generateName: renovate-scheduled-
-                    namespace: tekton-pipelines
+                    namespace: renovate-pipelines
                   spec:
                     pipelineRef:
                       name: renovate-pipeline
@@ -705,7 +710,7 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener
 metadata:
   name: renovate-pr-listener
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   serviceAccountName: tekton-triggers-sa
   triggers:
@@ -787,7 +792,7 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener
 metadata:
   name: renovate-pr-listener
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 spec:
   serviceAccountName: tekton-triggers-sa
   triggers:
@@ -900,11 +905,15 @@ EOF
 
 === Step 3: Create TriggerTemplates
 
-The PR validation template triggers the full build pipeline with a PR-specific image tag:
+The PR validation template triggers the full build pipeline with a PR-specific image tag. The `image-name` param constructs the Quay image path from the app name:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-cat << 'EOF' | oc apply -f -
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+
+cat << EOF | oc apply -f -
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
 metadata:
@@ -918,34 +927,36 @@ spec:
     - name: base-branch
     - name: pr-title
   resourcetemplates:
-    - apiVersion: tekton.dev/v1beta1
+    - apiVersion: tekton.dev/v1
       kind: PipelineRun
       metadata:
         generateName: renovate-pr-validate-
-        namespace: tekton-pipelines
+        namespace: renovate-pipelines
         labels:
-          renovate-pr: "$(tt.params.pr-number)"
-          app: "$(tt.params.app-name)"
+          renovate-pr: "\$(tt.params.pr-number)"
+          app: "\$(tt.params.app-name)"
         annotations:
-          renovate-pr-title: "$(tt.params.pr-title)"
+          renovate-pr-title: "\$(tt.params.pr-title)"
       spec:
         pipelineRef:
           name: hummingbird-build-pipeline
         params:
           - name: git-url
-            value: $(tt.params.git-url)
+            value: \$(tt.params.git-url)
           - name: git-revision
-            value: $(tt.params.git-revision)
-          - name: app-name
-            value: $(tt.params.app-name)
+            value: \$(tt.params.git-revision)
+          - name: image-name
+            value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)"
+          - name: image-tag
+            value: "pr-\$(tt.params.pr-number)"
           - name: builder-registry
             value: "registry.access.redhat.com/ubi9"
           - name: runtime-registry
             value: "quay.io/hummingbird-hatchling"
-          - name: image-tag
-            value: "pr-$(tt.params.pr-number)"
+          - name: promote-image
+            value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)-promoted"
         workspaces:
-          - name: source
+          - name: shared-workspace
             volumeClaimTemplate:
               spec:
                 accessModes: [ReadWriteOnce]
@@ -963,9 +974,13 @@ EOF
 
 The merge promotion template runs the same pipeline but with `image-tag: latest`, which activates the Skopeo promote step:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-cat << 'EOF' | oc apply -f -
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+
+cat << EOF | oc apply -f -
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
 metadata:
@@ -976,29 +991,31 @@ spec:
     - name: git-revision
     - name: app-name
   resourcetemplates:
-    - apiVersion: tekton.dev/v1beta1
+    - apiVersion: tekton.dev/v1
       kind: PipelineRun
       metadata:
         generateName: renovate-merge-promote-
-        namespace: tekton-pipelines
+        namespace: renovate-pipelines
       spec:
         pipelineRef:
           name: hummingbird-build-pipeline
         params:
           - name: git-url
-            value: $(tt.params.git-url)
+            value: \$(tt.params.git-url)
           - name: git-revision
-            value: $(tt.params.git-revision)
-          - name: app-name
-            value: $(tt.params.app-name)
+            value: \$(tt.params.git-revision)
+          - name: image-name
+            value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)"
           - name: image-tag
             value: "latest"
           - name: builder-registry
             value: "registry.access.redhat.com/ubi9"
           - name: runtime-registry
             value: "quay.io/hummingbird-hatchling"
+          - name: promote-image
+            value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)-promoted"
         workspaces:
-          - name: source
+          - name: shared-workspace
             volumeClaimTemplate:
               spec:
                 accessModes: [ReadWriteOnce]
@@ -1023,466 +1040,236 @@ EOF
 ====
 
 [[build-pipeline]]
-== Part 4: Full Build Pipeline with Buildah + Skopeo
+== Part 4: Verify Pre-Deployed Build Pipeline
 
-This is the pipeline that runs when Renovate opens a PR. It uses Buildah and Skopeo throughout -- no Docker daemon.
+The build pipeline and all its tasks are deployed automatically by the workshop bootstrap (`09-renovate-build-infra`). This includes:
 
-=== Step 1: Create the Build Pipeline
+* **`hummingbird-build-pipeline`** -- the end-to-end pipeline: clone → build → scan → SBOM → sign → promote
+* **`buildah-podman-task`** -- Buildah multi-stage build using `registry.redhat.io/rhel9/buildah`
+* **`grype-scan-task`** -- Grype CVE scan using `anchore/grype`
+* **`syft-sbom-task`** -- Syft SBOM generation using `anchore/syft`
+* **`cosign-sign-attest-task`** -- Cosign signing using `bitnami/cosign`
+* **`skopeo-promote-task`** -- Skopeo digest-verified promotion using `registry.redhat.io/rhel9/skopeo`
+* **`internal-registry-credentials`** -- Docker-config secret for the cluster Quay registry
+* **`cosign-signing-keys`** -- EC P-256 key pair for image signing
+
+=== Step 1: Verify Pre-Deployed Pipelines and Tasks
 
 [source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Pipeline
-metadata:
-  name: hummingbird-build-pipeline
-  namespace: tekton-pipelines
-spec:
-  params:
-    - name: git-url
-      type: string
-    - name: git-revision
-      type: string
-      default: main
-    - name: app-name
-      type: string
-    - name: image-registry
-      type: string
-      default: "registry.internal.example.com:5000/apps"
-    - name: image-tag
-      type: string
-      default: "latest"
-    - name: builder-registry
-      type: string
-      default: "registry.access.redhat.com/ubi9"
-    - name: runtime-registry
-      type: string
-      default: "quay.io/hummingbird-hatchling"
+echo "=== Pipelines ==="
+oc get pipelines -n renovate-pipelines
 
-  workspaces:
-    - name: source
-    - name: registry-credentials
-    - name: cosign-keys
+echo ""
+echo "=== Tasks ==="
+oc get tasks -n renovate-pipelines
 
-  results:
-    - name: image-digest
-      value: $(tasks.build.results.IMAGE_DIGEST)
-    - name: image-url
-      value: $(tasks.build.results.IMAGE_URL)
+echo ""
+echo "=== Secrets ==="
+oc get secrets -n renovate-pipelines | grep -E 'internal-registry|cosign-signing'
+----
 
-  tasks:
-    - name: clone
-      taskRef:
-        name: git-clone
-        kind: ClusterTask
-      params:
-        - name: url
-          value: $(params.git-url)
-        - name: revision
-          value: $(params.git-revision)
-      workspaces:
-        - name: output
-          workspace: source
+.*Expected output:*
+----
+=== Pipelines ===
+NAME                          AGE
+hummingbird-build-pipeline    ...
+renovate-pipeline             ...
 
-    - name: build
-      runAfter: [clone]
-      taskRef:
-        name: buildah-podman-task
-      params:
-        - name: IMAGE
-          value: "$(params.image-registry)/$(params.app-name):$(params.image-tag)"
-        - name: BUILDER_REGISTRY
-          value: $(params.builder-registry)
-        - name: RUNTIME_REGISTRY
-          value: $(params.runtime-registry)
-      workspaces:
-        - name: source
-          workspace: source
-        - name: registry-credentials
-          workspace: registry-credentials
+=== Tasks ===
+NAME                        AGE
+buildah-podman-task         ...
+cosign-sign-attest-task     ...
+grype-scan-task             ...
+renovate-scan               ...
+skopeo-promote-task         ...
+syft-sbom-task              ...
 
-    - name: scan
-      runAfter: [build]
-      taskRef:
-        name: grype-scan-task
-      params:
-        - name: IMAGE
-          value: "$(tasks.build.results.IMAGE_URL)"
-        - name: FAIL_ON
-          value: "high"
-      workspaces:
-        - name: registry-credentials
-          workspace: registry-credentials
-
-    - name: sbom
-      runAfter: [build]
-      taskRef:
-        name: syft-sbom-task
-      params:
-        - name: IMAGE
-          value: "$(tasks.build.results.IMAGE_URL)"
-      workspaces:
-        - name: registry-credentials
-          workspace: registry-credentials
-
-    - name: sign
-      runAfter: [scan, sbom]
-      taskRef:
-        name: cosign-sign-attest-task
-      params:
-        - name: IMAGE
-          value: "$(tasks.build.results.IMAGE_URL)"
-        - name: IMAGE_DIGEST
-          value: "$(tasks.build.results.IMAGE_DIGEST)"
-      workspaces:
-        - name: cosign-keys
-          workspace: cosign-keys
-
-    - name: promote
-      runAfter: [sign]
-      when:
-        - input: "$(params.image-tag)"
-          operator: in
-          values: ["latest"]
-      taskRef:
-        name: skopeo-promote-task
-      params:
-        - name: SRC_IMAGE
-          value: "$(tasks.build.results.IMAGE_URL)"
-        - name: DST_IMAGE
-          value: "$(params.image-registry)/$(params.app-name):$(tasks.clone.results.commit)"
-      workspaces:
-        - name: registry-credentials
-          workspace: registry-credentials
-EOF
+=== Secrets ===
+internal-registry-credentials   kubernetes.io/dockerconfigjson   ...
+cosign-signing-keys             Opaque                           ...
 ----
 
 [TIP]
 ====
-**Pipeline flow:**
+**Pipeline flow (pre-deployed):**
 
-1. **clone** -- fetch source from the Renovate PR branch
-2. **build** -- Buildah multi-stage build (UBI builder → Hummingbird runtime)
-3. **scan** + **sbom** -- run in parallel after build (Grype CVE scan + Syft SBOM generation)
-4. **sign** -- Cosign signs the image and attests the SBOM (waits for both scan and sbom)
+1. **fetch-source** -- `git-clone` from the Renovate PR branch (resolved from `openshift-pipelines`)
+2. **build-push** -- Buildah multi-stage build (UBI builder → Hummingbird runtime), pushes to Quay
+3. **cve-scan** + **generate-sbom** -- run in parallel after build (Grype CVE scan + Syft SBOM generation)
+4. **sign-image** -- Cosign signs the image with the bootstrap-generated key pair
 5. **promote** -- Skopeo copies to final tag with digest verification (only on merge, not PR builds)
 ====
 
-=== Step 2: Create the Buildah Task (Podman-native)
+=== Step 2: Discover Your Quay Route
 
 [source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Task
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+echo "Quay registry: ${QUAY_ROUTE}"
+----
+
+=== Step 3: Trigger a Manual Build Pipeline Run
+
+Now trigger the full build → scan → sign → push pipeline against the Gitea `hummingbird-app` repo, pushing the resulting image to the cluster Quay registry:
+
+[tabs]
+====
+GitHub::
++
+--
+[source,bash,role=execute]
+----
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+
+cat << EOF | oc create -f -
+apiVersion: tekton.dev/v1
+kind: PipelineRun
 metadata:
-  name: buildah-podman-task
-  namespace: tekton-pipelines
+  generateName: hummingbird-build-manual-
+  namespace: renovate-pipelines
 spec:
+  pipelineRef:
+    name: hummingbird-build-pipeline
   params:
-    - name: IMAGE
-      type: string
-    - name: BUILDER_REGISTRY
-      type: string
-    - name: RUNTIME_REGISTRY
-      type: string
-    - name: CONTAINERFILE
-      type: string
-      default: ./Containerfile
-    - name: BUILDAH_IMAGE
-      type: string
-      default: "registry.internal.example.com:5000/tools/buildah:latest"
-
-  results:
-    - name: IMAGE_DIGEST
-    - name: IMAGE_URL
-
+    - name: git-url
+      value: "https://github.com/your-org/hummingbird-app.git"
+    - name: git-revision
+      value: main
+    - name: image-name
+      value: "${QUAY_ROUTE}/workshopuser/hummingbird-app"
+    - name: image-tag
+      value: "manual-test"
+    - name: promote-image
+      value: "${QUAY_ROUTE}/workshopuser/hummingbird-app-promoted"
   workspaces:
-    - name: source
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
     - name: registry-credentials
-
-  stepTemplate:
-    env:
-      - name: REGISTRY_AUTH_FILE
-        value: /workspace/registry-credentials/.dockerconfigjson
-      - name: BUILDAH_FORMAT
-        value: oci
-      - name: BUILDAH_LAYERS
-        value: "true"
-
-  steps:
-    - name: build-and-push
-      image: $(params.BUILDAH_IMAGE)
-      workingDir: /workspace/source
-      securityContext:
-        capabilities:
-          add: ["SETFCAP"]
-      script: |
-        #!/bin/bash
-        set -euo pipefail
-
-        echo "=== Buildah version ==="
-        buildah version
-
-        echo "=== Building: $(params.IMAGE) ==="
-        buildah build \
-          --authfile    "$REGISTRY_AUTH_FILE" \
-          --build-arg   "BUILDER_REGISTRY=$(params.BUILDER_REGISTRY)" \
-          --build-arg   "RUNTIME_REGISTRY=$(params.RUNTIME_REGISTRY)" \
-          --layers \
-          --format      oci \
-          --tag         "$(params.IMAGE)" \
-          --file        "$(params.CONTAINERFILE)" \
-          .
-
-        echo "=== Layer summary ==="
-        buildah history "$(params.IMAGE)"
-
-        echo "=== Pushing: $(params.IMAGE) ==="
-        buildah push \
-          --authfile "$REGISTRY_AUTH_FILE" \
-          "$(params.IMAGE)" \
-          "docker://$(params.IMAGE)"
-
-        DIGEST=$(buildah inspect \
-          --format '{{.FromImageDigest}}' "$(params.IMAGE)")
-        echo "Digest: $DIGEST"
-
-        echo -n "$DIGEST"       > $(results.IMAGE_DIGEST.path)
-        echo -n "$(params.IMAGE)" > $(results.IMAGE_URL.path)
-EOF
-----
-
-=== Step 3: Create the Grype Scan Task
-
-[source,bash,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: grype-scan-task
-  namespace: tekton-pipelines
-spec:
-  params:
-    - name: IMAGE
-      type: string
-    - name: FAIL_ON
-      type: string
-      default: "high"
-    - name: GRYPE_IMAGE
-      type: string
-      default: "registry.internal.example.com:5000/tools/grype:latest"
-
-  workspaces:
-    - name: registry-credentials
-
-  steps:
-    - name: scan
-      image: $(params.GRYPE_IMAGE)
-      env:
-        - name: REGISTRY_AUTH_FILE
-          value: /workspace/registry-credentials/.dockerconfigjson
-        - name: GRYPE_DB_UPDATE_URL
-          value: "https://registry.internal.example.com/grype-db"
-      script: |
-        #!/bin/bash
-        set -euo pipefail
-
-        echo "=== CVE Scan: $(params.IMAGE) ==="
-
-        grype "$(params.IMAGE)" \
-          --fail-on "$(params.FAIL_ON)" \
-          --output table
-
-        echo ""
-        echo "=== CVE Summary (JSON) ==="
-        grype "$(params.IMAGE)" --output json \
-          | jq '{
-              image:    "$(params.IMAGE)",
-              critical: [.matches[] | select(.vulnerability.severity=="Critical")] | length,
-              high:     [.matches[] | select(.vulnerability.severity=="High")] | length,
-              medium:   [.matches[] | select(.vulnerability.severity=="Medium")] | length,
-              low:      [.matches[] | select(.vulnerability.severity=="Low")] | length
-            }'
-EOF
-----
-
-=== Step 4: Create the Syft SBOM Task
-
-[source,bash,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: syft-sbom-task
-  namespace: tekton-pipelines
-spec:
-  params:
-    - name: IMAGE
-      type: string
-    - name: SYFT_IMAGE
-      type: string
-      default: "registry.internal.example.com:5000/tools/syft:latest"
-
-  workspaces:
-    - name: registry-credentials
-
-  results:
-    - name: SBOM_PATH
-
-  steps:
-    - name: generate-sbom
-      image: $(params.SYFT_IMAGE)
-      env:
-        - name: REGISTRY_AUTH_FILE
-          value: /workspace/registry-credentials/.dockerconfigjson
-      script: |
-        #!/bin/bash
-        set -euo pipefail
-
-        SBOM_PATH="/workspace/sbom-$(date +%s).spdx.json"
-
-        echo "=== Generating SBOM for $(params.IMAGE) ==="
-        syft "$(params.IMAGE)" \
-          --output "spdx-json=$SBOM_PATH"
-
-        PKG_COUNT=$(jq '.packages | length' "$SBOM_PATH")
-        echo "Package count: $PKG_COUNT"
-
-        echo -n "$SBOM_PATH" > $(results.SBOM_PATH.path)
-EOF
-----
-
-=== Step 5: Create the Cosign Sign + Attest Task
-
-[source,bash,role=execute]
-----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: cosign-sign-attest-task
-  namespace: tekton-pipelines
-spec:
-  params:
-    - name: IMAGE
-      type: string
-    - name: IMAGE_DIGEST
-      type: string
-    - name: COSIGN_IMAGE
-      type: string
-      default: "registry.internal.example.com:5000/tools/cosign:latest"
-
-  workspaces:
+      secret:
+        secretName: internal-registry-credentials
     - name: cosign-keys
-
-  steps:
-    - name: sign-and-attest
-      image: $(params.COSIGN_IMAGE)
-      env:
-        - name: COSIGN_KEY
-          value: /workspace/cosign-keys/cosign.key
-        - name: COSIGN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: cosign-signing-keys
-              key: password
-      script: |
-        #!/bin/bash
-        set -euo pipefail
-
-        IMAGE_REF="$(params.IMAGE)@$(params.IMAGE_DIGEST)"
-        echo "=== Signing: $IMAGE_REF ==="
-
-        cosign sign \
-          --yes \
-          --key "$COSIGN_KEY" \
-          "$IMAGE_REF"
-
-        echo "=== Generating SBOM for attestation ==="
-        syft "$IMAGE_REF" --output "spdx-json=/tmp/sbom.spdx.json"
-
-        echo "=== Attaching SBOM attestation ==="
-        cosign attest \
-          --yes \
-          --key "$COSIGN_KEY" \
-          --predicate /tmp/sbom.spdx.json \
-          --type spdxjson \
-          "$IMAGE_REF"
-
-        echo "=== Verifying signature ==="
-        cosign verify \
-          --key /workspace/cosign-keys/cosign.pub \
-          "$IMAGE_REF" \
-          | jq '.[0] | {subject: .critical.identity, image: .critical.image}'
+      secret:
+        secretName: cosign-signing-keys
 EOF
 ----
+--
 
-=== Step 6: Create the Skopeo Promote Task
+Gitea::
++
+--
+[source,bash,role=execute,subs="attributes"]
+----
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+GITEA_ROUTE=$(oc get route -n {gitea-namespace} \
+  -o jsonpath='{.items[0].spec.host}' 2>/dev/null || \
+  oc get route -n {gitea-namespace} -l app=gitea \
+  -o jsonpath='{.items[0].spec.host}')
+
+cat << EOF | oc create -f -
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: hummingbird-build-manual-
+  namespace: renovate-pipelines
+spec:
+  pipelineRef:
+    name: hummingbird-build-pipeline
+  params:
+    - name: git-url
+      value: "https://${GITEA_ROUTE}/{gitea-admin-user}/hummingbird-app.git"
+    - name: git-revision
+      value: main
+    - name: image-name
+      value: "${QUAY_ROUTE}/workshopuser/hummingbird-app"
+    - name: image-tag
+      value: "manual-test"
+    - name: promote-image
+      value: "${QUAY_ROUTE}/workshopuser/hummingbird-app-promoted"
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: registry-credentials
+      secret:
+        secretName: internal-registry-credentials
+    - name: cosign-keys
+      secret:
+        secretName: cosign-signing-keys
+EOF
+----
+--
+====
+
+=== Step 4: Watch the Pipeline Run
 
 [source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: skopeo-promote-task
-  namespace: tekton-pipelines
-spec:
-  params:
-    - name: SRC_IMAGE
-      type: string
-    - name: DST_IMAGE
-      type: string
-    - name: SKOPEO_IMAGE
-      type: string
-      default: "registry.internal.example.com:5000/tools/skopeo:latest"
-
-  workspaces:
-    - name: registry-credentials
-
-  steps:
-    - name: promote
-      image: $(params.SKOPEO_IMAGE)
-      env:
-        - name: REGISTRY_AUTH_FILE
-          value: /workspace/registry-credentials/.dockerconfigjson
-      script: |
-        #!/bin/bash
-        set -euo pipefail
-
-        echo "=== Promoting ==="
-        echo "  src: $(params.SRC_IMAGE)"
-        echo "  dst: $(params.DST_IMAGE)"
-
-        SRC_DIGEST=$(skopeo inspect \
-          --authfile "$REGISTRY_AUTH_FILE" \
-          "docker://$(params.SRC_IMAGE)" \
-          | jq -r '.Digest')
-        echo "Source digest: $SRC_DIGEST"
-
-        skopeo copy \
-          --authfile "$REGISTRY_AUTH_FILE" \
-          --multi-arch all \
-          "docker://$(params.SRC_IMAGE)" \
-          "docker://$(params.DST_IMAGE)"
-
-        DST_DIGEST=$(skopeo inspect \
-          --authfile "$REGISTRY_AUTH_FILE" \
-          "docker://$(params.DST_IMAGE)" \
-          | jq -r '.Digest')
-        echo "Dest digest: $DST_DIGEST"
-
-        if [ "$SRC_DIGEST" != "$DST_DIGEST" ]; then
-          echo "ERROR: digest mismatch — promotion failed integrity check"
-          exit 1
-        fi
-
-        echo "Digest integrity verified"
-EOF
+oc get pipelineruns -n renovate-pipelines --sort-by=.metadata.creationTimestamp | tail -5
 ----
+
+Watch the most recent run:
+
+[source,bash,role=execute]
+----
+LATEST_PR=$(oc get pipelineruns -n renovate-pipelines \
+  --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1].metadata.name}')
+echo "Watching: $LATEST_PR"
+oc get pipelinerun "$LATEST_PR" -n renovate-pipelines -o yaml | \
+  grep -A2 'conditions:' || echo "Still starting..."
+----
+
+[TIP]
+====
+You can also monitor the pipeline in the OpenShift Console under **Pipelines → PipelineRuns** in the `renovate-pipelines` namespace. Each task step shows its logs in real time.
+====
+
+=== Step 5: Verify the Image in Quay
+
+Once the pipeline completes, verify the image was pushed to Quay:
+
+[source,bash,role=execute]
+----
+QUAY_ROUTE=$(oc get route -n quay \
+  -l quay-operator/quayregistry=quay-registry \
+  -o jsonpath='{.items[0].spec.host}')
+
+skopeo inspect \
+  --tls-verify=false \
+  "docker://${QUAY_ROUTE}/workshopuser/hummingbird-app:manual-test" \
+  | jq '{digest: .Digest, created: .Created, layers: (.Layers | length)}'
+----
+
+[NOTE]
+====
+If the image was signed successfully, you can also verify the signature:
+
+[source,bash,role=execute]
+----
+cosign verify \
+  --key <(oc get secret cosign-signing-keys -n renovate-pipelines \
+    -o jsonpath='{.data.cosign\.pub}' | base64 -d) \
+  --insecure-ignore-tlog \
+  --allow-insecure-registry \
+  "${QUAY_ROUTE}/workshopuser/hummingbird-app:manual-test"
+----
+====
 
 [[local-testing]]
 == Part 5: Testing the Full Loop Locally with Podman
@@ -1594,7 +1381,7 @@ Git Platform Webhook → Tekton EventListener
                 ├── cosign-sign-attest-task
                 │     └── Image signed + SBOM attested
                 └── skopeo-promote-task (skipped — this is a PR build)
-                      └── Tagged as pr-1234 in registry
+                      └── Tagged as pr-1234 in Quay registry
 
 PR passes all checks → developer approves → Merge
 

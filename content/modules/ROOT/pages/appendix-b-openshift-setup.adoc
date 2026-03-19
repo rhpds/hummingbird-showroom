@@ -1230,7 +1230,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: gitea-webhook-secret
-  namespace: tekton-pipelines
+  namespace: renovate-pipelines
 type: Opaque
 stringData:
   webhook-secret: "${WEBHOOK_SECRET}"
@@ -1242,7 +1242,73 @@ EOF
 Save the `WEBHOOK_SECRET` value -- you will configure it as the webhook secret when creating the Gitea webhook in Sub-Module 2.8.
 ====
 
-Your Gitea environment is ready. Proceed to xref:module-02-08-renovate-podman.adoc[Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman] and select the **Gitea** tab at each step.
+[[verify-renovate-infra]]
+==== Step 35: Verify Renovate Build Infrastructure
+
+The bootstrap (`09-renovate-build-infra`) automatically provisions the `renovate-pipelines` namespace with the Tekton tasks, pipelines, registry credentials, and cosign signing keys needed for Sub-Module 2.8. Verify everything is in place:
+
+[source,bash,role=execute]
+----
+echo "=== Namespace ==="
+oc get namespace renovate-pipelines
+
+echo ""
+echo "=== Pipelines ==="
+oc get pipelines -n renovate-pipelines
+
+echo ""
+echo "=== Tasks ==="
+oc get tasks -n renovate-pipelines
+
+echo ""
+echo "=== Secrets ==="
+oc get secrets -n renovate-pipelines | grep -E 'internal-registry|cosign-signing'
+
+echo ""
+echo "=== RBAC ==="
+oc get sa -n renovate-pipelines | grep -E 'tekton-triggers|renovate-trigger|pipeline'
+oc get clusterrole tekton-triggers-clusterinterceptors
+----
+
+.*Expected output:*
+----
+=== Namespace ===
+NAME                  STATUS   AGE
+renovate-pipelines    Active   ...
+
+=== Pipelines ===
+NAME                          AGE
+hummingbird-build-pipeline    ...
+renovate-pipeline             ...
+
+=== Tasks ===
+NAME                        AGE
+buildah-podman-task         ...
+cosign-sign-attest-task     ...
+grype-scan-task             ...
+renovate-scan               ...
+skopeo-promote-task         ...
+syft-sbom-task              ...
+
+=== Secrets ===
+internal-registry-credentials   kubernetes.io/dockerconfigjson   ...
+cosign-signing-keys             Opaque                           ...
+----
+
+[NOTE]
+====
+**What the bootstrap provides:**
+
+* **`renovate-pipelines` namespace** -- dedicated namespace for Renovate scanning and build pipelines
+* **`hummingbird-build-pipeline`** -- end-to-end pipeline: clone → Buildah build → Grype scan → Syft SBOM → Cosign sign → Skopeo promote
+* **`renovate-pipeline`** -- pipeline for running Renovate dependency scans
+* **Six Tekton Tasks** -- using real tool images (`registry.redhat.io/rhel9/buildah`, `anchore/grype`, `anchore/syft`, `bitnami/cosign`, `registry.redhat.io/rhel9/skopeo`)
+* **`internal-registry-credentials`** -- docker-config secret for the cluster Quay registry
+* **`cosign-signing-keys`** -- EC P-256 key pair for image signing (generated at bootstrap time)
+* **Tekton Triggers RBAC** -- ServiceAccounts, Roles, and ClusterRoles for EventListeners and pipeline triggers
+====
+
+Your Gitea environment and Renovate build infrastructure are ready. Proceed to xref:module-02-08-renovate-podman.adoc[Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman] and select the **Gitea** tab at each step.
 
 [[additional-resources]]
 === Additional Resources
