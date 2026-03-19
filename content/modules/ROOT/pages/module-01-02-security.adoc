@@ -4,14 +4,12 @@
 [sidebar]
 --
 *Duration:* ~15 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
 *Learning Objectives:*
 
 * Scan container images for CVEs with Grype
 * Generate SBOMs with Syft for compliance
 * Sign images and attach SBOM attestations with cosign
-* Compare Hummingbird vs UBI image sizes and vulnerability counts
-* Verify SBOM attestations via Podman Desktop
+* Compare hardened Images vs UBI 
 --
 
 [[introduction]]
@@ -19,7 +17,7 @@
 
 Security doesn't end when the build completes. In this sub-module, you'll implement a complete security workflow: scanning for vulnerabilities, generating Software Bill of Materials (SBOMs) for compliance, and signing images to prove provenance.
 
-You'll see firsthand why Hummingbird's "zero-CVE at ship time" approach dramatically reduces your security burden compared to traditional base images.
+You'll see firsthand why Red Hat's "zero-CVE at ship time" approach dramatically reduces your security burden compared to traditional base images.
 
 The tools we're using in this module use the Podman API to find and inspect images, so we can enable that now for our user. 
 
@@ -52,7 +50,7 @@ Let's build our sample quarkus app using the UBI openjdk image so we can do some
 [source,bash,role=execute]
 ----
 
-# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+# Create a UBI single stage Containerfile 
 cat > ~/sample-app/Containerfile.ubi << 'EOF'
 FROM registry.access.redhat.com/ubi9/openjdk-21:latest
 USER root
@@ -93,7 +91,7 @@ No vulnerabilities found
 
 [NOTE]
 ====
-Hummingbird base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
+hardened base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
 ====
 
 === Step 2: Compare with Full UBI Image
@@ -120,7 +118,7 @@ The `--only-fixed` flag shows only vulnerabilities with available patches. This 
 ====
 **Key Insight:**
 
-* **Hummingbird image**: 0 CVEs (or very few)
+* **hardened image**: 0 CVEs (or very few)
 * **UBI image**: 15-30+ CVEs (even in a recent version)
 
 The difference is due to unnecessary packages in the UBI image that aren't needed at runtime but still have security vulnerabilities.
@@ -148,9 +146,8 @@ syft hummingbird-demo:v1 -o table
 
 .*What's in the SBOM:*
 The SBOM includes every package in your container:
-* OpenJDK 21 JRE
 * Quarkus runtime and its Java dependencies (Netty, Vert.x, Jackson, SmallRye, etc.)
-* System RPM libraries from Hummingbird base image (glibc, NSS, etc.)
+* OpenJDK 21 JRE and system RPM libraries from base image (glibc, NSS, etc.)
 
 .*Expected output (excerpt):*
 ----
@@ -250,10 +247,11 @@ We capture the image **digest** (`sha256:...`) rather than relying on the `:v1` 
 
 === Step 6: Generate Signing Keys
 
-Generate a key pair for testing (in production, use keyless signing or KMS), you can hit <Enter> for a blank password for purposes of this lab.
+Generate a key pair for testing (in production, use keyless signing or KMS), for the purposes of this lab we'll set an empty password via the environment variable.
 
 [source,bash,role=execute]
 ----
+export COSIGN_PASSWORD=""
 cosign generate-key-pair
 ----
 
@@ -394,41 +392,6 @@ This confirms:
 [[size-comparison]]
 == Image Size and Vulnerability Comparison
 
-=== Step 11: Compare Image Sizes
-
-See the dramatic size difference:
-
-[source,bash,role=execute]
-----
-# Compare sizes (filter out the registry copy)
-podman images | grep -E "hummingbird-demo|demo-ubi" | grep -v "5000"
-----
-
-.*Expected output:*
-----
-localhost/demo-ubi                 v1            590f8b2b7df9  About an hour ago  624 MB
-localhost/hummingbird-demo         v1            382ffe2fc7bc  About an hour ago  273 MB
-
-----
-
-.*Size Reduction: ~56%*
-
-[source,bash,role=execute]
-----
-# Calculate exact percentage
-awk 'BEGIN { printf "Size reduction: %.1f%%\n", (1 - 273.0/624.0) * 100 }'
-----
-
-.*Output:*
-----
-Size reduction: 56.2%
-----
-
-[NOTE]
-====
-The UBI single-stage image is larger (~621 MB) because it retains the full JDK, Maven, and all build tools alongside the application. The Hummingbird multi-stage image (~272 MB) ships only the JRE and your application.
-====
-
 === Step 12: Clean Up Local Registry
 
 Once you're done with signing and attestation, you can stop the local registry:
@@ -436,6 +399,7 @@ Once you're done with signing and attestation, you can stop the local registry:
 [source,bash,role=execute]
 ----
 podman stop registry && podman rm registry
+cd ~
 ----
 
 [[summary]]
@@ -444,19 +408,17 @@ podman stop registry && podman rm registry
 Congratulations! You've completed Sub-Module 1.2 and implemented a complete security workflow.
 
 .*What You've Accomplished*
-✅ Scanned images for CVEs with Grype (0 CVEs in Hummingbird) +
-✅ Generated SBOMs with Syft in SPDX-JSON format (170 packages cataloged) +
-✅ Set up a local OCI registry for signing workflows +
-✅ Created cosign key pair for image signing +
+✅ Scanned images for CVEs with Grype + 
+✅ Generated SBOMs with Syft in SPDX-JSON format +
+✅ Compared vulnerability counts +
 ✅ Signed container images with cosign +
 ✅ Verified image signatures +
 ✅ Attached SBOM as signed attestation +
 ✅ Verified SBOM attestations +
-✅ Compared vulnerability counts (0 vs 28+ CVEs)
 
 .*Key Takeaways*
 
-**Hummingbird Security Benefits:**
+**Security Benefits:**
 * **Zero or near-zero CVEs** at ship time
 * **56%+ smaller** images reduce attack surface and download time
 * **Complete transparency** via SBOMs

@@ -6,6 +6,10 @@ set -e
 #
 # Note: Container startup timing requires readiness checks for reliable automation
 
+# Container registries
+HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
+UBI_REGISTRY="registry.access.redhat.com"
+
 
 
 
@@ -48,7 +52,7 @@ echo "=== Running caddy server and testing ==="
 podman run -d --rm --name caddy-server \
   -p 8080:8080 \
   -v ~/webserver:/usr/share/caddy:ro,Z \
-  quay.io/hummingbird-hatchling/caddy:latest
+  ${HUMMINGBIRD_REGISTRY}/caddy:latest
 
 # Wait for container to be ready and test
 echo "Testing container readiness..."
@@ -64,8 +68,8 @@ done
 podman stop caddy-server
 
 echo "=== Creating Containerfile for caddy ==="
-cat  > ~/webserver/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/caddy:latest
+cat  > ~/webserver/Containerfile << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/caddy:latest
 
 COPY index.html /usr/share/caddy/
 EOF
@@ -87,7 +91,7 @@ for i in {1..5}; do
 done
 
 echo "=== Testing with containerized curl ==="
-podman run --rm --net=host quay.io/hummingbird-hatchling/curl:latest http://localhost:8080
+podman run --rm --net=host ${HUMMINGBIRD_REGISTRY}/curl:latest http://localhost:8080
 podman stop webserver
 
 echo "=== Step 2: Creating Flask application ==="
@@ -138,9 +142,9 @@ if __name__ == "__main__":
 EOF
 
 echo "=== Step 3: Creating UBI Flask Containerfile for comparison ==="
-cat > ~/flask/Containerfile.ubi << 'EOF'
+cat > ~/flask/Containerfile.ubi << EOF
 # Stage 1: Base Image from Red Hat UBI
-FROM registry.access.redhat.com/ubi9/ubi
+FROM ${UBI_REGISTRY}/ubi9/ubi
 
 # Install pip to manage application dependencies
 RUN dnf -y install python3-pip && dnf clean all
@@ -181,9 +185,9 @@ echo "=== Building UBI Flask version ==="
 podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
 
 echo "=== Step 4: Creating Hummingbird Flask Containerfile ==="
-cat > ~/flask/Containerfile.hi << 'EOF'
+cat > ~/flask/Containerfile.hi << EOF
 # Stage 1: Base Image from Project Hummingbird
-FROM quay.io/hummingbird-hatchling/python:3.14
+FROM ${HUMMINGBIRD_REGISTRY}/python:3.14
 
 # Set the working directory in the container
 WORKDIR /app
@@ -298,13 +302,13 @@ quarkus.http.port=8080
 EOF
 
 echo "=== Creating multi-stage Containerfile ==="
-cat > Containerfile << 'EOF'
+cat > Containerfile << EOF
 # Multi-stage build: builder -> runtime
 
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
+FROM ${HUMMINGBIRD_REGISTRY}/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -326,7 +330,7 @@ RUN ./mvnw package -DskipTests -B
 # ============================================
 # Stage 2: Runtime stage using Hummingbird
 # ============================================
-FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+FROM ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime
 
 WORKDIR /app
 

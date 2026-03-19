@@ -1,6 +1,6 @@
 ---
 site:
-  title: Zero CVE Hummingbird Workshop
+  title: 'LB2865 Container Hardening: Zero to Hero'
   url: https://github.com/rhpds/zero-cve-hummingbird-showroom
   start_page: modules::index.adoc
 

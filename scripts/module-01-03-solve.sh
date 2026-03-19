@@ -8,6 +8,9 @@ set -e
 # - Non-FIPS image: test-fips.py returns exit code 2 (expected failure)
 # - FIPS image: test-fips.py returns exit code 0 (expected success)
 
+# Container registries
+HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
+
 
 
 echo "=== Checking prerequisites ==="
@@ -40,15 +43,15 @@ localhost {
 EOF
 
 echo "Creating Containerfile for SSL-enabled Caddy..."
-cat > ~/webserver/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/caddy:latest
+cat > ~/webserver/Containerfile << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/caddy:latest
 COPY Caddyfile /etc/caddy/Caddyfile
 
 COPY index.html /usr/share/caddy/
 EOF
 
 echo "Building and running SSL-enabled Caddy server..."
-podman build -t caddy:ssl -f webserver/Containerfile ~/webserver
+podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
 podman run --replace -d --name caddy-ssl -p 8443:8443 -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
 echo "✅ SSL-enabled Caddy server started"
 
@@ -56,7 +59,7 @@ echo "✅ SSL-enabled Caddy server started"
 sleep 5
 
 echo "Testing SSL connection (this will fail due to self-signed cert)..."
-podman run --net=host --rm -it quay.io/hummingbird-hatchling/curl:latest https://localhost:8443 || echo "Expected failure due to self-signed certificate"
+podman run --net=host --rm -it ${HUMMINGBIRD_REGISTRY}/curl:latest https://localhost:8443 || echo "Expected failure due to self-signed certificate"
 
 echo "Extracting certificate authority files..."
 podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
@@ -65,8 +68,8 @@ cat root.key root.crt > ca.pem
 echo "✅ Certificate authority files extracted"
 
 echo "Creating Containerfile for curl with custom CA..."
-cat > Containerfile.pem << 'EOF'
-FROM quay.io/hummingbird-hatchling/curl:latest-builder as builder
+cat > ~/Containerfile.pem << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/curl:latest-builder as builder
 
 # Copy the certificate to the image
 COPY ca.pem /tmp/
@@ -78,12 +81,12 @@ USER ${CONTAINER_DEFAULT_USER}
 
 # Runtime stage:
 # Copy the trust store from the builder image to the runtime image
-FROM quay.io/hummingbird-hatchling/curl:latest
+FROM ${HUMMINGBIRD_REGISTRY}/curl:latest
 COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 EOF
 
 echo "Building curl image with custom CA trust store..."
-podman build -t curl:local-ca -f Containerfile.pem .
+podman build -t curl:local-ca -f ~/Containerfile.pem ~
 
 echo "Testing SSL connection with custom CA (should succeed)..."
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
@@ -105,8 +108,8 @@ if [ ! -f ~/fips/test-fips.py ]; then
 fi
 
 echo "Creating standard Python Containerfile..."
-cat > ~/fips/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/python:3.14
+cat > ~/fips/Containerfile << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/python:3.14
 
 COPY test-fips.py .
 
@@ -119,7 +122,7 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 
 echo "Building and testing standard Python image..."
-podman build -t fips:no -f fips/Containerfile ~/fips
+podman build -t fips:no -f ~/fips/Containerfile ~/fips
 echo "Running FIPS test with standard image (expecting FIPS failure):"
 if podman run --rm fips:no; then
     echo "WARNING: FIPS test passed on non-FIPS image (unexpected)"
@@ -133,8 +136,8 @@ else
 fi
 
 echo "Creating FIPS-enabled Python Containerfile..."
-cat > ~/fips/Containerfile.fips << 'EOF'
-FROM quay.io/hummingbird-hatchling/python:3.14-fips
+cat > ~/fips/Containerfile.fips << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/python:3.14-fips
 
 COPY test-fips.py .
 
@@ -147,7 +150,7 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 
 echo "Building and testing FIPS-enabled Python image..."
-podman build -t fips:yes -f fips/Containerfile.fips ~/fips
+podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
 echo "Running FIPS test with FIPS-enabled image (expecting FIPS success):"
 if podman run --rm fips:yes; then
     echo "✓ Expected result: FIPS test passed on FIPS-enabled image"

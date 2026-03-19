@@ -6,12 +6,17 @@ set -e
 #
 # Note: Registry startup timing and cosign operations require automation for reliable execution
 
+# Container registries
+UBI_REGISTRY="registry.access.redhat.com"
+DOCKER_REGISTRY="docker.io"
+
 
 
 echo "=== Enabling podman socket ==="
 systemctl --user enable --now podman.socket
 
 echo "=== Creating scanning directory ==="
+mkdir -p ~/scanning
 cd ~/scanning
 
 echo "=== Verifying grype and syft installation ==="
@@ -20,8 +25,8 @@ syft version
 
 echo "=== Creating UBI comparison image ==="
 # Create Containerfile.ubi for comparison
-cat > ~/sample-app/Containerfile.ubi << 'EOF'
-FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+cat > ~/sample-app/Containerfile.ubi << EOF
+FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
 USER root
 RUN microdnf install -y unzip && microdnf clean all
 WORKDIR /build
@@ -65,7 +70,7 @@ fi
 
 echo "=== Step 5: Start a Local Registry and Push the Image ==="
 # Start a local OCI registry
-podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
+podman run -d --name registry -p 5000:5000 ${DOCKER_REGISTRY}/library/registry:2
 
 # Wait for registry to be ready
 echo "Waiting for registry to be ready..."
@@ -98,10 +103,10 @@ echo "=== Step 6: Generate Signing Keys ==="
 # Generate a key pair with empty password for automation
 # Using expect-style input or environment variable
 export COSIGN_PASSWORD=""
-printf '\n\n' | cosign generate-key-pair
+cosign generate-key-pair
 
 echo "=== Step 7: Sign the Image ==="
-printf '\n' | cosign sign --yes --key cosign.key \
+cosign sign --yes --key cosign.key \
   --tlog-upload=false \
   --allow-insecure-registry \
   localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
@@ -114,7 +119,7 @@ cosign verify --key cosign.pub \
   localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
 
 echo "=== Step 9: Attach SBOM Attestation ==="
-printf '\n' | cosign attest --yes --key cosign.key \
+cosign attest --yes --key cosign.key \
   --predicate hummingbird-demo.spdx --type spdxjson \
   --tlog-upload=false \
   --allow-insecure-registry \

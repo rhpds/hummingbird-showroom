@@ -1,25 +1,23 @@
-= Sub-Module 1.1: Building with Hummingbird
+= Sub-Module 1.1: Building with Hardened Images
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~15 minutes +
-*Prerequisites:* Environment setup complete (see xref:appendix-a-rhel-setup.adoc[Appendix A]) +
 *Learning Objectives:*
 
 * Basics of hardened images
 * Comparison with existing images
 * Create a sample Quarkus REST application
-* Write multi-stage Containerfiles with UBI builder + Hummingbird runtime
-* Build minimal container images using Podman and Buildah
+* Write multi-stage Containerfiles with builder + runtime
+* Build minimal container images using Podman
 * Test and verify built applications
-* Build images using Podman Desktop GUI
 --
 
 [[introduction]]
 == Introduction
 
-In this sub-module, you'll move from running pre-built images to creating your own Hummingbird-based containers. You'll learn the multi-stage build pattern that uses full UBI images for compilation and Hummingbird images for runtime, achieving dramatic size reductions while maintaining functionality.
+In this sub-module, you'll move from running pre-built images to creating your own Hardened Images based containers. You'll learn the multi-stage build pattern using separate builder and runtime images, achieving dramatic size reductions while maintaining functionality.
 
 [[types]]
 == Available types of hardened images
@@ -34,9 +32,8 @@ There are three main categories of images provided in the collection of hardend 
 
 Let's start by looking at a simple web service with `caddy` and creating a landing page.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
-mkdir -p ~/webserver
 cat  > ~/webserver/index.html << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -73,22 +70,22 @@ EOF
 
 With our `index.html` ready to serve, we just need a web server. The `caddy` image can be used for this sort of simple testing by running the default container image and passing the directory as a volume mount. 
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 podman run -d --rm --name caddy-server \
   -p 8080:8080 \
   -v ~/webserver:/usr/share/caddy:ro,Z \
-  quay.io/hummingbird-hatchling/caddy:latest
+  {hummingbird-registry}/caddy:latest
 curl http://localhost:8080
 podman stop caddy-server
 ----
 
 This will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile for your final webserver.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 cat  > ~/webserver/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/caddy:latest
+FROM {hummingbird-registry}/caddy:latest
 
 COPY index.html /usr/share/caddy/
 EOF
@@ -109,7 +106,7 @@ On the current system, we have `curl` installed as an RPM. But, what if you were
 
 In that case we could run the same test as we did with the local package using a known good and specific version of `curl` via `podman`
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 podman run --rm --net=host {hummingbird-registry}/curl:latest http://localhost:8080
 podman stop webserver
@@ -129,7 +126,6 @@ Let's use the `python:builder` image to create a simple Flask application using 
 
 [source,bash,role=execute]
 ----
-mkdir -p ~/flask
 cat  > ~/flask/app.py << 'EOF'
 from flask import Flask
 
@@ -187,7 +183,7 @@ Let's build a comparison image using UBI to see the difference. Then we can see 
 
 [source,bash,role=execute]
 ----
-# Create a UBI-only Containerfile (single-stage, no Hummingbird)
+# Create a UBI single stage Containerfile
 cat > ~/flask/Containerfile.ubi << 'EOF'
 # Stage 1: Base Image from Red Hat UBI
 FROM registry.access.redhat.com/ubi9/ubi
@@ -252,12 +248,11 @@ We'll demonstrate this by installing the application dependecies globally as `ro
 
 In practice those changes give us the following Containerfile
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
-# Create a UBI-only Containerfile (single-stage, no Hummingbird)
 cat > ~/flask/Containerfile.hi << 'EOF'
-# Stage 1: Base Image from Project Hummingbird
-FROM quay.io/hummingbird-hatchling/python:3.14
+# Stage 1: Builder base image 
+FROM {hummingbird-registry}/python:3.14
 
 # Set the working directory in the container
 WORKDIR /app
@@ -457,7 +452,7 @@ Not only do all of the `maven` build artifacts stay in the first stage, but so d
 
 === Step 5: Create Multi-Stage Containerfile
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 cat > ~/sample-app/Containerfile << 'EOF'
 # Multi-stage build: builder -> runtime
@@ -465,7 +460,7 @@ cat > ~/sample-app/Containerfile << 'EOF'
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
+FROM {hummingbird-registry}/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -485,9 +480,9 @@ COPY src ./src
 RUN ./mvnw package -DskipTests -B
 
 # ============================================
-# Stage 2: Runtime stage using Hummingbird
+# Stage 2: Runtime stage 
 # ============================================
-FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+FROM {hummingbird-registry}/openjdk:21-runtime
 
 WORKDIR /app
 
@@ -622,7 +617,7 @@ podman stop demo
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 1.1 and built your first Hummingbird applications.
+Congratulations! You've completed Sub-Module 1.1 and built your first applications using Red Hat Hardened Images.
 
 .*What You've Accomplished*
 ✅ Used containerized tools to explore pipeline poosibilities +

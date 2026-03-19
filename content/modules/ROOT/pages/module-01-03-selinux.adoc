@@ -4,15 +4,13 @@
 [sidebar]
 --
 *Duration:* ~12 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
-*Learning Objectives:*
 
 * Installng custom CA bundles in images
-* Using special security focused variabts
+* Using special security focused variants
 * Generate custom SELinux policies from `podman inspect` output
 * Prepare host directories with proper SELinux labels for bind mounts
 * Read and understand generated CIL policy rules line by line
-* Apply and verify custom policies for Hummingbird containers
+* Apply and verify custom policies for distroless containers
 --
 
 [[introduction]]
@@ -29,7 +27,7 @@ One of the common things developers need to deal with is custom SSL certificates
 
 For this lab, we'll rely on Caddy's built in TLS support. We can activate this with a custom Caddyfile, enabling the default SSL port and using the `internal` directive to turn on it's CA. We can rebuild our previous caddy-server with this new configuration and rebuild the image.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 cat  > ~/webserver/Caddyfile << 'EOF'
 {
@@ -45,7 +43,7 @@ localhost {
 EOF
 
 cat  > ~/webserver/Containerfile << 'EOF'
-FROM quay.io/hummingbird-hatchling/caddy:latest
+FROM {hummingbird-registry}/caddy:latest
 COPY Caddyfile /etc/caddy/Caddyfile
 
 COPY index.html /usr/share/caddy/
@@ -57,9 +55,9 @@ podman run -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,
 ----
 
 With the new SSL enabled Caddy site running, we can test against the new port
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
-podman run --net=host --rm -it  quay.io/hummingbird-hatchling/curl https://localhost:8443
+podman run --net=host --rm -it  {hummingbird-registry}/curl https://localhost:8443
 ----
 
 We can get the certificate and key for the internal CA from the running container and create a PEM file from them. This is similar to what you'd need for your internal organization's CA.
@@ -74,10 +72,10 @@ Using our internal CA as part of the trusted chain, we'd need to embed it in the
 
 This multi-stage pattern is the same we used for the `quarkus` application. This keeps all of the work of creating the new trust store in our builder and let's us only add the files we need to our new `curl` tool image.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 cat > ~/Containerfile.pem << 'EOF'
-FROM quay.io/hummingbird-hatchling/curl:latest-builder as builder
+FROM {hummingbird-registry}/curl:latest-builder as builder
 
 # Copy the certificate to the image
 COPY ca.pem /tmp/
@@ -90,8 +88,9 @@ USER ${CONTAINER_DEFAULT_USER}
 
 # Runtime stage:
 # Copy the trust store from the builder image to the runtime image
-FROM quay.io/hummingbird-hatchling/curl:latest
+FROM {hummingbird-registry}/curl:latest
 COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
+EOF
 
 podman build -t curl:local-ca -f ~/Containerfile.pem 
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
@@ -112,11 +111,11 @@ cat /proc/sys/crypto/fips_enabled
 ----
 
 We've built a python application to demonstrate the differences an application would see based on the use of a `default` or `fips` variant. The only difference between our two containers is the source image.
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 # Create standard Python Containerfile  
 cat > ~/fips/Containerfile << "EOF"
-FROM quay.io/hummingbird-hatchling/python:3.14
+FROM {hummingbird-registry}/python:3.14
 
 COPY test-fips.py .
 
@@ -129,11 +128,11 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 ----
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 # Create FIPS-enabled Python Containerfile
 cat > ~/fips/Containerfile.fips << "EOF"
-FROM  quay.io/hummingbird-hatchling/python:3.14-fips
+FROM  {hummingbird-registry}/python:3.14-fips
 
 COPY test-fips.py .
 
@@ -164,7 +163,7 @@ podman run --rm fips:yes
 == Intro to SELinux
 SELinux (Security-Enhanced Linux) provides mandatory access control (MAC) that can enforce fine-grained security policies on containers. By default, all containers run under the `container_t` SELinux type, which is a one-size-fits-all policy that's often too permissive for some use cases and too restrictive for others.
 
-**udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. Combined with Hummingbird's minimal images, this provides **double hardening**: a minimal attack surface at the image level plus restrictive SELinux policies at the kernel level.
+**udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. Combined with Red Hat Hardened Images, this provides **extra hardening**: a minimal attack surface at the image level plus restrictive SELinux policies at the kernel level.
 
 [[the-problem-udica-solves]]
 == The Problem udica Solves
@@ -190,8 +189,8 @@ There's no policy that perfectly matches any specific container's actual needs.
    - `home_container.cil` -- added when `/home` is bind-mounted
 4. **Generating** a custom Common Intermediate Language (CIL) policy file
 
-[[hummingbird-specific-challenge]]
-== The Hummingbird-Specific Challenge
+[[specific-challenge]]
+== The Specific Distroless Challenge
 
 With a standard UBI container, the workflow is:
 
@@ -200,13 +199,13 @@ With a standard UBI container, the workflow is:
 3. Inspect with udica
 4. Generate policy based on observed behavior
 
-**With Hummingbird, you cannot run interactively -- there is no shell.**
+**With distroless containers, you cannot run interactively -- there is no shell.**
 
 === The Solution
 
 The policy generation relies on `podman inspect` output and audit log analysis, not on runtime observation:
 
-. Run the Hummingbird container with the default `container_t` policy, using realistic configuration and mounts
+. Run the container with the default `container_t` policy, using realistic configuration and mounts
 . Let it start (it may work or produce AVC denials in the audit log)
 . Capture `podman inspect` output
 . Feed that to udica to generate the tailored CIL policy
@@ -255,7 +254,7 @@ udica --version
 ----
 
 [[example-bind-mount]]
-== Example: Hummingbird App with Bind Mounts
+== Example: Quarkus App with Bind Mounts
 
 We'll generate a custom SELinux policy for the `hummingbird-demo:v1` application built in Sub-Module 1.1, this time with **bind-mounted host directories** for configuration and logs. This is where udica provides the most value -- the default `container_t` policy doesn't know about your specific mount points.
 
@@ -298,7 +297,7 @@ drwxr-xr-x. <user> <user> unconfined_u:object_r:container_file_t:s0 logs
 
 === Step 5: First Run with Default Policy
 
-Run the Hummingbird container with the default `container_t` policy, bind mounts, and an exposed port:
+Run the quarkus application container with the default `container_t` policy, bind mounts, and an exposed port:
 
 [source,bash,role=execute]
 ----
@@ -334,6 +333,13 @@ curl http://localhost:8080/
 ----
 
 === Step 6: Generate udica Policy
+Let's double check the context of our running container.
+
+
+[source,bash,role=execute]
+----
+podman inspect demo-policy-run --format '{{.ProcessLabel}}'
+----
 
 Capture the `podman inspect` output and feed it to udica:
 
@@ -482,7 +488,7 @@ curl http://localhost:8080/health
 Both endpoints should respond correctly. The container now runs with **only** the permissions it actually needs -- no more, no less.
 
 [[double-hardening]]
-== Why This Matters for Hummingbird
+== Why This Matters 
 
 The default `container_t` policy sits between two bad outcomes:
 
@@ -491,12 +497,10 @@ The default `container_t` policy sits between two bad outcomes:
 
 udica provides fine-grained control, placing the policy between `spc_t` (Super Privileged Container -- allows everything) and `container_t` (Standard Containers -- one-size-fits-all).
 
-**Hummingbird + udica = Double Hardening:**
-
-1. **Image Level**: Hummingbird's no-shell, no-tools design means a genuinely minimal syscall and filesystem access profile -- smaller than any UBI image
+1. **Image Level**: Hardened Image's no-shell, no-tools design means a genuinely minimal syscall and filesystem access profile -- smaller than any UBI image
 2. **SELinux Level**: Custom policy allowing **only** the specific filesystem paths, ports, and capabilities the container actually uses
 
-These two layers are **independent and complementary** -- compromising one doesn't defeat the other. A udica-generated policy for a Hummingbird container will be **tighter** than one for a comparable UBI container, because there are fewer legitimate access patterns to allow.
+These two layers are **independent and complementary** -- compromising one doesn't defeat the other. A udica-generated policy for a Hardened Image container will be **tighter** than one for a comparable UBI container, because there are fewer legitimate access patterns to allow.
 
 [[cleanup]]
 == Cleanup
@@ -513,18 +517,16 @@ podman rm demo-selinux
 Congratulations! You've completed Sub-Module 1.3 and learned the fundamentals of SELinux hardening with udica.
 
 .*What You've Accomplished*
-✅ Installed udica and SELinux tools +
-✅ Understood the Hummingbird-specific challenge (no shell for interactive testing) +
+✅ Understood the distroless-specific challenge (no shell for interactive testing) +
 ✅ Prepared host directories with proper SELinux labels (`container_file_t`) +
 ✅ Generated custom SELinux policy with bind-mount and port rules +
 ✅ Read and understood every line of the generated CIL policy +
 ✅ Loaded and applied the custom policy with `semodule` +
 ✅ Verified the container runs under a custom SELinux type +
-✅ Understood double hardening: minimal image + restrictive policy
 
 .*Key Takeaways*
 
-**udica Workflow for Hummingbird:**
+**udica Workflow for Hardened Images:**
 1. Prepare host directories and label with `semanage fcontext`
 2. Run container with default `container_t` and realistic config/mounts
 3. Capture `podman inspect` output (not interactive testing)
