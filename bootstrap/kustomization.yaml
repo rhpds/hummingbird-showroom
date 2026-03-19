@@ -10,3 +10,4 @@ resources:
   - 05-post-config
   - 06-rhtas-operator
   - 07-keycloak-rhtas
+  - 08-gitea

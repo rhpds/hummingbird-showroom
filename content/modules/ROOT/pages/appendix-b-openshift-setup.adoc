@@ -19,6 +19,7 @@
 * Red Hat Trusted Artifact Signer (RHTAS) operator installed (for Sub-Module 2.6)
 * Keycloak `trusted-artifact-signer` realm configured for RHTAS OIDC
 * RHTAS CLI tools (`cosign`, `rekor-cli`, `ec`) installed
+* Gitea in-cluster Git service (optional, for Sub-Module 2.8 without GitHub)
 * Shipwright CRDs (BuildStrategy, Build, BuildRun) available
 * Red Hat Quay on-cluster registry with Clair vulnerability scanning
 * Configurable multi-user workshop support (`NUM_USERS` environment variable)
@@ -1028,6 +1029,221 @@ The RHTAS operator serves CLI binaries that are version-matched to the deployed 
 
 Your RHTAS environment is ready. Proceed to xref:module-02-06-rhtas.adoc[Sub-Module 2.6: Keyless Signing with RHTAS].
 
+[[gitea-setup]]
+=== Gitea In-Cluster Git Service Setup
+
+[NOTE]
+====
+This section is only required if you plan to use **Gitea** (in-cluster) instead of GitHub for **xref:module-02-08-renovate-podman.adoc[Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman]**. You can skip it if using GitHub.
+====
+
+Gitea is a lightweight, self-hosted Git service. Deploying it on-cluster means the entire Renovate workflow -- from Git hosting to Tekton pipelines -- runs inside your OpenShift environment with no external dependencies.
+
+[NOTE]
+====
+If you used Option 2 (Kustomize Bootstrap), the Gitea operator and instance were installed automatically. Verify them with the steps below and skip to <<gitea-create-repos>>.
+====
+
+==== Step 30: Deploy the Gitea Operator
+
+Apply the Gitea operator from the `rhpds/gitea-operator` project:
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gitea
+EOF
+----
+
+[source,bash,role=execute]
+----
+oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role.yaml
+oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/service_account.yaml -n gitea
+oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role_binding.yaml
+oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/crds/gpte.opentlc.com_giteas_crd.yaml
+oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/operator.yaml -n gitea
+----
+
+Wait for the operator pod to be ready:
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=Available deployment/gitea-operator \
+  -n gitea --timeout=120s
+
+oc get pods -n gitea
+----
+
+.*Expected output:*
+----
+NAME                              READY   STATUS    RESTARTS   AGE
+gitea-operator-xxxxxxxxx-xxxxx    1/1     Running   0          ...
+----
+
+==== Step 31: Create the Gitea Instance
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: gpte.opentlc.com/v1
+kind: Gitea
+metadata:
+  name: gitea-server
+  namespace: gitea
+spec:
+  giteaSsl: true
+  giteaAdminUser: gitea-admin
+  giteaAdminPassword: openshift
+  giteaAdminEmail: gitea-admin@example.com
+  giteaCreateUsers: true
+  giteaGenerateUserFormat: "lab-user-%d"
+  giteaUserNumber: 1
+  giteaUserPassword: openshift
+  postgresqlVolumeSize: 4Gi
+  giteaVolumeSize: 4Gi
+  giteaImage: quay.io/rhpds/openshift-gitea:latest
+EOF
+----
+
+Wait for the Gitea pods and route to become available (2-3 minutes):
+
+[source,bash,role=execute]
+----
+oc wait --for=condition=Available deployment/gitea-server \
+  -n gitea --timeout=300s
+
+GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}')
+echo "Gitea URL: https://${GITEA_ROUTE}"
+----
+
+.*Expected output:*
+----
+Gitea URL: https://gitea-server-gitea.apps.<cluster-domain>
+----
+
+Verify access by logging in:
+
+[source,bash,role=execute]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}')
+
+curl -s -o /dev/null -w "%{http_code}" \
+  "https://${GITEA_ROUTE}/api/v1/version" \
+  --insecure
+----
+
+.*Expected output:*
+----
+200
+----
+
+==== Step 32: Generate a Gitea Personal Access Token
+
+Create a PAT for the Renovate bot. Gitea PATs require `repo` and `user` scopes:
+
+[source,bash,role=execute]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}')
+
+GITEA_TOKEN=$(curl -s -X POST \
+  "https://${GITEA_ROUTE}/api/v1/users/gitea-admin/tokens" \
+  -u "gitea-admin:openshift" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "renovate-bot", "scopes": ["repo", "user", "issue", "organization"]}' \
+  --insecure \
+  | jq -r '.sha1')
+
+echo "Gitea PAT: ${GITEA_TOKEN}"
+----
+
+[IMPORTANT]
+====
+Save this token -- you will need it when configuring the Renovate Secret in Sub-Module 2.8. The token is only displayed once.
+====
+
+[[gitea-create-repos]]
+==== Step 33: Create a Sample Repository
+
+Create a repository with a Containerfile so Renovate has something to scan:
+
+[source,bash,role=execute]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}')
+
+curl -s -X POST \
+  "https://${GITEA_ROUTE}/api/v1/user/repos" \
+  -u "gitea-admin:openshift" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "hummingbird-app",
+    "description": "Sample Hummingbird application for Renovate scanning",
+    "auto_init": true,
+    "default_branch": "main"
+  }' \
+  --insecure | jq '{name: .name, html_url: .html_url}'
+----
+
+Add a Containerfile to the repo:
+
+[source,bash,role=execute]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}')
+
+curl -s -X POST \
+  "https://${GITEA_ROUTE}/api/v1/repos/gitea-admin/hummingbird-app/contents/Containerfile" \
+  -u "gitea-admin:openshift" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"message\": \"Add Containerfile\",
+    \"content\": \"$(echo -n 'ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
+ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+
+FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
+WORKDIR /opt/app-root/src
+COPY package*.json ./
+RUN npm ci --production
+
+FROM ${RUNTIME_REGISTRY}/nodejs-20:latest
+COPY --from=builder /opt/app-root/src/node_modules ./node_modules
+COPY . .
+USER 1001
+EXPOSE 8080
+CMD [\"node\", \"server.js\"]' | base64 -w 0)\"
+  }" \
+  --insecure | jq '{path: .content.path, sha: .content.sha}'
+----
+
+==== Step 34: Create the Webhook Secret for Tekton
+
+Create a shared secret that Gitea webhooks and the Tekton EventListener will use to verify payloads:
+
+[source,bash,role=execute]
+----
+WEBHOOK_SECRET=$(openssl rand -hex 20)
+echo "Webhook secret: ${WEBHOOK_SECRET}"
+
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitea-webhook-secret
+  namespace: tekton-pipelines
+type: Opaque
+stringData:
+  webhook-secret: "${WEBHOOK_SECRET}"
+EOF
+----
+
+[TIP]
+====
+Save the `WEBHOOK_SECRET` value -- you will configure it as the webhook secret when creating the Gitea webhook in Sub-Module 2.8.
+====
+
+Your Gitea environment is ready. Proceed to xref:module-02-08-renovate-podman.adoc[Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman] and select the **Gitea** tab at each step.
+
 [[additional-resources]]
 === Additional Resources
 
@@ -1111,3 +1327,21 @@ oc get keycloakrealmimport trusted-artifact-signer -n keycloak -o yaml
 
 oc logs -l app=keycloak -n keycloak --tail=50
 ----
+
+**Issue: Gitea operator not starting**
+[source,bash]
+----
+oc get pods -n gitea
+
+oc get events -n gitea --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: Gitea instance route not available**
+[source,bash]
+----
+oc get route -n gitea
+
+oc get gitea gitea-server -n gitea -o yaml
+----
+
+The operator creates the route after the PostgreSQL and Gitea pods are both running. Wait 2-3 minutes for the full initialization.

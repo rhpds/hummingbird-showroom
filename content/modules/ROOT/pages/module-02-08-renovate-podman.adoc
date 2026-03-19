@@ -21,18 +21,25 @@ Keeping base images, pipeline tasks, and application dependencies up to date is 
 
 **Renovate Bot** solves this by continuously scanning your repositories for outdated references and opening pull requests when updates are available. In this sub-module you will run Renovate as a Tekton Pipeline -- using Podman rootless throughout, with Buildah and Skopeo as the container toolchain. No Docker daemon, no privileged pods.
 
+[NOTE]
+====
+This module supports both **GitHub** and **Gitea** (in-cluster) as the Git platform. Each step that differs between platforms uses tabbed instructions -- select the tab matching your setup.
+
+If using Gitea, complete the Gitea setup in xref:appendix-b-openshift-setup.adoc#gitea-setup[Appendix B] first.
+====
+
 === Architecture Overview
 
 ----
 Renovate Bot (Tekton CronJob trigger)
     │
-    ├── Scans GitHub repos for stale deps
+    ├── Scans Git repos for stale deps
     ├── Detects outdated Hummingbird/UBI image refs in Containerfiles
     ├── Detects outdated Tekton Task bundle versions
-    └── Opens PRs on GitHub
+    └── Opens PRs on your Git platform (GitHub or Gitea)
            │
            ▼
-Tekton EventListener (GitHub webhook)
+Tekton EventListener (webhook)
     │
     └── Renovate PR opened → triggers validation pipeline
            │
@@ -94,7 +101,7 @@ cat > renovate.json << 'RENOVATE_EOF'
   "schedule": ["after 6am and before 9am on weekdays"],
 
   "labels": ["renovate", "dependencies"],
-  "assignees": ["your-github-username"],
+  "assignees": ["your-username"],
 
   "customManagers": [
     {
@@ -197,12 +204,25 @@ RENOVATE_EOF
 * **Schedule** restricts PR creation to weekday mornings so your team reviews them during working hours.
 ====
 
+[TIP]
+====
+**Gitea users:** If your repository uses `.gitea/workflows/` instead of `.github/workflows/`, update the tool image manager's `fileMatch` pattern accordingly:
+`"fileMatch": ["tekton/.*\\.ya?ml$", "\\.(github|gitea)/workflows/.*\\.ya?ml$"]`
+====
+
 [[renovate-tekton-pipeline]]
 == Part 2: Renovate as a Tekton Pipeline
 
-=== Step 1: Create the GitHub Token Secret
+=== Step 1: Create the Platform Token Secret
 
-Renovate needs a GitHub Personal Access Token with `repo`, `read:org`, and `read:packages` scopes.
+Renovate needs a Personal Access Token for your Git platform.
+
+[tabs]
+====
+GitHub::
++
+--
+Create a GitHub PAT at https://github.com/settings/tokens with scopes: `repo`, `read:org`, `read:packages`.
 
 [source,bash,role=execute]
 ----
@@ -220,16 +240,46 @@ EOF
 ----
 
 [IMPORTANT]
-====
-Replace `ghp_yourTokenHere` with your actual GitHub PAT. Create one at https://github.com/settings/tokens with scopes: `repo`, `read:org`, `read:packages`.
+=====
+Replace `ghp_yourTokenHere` with your actual GitHub PAT. For production environments, use a GitHub App installation token instead of a PAT for better security and rate limits.
+=====
+--
 
-For production environments, use a GitHub App installation token instead of a PAT for better security and rate limits.
+Gitea::
++
+--
+Use the PAT generated during the xref:appendix-b-openshift-setup.adoc#gitea-setup[Gitea setup in Appendix B] (Step 32).
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: renovate-gitea-token
+  namespace: tekton-pipelines
+type: Opaque
+stringData:
+  RENOVATE_TOKEN: "your-gitea-pat-here"
+EOF
+----
+
+[IMPORTANT]
+=====
+Replace `your-gitea-pat-here` with the Gitea PAT you saved from Appendix B Step 32.
+=====
+--
 ====
 
 === Step 2: Create the Renovate ConfigMap
 
 Store the global config (what repos to scan, platform settings) in a ConfigMap so you can update it without rebuilding the Task:
 
+[tabs]
+====
+GitHub::
++
+--
 [source,bash,role=execute]
 ----
 cat << 'EOF' | oc apply -f -
@@ -262,6 +312,51 @@ data:
     };
 EOF
 ----
+--
+
+Gitea::
++
+--
+[source,bash,role=execute,subs="attributes"]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n {gitea-namespace} -o jsonpath='{.spec.host}')
+
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: renovate-config
+  namespace: tekton-pipelines
+data:
+  config.js: |
+    module.exports = {
+      platform: 'gitea',
+      endpoint: 'https://${GITEA_ROUTE}/api/v1',
+      onboarding: false,
+      requireConfig: 'optional',
+
+      repositories: [
+        '{gitea-admin-user}/hummingbird-app',
+      ],
+
+      gitAuthor: 'Renovate Bot <renovate@example.com>',
+      labels: ['renovate'],
+
+      prConcurrentLimit: 5,
+      prHourlyLimit: 2,
+
+      cacheDir: '/tmp/renovate-cache',
+      baseDir: '/tmp/renovate',
+    };
+EOF
+----
+
+[NOTE]
+=====
+The `endpoint` URL is required for self-hosted Gitea. It must point at the Gitea API (`/api/v1`). The repository format is `owner/repo` (e.g., `gitea-admin/hummingbird-app`).
+=====
+--
+====
 
 [NOTE]
 ====
@@ -270,6 +365,13 @@ The `repositories` array lists every repo Renovate will scan. Each repo uses its
 
 === Step 3: Create the Renovate Tekton Task
 
+The env vars differ between GitHub and Gitea -- GitHub needs a separate `GITHUB_COM_TOKEN`, while Gitea requires only `RENOVATE_TOKEN` plus the `RENOVATE_ENDPOINT`.
+
+[tabs]
+====
+GitHub::
++
+--
 [source,bash,role=execute]
 ----
 cat << 'EOF' | oc apply -f -
@@ -347,6 +449,94 @@ spec:
         echo "=== Renovate scan complete ==="
 EOF
 ----
+--
+
+Gitea::
++
+--
+[source,bash,role=execute,subs="attributes"]
+----
+GITEA_ROUTE=$(oc get route gitea-server -n {gitea-namespace} -o jsonpath='{.spec.host}')
+
+cat << EOF | oc apply -f -
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: renovate-scan
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: renovate-image
+      type: string
+      default: "ghcr.io/renovatebot/renovate:latest"
+    - name: log-level
+      type: string
+      default: "info"
+
+  workspaces:
+    - name: renovate-config
+      description: ConfigMap mounted with config.js
+    - name: renovate-cache
+      description: PVC for caching dependency lookups between runs
+      optional: true
+
+  steps:
+    - name: run-renovate
+      image: \$(params.renovate-image)
+
+      securityContext:
+        runAsNonRoot: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+
+      env:
+        - name: RENOVATE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: renovate-gitea-token
+              key: RENOVATE_TOKEN
+        - name: RENOVATE_PLATFORM
+          value: gitea
+        - name: RENOVATE_ENDPOINT
+          value: "https://${GITEA_ROUTE}/api/v1"
+        - name: LOG_LEVEL
+          value: \$(params.log-level)
+        - name: RENOVATE_CONFIG_FILE
+          value: /workspace/renovate-config/config.js
+        - name: RENOVATE_CACHE_DIR
+          value: /workspace/renovate-cache
+
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "=== Renovate Bot starting ==="
+        echo "Image: \$(params.renovate-image)"
+        echo "Log level: \$(params.log-level)"
+        echo "Config: \$RENOVATE_CONFIG_FILE"
+
+        node -e "
+          const config = require('\$RENOVATE_CONFIG_FILE');
+          console.log('Repositories to scan:');
+          (config.repositories || []).forEach(r => console.log(' -', r));
+        "
+
+        echo ""
+        echo "=== Starting scan ==="
+        renovate
+
+        echo ""
+        echo "=== Renovate scan complete ==="
+EOF
+----
+
+[NOTE]
+=====
+Gitea doesn't need a separate `GITHUB_COM_TOKEN`. The `RENOVATE_ENDPOINT` env var tells Renovate where to find the Gitea API. The `RENOVATE_TOKEN` is sufficient for all operations.
+=====
+--
+====
 
 === Step 4: Create the Renovate Pipeline
 
@@ -501,6 +691,13 @@ When Renovate opens a PR, this EventListener triggers your Buildah/Skopeo build 
 
 === Step 1: Create the EventListener
 
+The EventListener structure is the same for both platforms -- Gitea sends GitHub-compatible webhook payloads. Only the webhook secret name and the CEL filter for the bot username differ.
+
+[tabs]
+====
+GitHub::
++
+--
 [source,bash,role=execute]
 ----
 cat << 'EOF' | oc apply -f -
@@ -576,6 +773,91 @@ spec:
         ref: renovate-merge-template
 EOF
 ----
+--
+
+Gitea::
++
+--
+Gitea sends GitHub-compatible webhook payloads, so the `github` interceptor type still works. The differences are the webhook secret name and the bot username in the CEL filter.
+
+[source,bash,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: renovate-pr-listener
+  namespace: tekton-pipelines
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+
+    - name: renovate-pr-validate
+      interceptors:
+        - ref:
+            name: github
+          params:
+            - name: secretRef
+              value:
+                secretName: gitea-webhook-secret
+                secretKey: webhook-secret
+            - name: eventTypes
+              value: ["pull_request"]
+
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              value: >
+                body.action in ['opened', 'synchronize', 'reopened'] &&
+                body.pull_request.user.login == 'gitea-admin'
+            - name: overlays
+              value:
+                - key: branch_name
+                  expression: "body.pull_request.head.ref"
+                - key: is_image_update
+                  expression: >
+                    body.pull_request.title.contains('Containerfile') ||
+                    body.pull_request.title.contains('hummingbird') ||
+                    body.pull_request.title.contains('ubi9')
+
+      bindings:
+        - ref: renovate-pr-binding
+      template:
+        ref: renovate-pr-template
+
+    - name: renovate-pr-merged
+      interceptors:
+        - ref:
+            name: github
+          params:
+            - name: secretRef
+              value:
+                secretName: gitea-webhook-secret
+                secretKey: webhook-secret
+            - name: eventTypes
+              value: ["pull_request"]
+        - ref:
+            name: cel
+          params:
+            - name: filter
+              value: >
+                body.action == 'closed' &&
+                body.pull_request.merged == true &&
+                body.pull_request.user.login == 'gitea-admin'
+      bindings:
+        - ref: renovate-merge-binding
+      template:
+        ref: renovate-merge-template
+EOF
+----
+
+[NOTE]
+=====
+On Gitea, Renovate runs as the `gitea-admin` user (or whichever user you configured with the PAT). The CEL filter matches this user instead of the GitHub `renovate[bot]` app identity. The `github` interceptor type is intentional -- Gitea webhooks are GitHub-compatible.
+=====
+--
+====
 
 === Step 2: Create TriggerBindings
 
@@ -1299,8 +1581,8 @@ Daily 7am CronJob
                       └── Finds: nodejs-20 updated in hummingbird-hatchling
                             └── Opens PR: "chore(deps): update hummingbird nodejs-20"
 
-GitHub Webhook → Tekton EventListener
-    └── CEL filter: user == 'renovate[bot]' AND action == 'opened'
+Git Platform Webhook → Tekton EventListener
+    └── CEL filter: user == renovate bot AND action == 'opened'
           └── Creates PipelineRun: renovate-pr-validate-xxxxx
                 ├── git-clone Task
                 ├── buildah-podman-task
@@ -1316,8 +1598,8 @@ GitHub Webhook → Tekton EventListener
 
 PR passes all checks → developer approves → Merge
 
-GitHub Webhook → Tekton EventListener
-    └── CEL filter: action == 'closed' AND merged == true AND renovate[bot]
+Git Platform Webhook → Tekton EventListener
+    └── CEL filter: action == 'closed' AND merged == true AND renovate bot
           └── Creates PipelineRun: renovate-merge-promote-xxxxx
                 └── Same pipeline, image-tag = 'latest'
                       └── skopeo-promote-task runs this time
@@ -1362,11 +1644,12 @@ The key discipline is that **Renovate never merges anything directly** -- it ope
 
 === Next Steps
 
-1. **Replace placeholder tokens** in the Secret and ConfigMap with your actual GitHub PAT and repository list
-2. **Configure the GitHub webhook** to point at your EventListener ingress URL
+1. **Replace placeholder tokens** in the Secret and ConfigMap with your actual PAT and repository list
+2. **Configure the webhook** on your Git platform (GitHub or Gitea) to point at your EventListener ingress URL
 3. **Customize `renovate.json`** in each repo to match your specific dependency patterns
-4. **Add Slack/Teams notifications** using Tekton Results or a notification Task at the end of the pipeline
-5. **Integrate with ACS** (xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7]) to enforce policies on Renovate-built images
+4. **Try the other platform** -- if you used GitHub, try deploying Gitea in-cluster (see xref:appendix-b-openshift-setup.adoc#gitea-setup[Appendix B]); if you used Gitea, try connecting to GitHub
+5. **Add Slack/Teams notifications** using Tekton Results or a notification Task at the end of the pipeline
+6. **Integrate with ACS** (xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7]) to enforce policies on Renovate-built images
 
 ---
 
