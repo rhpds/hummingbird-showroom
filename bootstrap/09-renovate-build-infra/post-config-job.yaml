@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: renovate-pipelines-post-config
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: renovate-pipelines-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "serviceaccounts"]
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: renovate-pipelines-post-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+subjects:
+  - kind: ServiceAccount
+    name: renovate-pipelines-post-config
+    namespace: renovate-pipelines
+roleRef:
+  kind: ClusterRole
+  name: renovate-pipelines-post-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: renovate-pipelines-post-config
+  namespace: renovate-pipelines
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: renovate-pipelines-post-config
+      restartPolicy: OnFailure
+      volumes:
+        - name: cosign-keys
+          emptyDir: {}
+      initContainers:
+        - name: generate-cosign-keys
+          image: bitnami/cosign:latest
+          volumeMounts:
+            - name: cosign-keys
+              mountPath: /keys
+          env:
+            - name: COSIGN_PASSWORD
+              value: ""
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cd /keys
+              cosign generate-key-pair
+              echo "Cosign key pair generated"
+              ls -la /keys/
+      containers:
+        - name: configure-secrets
+          image: registry.redhat.io/openshift4/ose-cli:latest
+          volumeMounts:
+            - name: cosign-keys
+              mountPath: /keys
+          env:
+            - name: QUAY_NAMESPACE
+              value: "quay"
+            - name: TARGET_NAMESPACE
+              value: "renovate-pipelines"
+            - name: REGISTRY_USER
+              value: "workshopuser"
+            - name: REGISTRY_PASSWORD
+              value: "workshoppass123"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              echo "=== Tekton Pipelines Post-Configuration ==="
+
+              # ── 1. Discover Quay route ──
+              echo "[1/5] Discovering Quay registry route..."
+              QUAY_ROUTE=""
+              for i in $(seq 1 60); do
+                  QUAY_ROUTE=$(oc get route -n "${QUAY_NAMESPACE}" \
+                      -l quay-operator/quayregistry=quay-registry \
+                      -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+                  if [ -n "$QUAY_ROUTE" ]; then break; fi
+                  echo "  Waiting for Quay route... (${i}/60)"
+                  sleep 10
+              done
+              if [ -z "$QUAY_ROUTE" ]; then
+                  echo "ERROR: Quay route not found after 10 minutes."
+                  exit 1
+              fi
+              echo "  Quay registry: ${QUAY_ROUTE}"
+
+              # ── 2. Create internal-registry-credentials ──
+              echo "[2/5] Creating internal-registry-credentials secret..."
+              oc delete secret internal-registry-credentials \
+                  -n "${TARGET_NAMESPACE}" 2>/dev/null || true
+              oc create secret docker-registry internal-registry-credentials \
+                  --docker-server="${QUAY_ROUTE}" \
+                  --docker-username="${REGISTRY_USER}" \
+                  --docker-password="${REGISTRY_PASSWORD}" \
+                  -n "${TARGET_NAMESPACE}"
+              echo "  internal-registry-credentials created."
+
+              # ── 3. Create cosign signing keys secret ──
+              echo "[3/5] Creating cosign signing keys secret..."
+              oc delete secret cosign-signing-keys \
+                  -n "${TARGET_NAMESPACE}" 2>/dev/null || true
+              oc create secret generic cosign-signing-keys \
+                  --from-file=cosign.key=/keys/cosign.key \
+                  --from-file=cosign.pub=/keys/cosign.pub \
+                  --from-literal=password="" \
+                  -n "${TARGET_NAMESPACE}"
+              echo "  cosign-signing-keys created (cosign-generated key pair)."
+
+              # ── 4. Link secrets to pipeline ServiceAccount ──
+              echo "[4/5] Linking secrets to pipeline ServiceAccount..."
+              for i in $(seq 1 24); do
+                  if oc get sa pipeline -n "${TARGET_NAMESPACE}" > /dev/null 2>&1; then
+                      oc secrets link pipeline internal-registry-credentials \
+                          --for=pull,mount -n "${TARGET_NAMESPACE}"
+                      echo "  internal-registry-credentials linked to pipeline SA."
+                      break
+                  fi
+                  echo "  Waiting for pipeline ServiceAccount... (${i}/24)"
+                  sleep 10
+              done
+
+              # ── 5. Verify ──
+              echo "[5/5] Verifying secrets..."
+              for S in internal-registry-credentials cosign-signing-keys; do
+                  if oc get secret "$S" -n "${TARGET_NAMESPACE}" > /dev/null 2>&1; then
+                      echo "  ✓ $S exists"
+                  else
+                      echo "  ✗ $S MISSING"
+                      exit 1
+                  fi
+              done
+
+              echo ""
+              echo "=== Tekton Pipelines Post-Configuration Complete ==="
+              echo "  Namespace:  ${TARGET_NAMESPACE}"
+              echo "  Registry:   ${QUAY_ROUTE}"
+              echo "  Secrets:    internal-registry-credentials, cosign-signing-keys"
