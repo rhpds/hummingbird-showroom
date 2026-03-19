@@ -1,22 +1,18 @@
 = {workshop-title}
 
-== Welcome to Project Hummingbird
+== Welcome to Container Hardening: Zero to Hero
 
-Welcome to the **Zero CVE Hummingbird Workshop**! This comprehensive two-module workshop is designed to help you master the skills needed to build, deploy, and manage minimal, hardened container environments using Red Hat's innovative Project Hummingbird initiative.
+Welcome to the **Container Hardening** lab! This workshop is designed to help you master the skills needed to build, deploy, and manage minimal, hardened container environments using Red Hat Hardened Images.
 
-**Project Hummingbird** represents Red Hat's strategic approach to delivering "zero-CVE" container base images built from Fedora components. Launched in November 2025, Hummingbird addresses critical challenges in modern software supply chains by providing micro-sized, hardened runtime images with complete transparency through SBOMs (Software Bill of Materials).
+**Red Hat Hardened Images** represents Red Hat's strategic approach to delivering distroless, "zero-CVE" container base images built from upstream components. These images address critical challenges in modern software supply chains by providing micro-sized, hardened runtime images with complete transparency through SBOMs (Software Bill of Materials).
 
 .*Workshop Duration*
 * **Total Time**: {workshop-duration}
-* **Module 1**: {lab1-duration}
-* **Module 2**: {lab2-duration}
+* **Web Module**: {weblab-duration}
+* **RHEL Module**: {lab1-duration}
+* **OCP Module**: {lab2-duration}
 
-.*Delivery Format*
-* Flexible delivery (in-person or virtual)
-* Hands-on labs with pre-provisioned AWS environments
-* Independent modules (can be taken standalone)
-
-== Why Hummingbird Matters
+== Why Hardened Images Matter
 
 Traditional container base images, even minimal variants like UBI Minimal, include packages that aren't needed at runtime. These unnecessary components create:
 
@@ -25,59 +21,30 @@ Traditional container base images, even minimal variants like UBI Minimal, inclu
 * **Compliance challenges** for supply chain security
 * **Higher infrastructure costs** from bloated images
 
-**Hummingbird's Solution:**
+**Red Hat's Solution:**
 
 * **Zero-CVE at Ship Time**: Images delivered free of known vulnerabilities
 * **Micro-Sized**: JRE runtime ~185MB, Node.js < 100MB, Go < 25MB (vs ~400MB+ for full UBI)
-* **Enterprise Grade**: Built on Fedora/RHEL foundation with Red Hat support
+* **Enterprise Grade**: Built on a SLSA3 pipeline  with Red Hat support available
 * **Complete Transparency**: Every image ships with SBOMs for compliance
 * **Production Ready**: Runtime images for .NET, Go, Java, Node.js, Python, databases, and web servers
 
-== Who Should Attend?
-
-This workshop is designed for intermediate to advanced technical professionals:
-
-**Module 1 - Developers ({lab1-audience})**
-
-Software developers who want to:
-
-* Set up local container development environments with Podman Desktop
-* Build secure, minimal container images using Hummingbird runtimes
-* Implement security scanning and image signing workflows
-* Understand multi-stage builds for production-ready containers
-* Work with rootless Podman on RHEL 9/10 or Fedora {fedora-version}
-
-**Module 2 - Platform Engineers ({lab2-audience})**
-
-DevOps, SRE, and platform engineering teams who need to:
-
-* Deploy Shipwright Builds on OpenShift {openshift-version}
-* Implement Cloud Native Buildpacks with Hummingbird runtimes
-* Create reusable BuildStrategy patterns for development teams
-* Integrate automated security scanning and SBOM generation
-* Establish GitOps-driven build and deployment pipelines
-
 == What You'll Learn
 
-=== Module 1: Container Development Environment with Hummingbird
+=== Module 1: Information Gathering for Hardened Images
+This module will introduce the new web application.
+
+=== Module 2: Container Development Environment with Hummingbird
 
 In this hands-on module, you'll build and secure container images using a pre-configured developer environment:
 
-* **Multi-Stage Builds**: Build production images using UBI builder + Hummingbird runtime
+* **Multi-Stage Builds**: Build production images using various different types of harnded images
 * **Security Tools**: Use cosign, syft, and grype for image signing and scanning
-* **Security Workflow**: Scan for CVEs, generate SBOMs, sign and verify images
 * **Size Optimization**: Compare image sizes and vulnerability counts
-* **SELinux Hardening**: Generate custom SELinux policies with udica for Hummingbird containers
-* **Advanced SELinux**: Device access policies, iteration workflows, and policy distribution patterns
-* **Optional -- chunkah**: Content-based layer splitting for optimised image pulls
-* **Optional -- Multi-Language Builds**: Production Containerfiles for Node.js, Quarkus Native, Python, and Go
-* **Optional -- The Aha Moment**: Demonstrating chunkah value with CVE simulations and layer digest diffs
-* **Optional -- Tomcat on Hummingbird**: Multi-stage Tomcat builds with RPM and upstream approaches, production hardening, and chunkah layer tagging
+* **Security Workflow**: Scan for CVEs, generate SBOMs, sign and verify images
+* **SELinux Hardening**: Generate custom SELinux policies with udica
 
-.*Expected Outcomes*
-By the end of Module 1, you'll be able to build, scan, sign, and harden Hummingbird-based container images locally with production-ready SELinux policies.
-
-=== Module 2: Building Hummingbird Images with Shipwright on OpenShift
+=== Module 3: Building Hardened Images with Shipwright on OpenShift
 
 This module focuses on platform-level image building and deployment:
 
@@ -87,26 +54,10 @@ This module focuses on platform-level image building and deployment:
 * **Security Pipeline**: Integrate SBOM generation, scanning, and signing into builds
 * **Production Deployment**: Deploy built images to OpenShift namespaces
 * **SELinux CI/CD**: Automate udica policy generation with Tekton and distribute via MachineConfig
-* **Optional -- chunkah Pipeline**: Automated content-based layer splitting in CI/CD
-* **Optional -- RHTAS**: Keyless image signing and SBOM attestation with Red Hat Trusted Artifact Signer
-* **Optional -- The Immutable Fortress**: Zero-CVE enforcement with ACS admission control and Hummingbird distroless images
 
 .*Expected Outcomes*
-By the end of Module 2, you'll have working Shipwright builds deploying Hummingbird-based applications with automated security controls and SELinux policies.
+You'll have working Shipwright builds deploying Hummingbird-based applications with automated security controls and SELinux policies.
 
-== Workshop Structure
-
-Both modules are designed to function **independently**. You can:
-
-* Take only Module 1 (developer focus)
-* Take only Module 2 (platform focus)
-* Take both modules for end-to-end understanding
-
-Each module includes:
-
-* Brief conceptual overview (5-10 minutes)
-* Hands-on labs (30-35 minutes)
-* Verification and summary (5 minutes)
 
 ////
 == Environment Setup
@@ -199,14 +150,12 @@ Your unique lab environment identifier: `{guid}`
 * Podman {podman-version} (rootless container runtime)
 * Buildah (container image building)
 * Skopeo (image inspection and distribution)
-* Podman Desktop (GUI for container workflows)
 
 *Security Tools:*
 
 * cosign (image signing and verification)
 * syft (SBOM generation)
 * grype (pipeline vulnerability scanning)
-* Clair (registry-integrated vulnerability scanning via Quay)
 
 *Platform Technologies:*
 
@@ -222,43 +171,9 @@ Your unique lab environment identifier: `{guid}`
 * Hummingbird Source Registry: `{hummingbird-registry}`
 * UBI Registry: `{ubi-registry}`
 
-== Getting Started
-
-Ready to begin? Make sure your environment is prepared (see <<Environment Setup>> above), then choose your starting module:
-
-* **Module 1: Developer Environment (RHEL)** - Build and secure Hummingbird container images
-  - xref:module-01-01-building.adoc[1.1: Building with Hummingbird]
-  - xref:module-01-02-security.adoc[1.2: Security Scanning & SBOMs]
-  - xref:module-01-03-selinux.adoc[1.3: SELinux Fundamentals with udica]
-  - xref:module-01-04-selinux-advanced.adoc[1.4: Advanced SELinux Hardening]
-
-* **Module 2: Shipwright and Buildpacks (OpenShift)** - Deploy platform-level builds on OpenShift
-  - xref:module-02-01-buildpacks.adoc[2.1: Cloud Native Buildpacks]
-  - xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
-  - xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
-  - xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
-  - xref:module-02-08-renovate-podman.adoc[2.8: Automated Dependency Updates with Renovate + Podman (~35 min)]
-
-* **Optional: Module 1 Exercises (RHEL)** - Additional hands-on labs for RHEL environments
-  - xref:module-01-05-chunkah.adoc[1.5: Content-Based Layer Splitting with chunkah (~15 min)]
-  - xref:module-01-06-multi-lang-builds.adoc[1.6: Multi-Language Builds with Hummingbird (~15 min)]
-  - xref:module-01-07-chunkah-value.adoc[1.7: The Aha Moment — Demonstrating chunkah Value (~20 min)]
-  - xref:module-01-08-tomcat-hummingbird.adoc[1.8: Layering Tomcat on Hummingbird (~15 min)]
-
-* **Optional: Module 2 Exercises (OpenShift)** - Additional hands-on labs for OpenShift environments
-  - xref:module-02-05-chunkah-pipeline.adoc[2.5: chunkah in CI/CD Pipelines (~12 min)]
-  - xref:module-02-06-rhtas.adoc[2.6: Keyless Signing with RHTAS (~20 min)]
-  - xref:module-02-07-acs-zero-cve.adoc[2.7: The Immutable Fortress -- Zero-CVE with ACS (~25 min)]
-
-* **Appendix: Environment Setup** - Setup instructions if your environment is not pre-configured
-  - xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]
-  - xref:appendix-b-openshift-setup.adoc[Appendix B: OpenShift Platform Environment]
-
-Each sub-module is self-contained with clear learning objectives, hands-on activities, and verification steps.
-
 == Additional Resources
 
-*Project Hummingbird:*
+*Red Hat Hardened Images*
 
 * https://www.redhat.com/en/about/press-releases/red-hat-introduces-project-hummingbird-zero-cve-strategies[Red Hat Press Release: Project Hummingbird^]
 * https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/hummingbird[Official Hummingbird Page^]
@@ -284,4 +199,4 @@ If you encounter issues during the workshop:
 3. Consult the additional resources listed above
 4. Reach out to workshop facilitators (if in instructor-led session)
 
-Let's get started building secure, minimal container images with Project Hummingbird!
+Let's get started building secure, minimal container images with Red Hat Hardened Images!
