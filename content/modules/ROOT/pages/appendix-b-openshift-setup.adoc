@@ -1063,7 +1063,7 @@ EOF
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role.yaml
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/service_account.yaml -n gitea
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role_binding.yaml
-oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/crds/gpte.opentlc.com_giteas_crd.yaml
+oc apply -k https://github.com/rhpds/gitea-operator/config/crd
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/operator.yaml -n gitea
 ----
 
@@ -1088,7 +1088,7 @@ gitea-operator-xxxxxxxxx-xxxxx    1/1     Running   0          ...
 [source,bash,role=execute]
 ----
 cat << 'EOF' | oc apply -f -
-apiVersion: gpte.opentlc.com/v1
+apiVersion: pfe.rhpds.com/v1
 kind: Gitea
 metadata:
   name: gitea-server
