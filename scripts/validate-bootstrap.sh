@@ -308,8 +308,7 @@ PIPELINE_SA_SECRETS=$(oc get sa pipeline -n hummingbird-builds -o jsonpath='{.se
 if echo "$PIPELINE_SA_SECRETS" | grep -q registry-credentials 2>/dev/null; then
     pass "Pipeline SA: registry-credentials linked"
 else
-    SA_EXISTS=$(oc get sa pipeline -n hummingbird-builds 2>/dev/null && echo "yes" || echo "no")
-    if [ "$SA_EXISTS" = "yes" ]; then
+    if oc get sa pipeline -n hummingbird-builds &>/dev/null; then
         warn "Pipeline SA: exists but registry-credentials not yet linked"
     else
         warn "Pipeline SA: not yet created in hummingbird-builds"
@@ -340,8 +339,7 @@ else
     warn "Admission control: not running yet"
 fi
 
-INIT_BUNDLE=$(oc get secret sensor-tls -n stackrox 2>/dev/null && echo "yes" || echo "no")
-if [ "$INIT_BUNDLE" = "yes" ]; then
+if oc get secret sensor-tls -n stackrox &>/dev/null; then
     pass "ACS init-bundle: sensor-tls secret exists"
 else
     warn "ACS init-bundle: sensor-tls not found (init-bundle may not be applied yet)"
@@ -372,8 +370,7 @@ if [ "$KC_REALM" = "True" ]; then
 elif [ -n "$KC_REALM" ]; then
     warn "Keycloak realm: Done=$KC_REALM"
 else
-    KC_EXISTS=$(oc get keycloakrealmimport trusted-artifact-signer -n keycloak 2>/dev/null && echo "yes" || echo "no")
-    if [ "$KC_EXISTS" = "yes" ]; then
+    if oc get keycloakrealmimport trusted-artifact-signer -n keycloak &>/dev/null; then
         warn "Keycloak realm: created, import in progress"
     else
         fail "Keycloak realm" "Keycloak realm: KeycloakRealmImport not found in keycloak namespace"
