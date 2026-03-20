@@ -16,4 +16,3 @@ spec:
   giteaUserPassword: openshift
   postgresqlVolumeSize: 4Gi
   giteaVolumeSize: 4Gi
-  giteaImage: quay.io/rhpds/openshift-gitea
