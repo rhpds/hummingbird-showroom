@@ -85,7 +85,7 @@ For multi-user workshops, set the `NUM_USERS` environment variable to create mul
 NUM_USERS=10 ./bootstrap/setup-all.sh
 ----
 
-The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
+The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. The ArgoCD Application uses `SkipDryRunOnMissingResource=true` so that CRD-dependent resources (e.g., Tekton Pipelines and Tasks at wave 10) can sync after the operator that registers their CRDs (OpenShift Pipelines at wave 1) finishes installing. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
 
 [TIP]
 ====
@@ -1400,6 +1400,24 @@ oc logs -l app=keycloak -n keycloak --tail=50
 oc get pods -n gitea
 
 oc get events -n gitea --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: ArgoCD sync fails with "could not find tekton.dev/Pipeline"**
+
+This happens when the ArgoCD Application is missing the `SkipDryRunOnMissingResource=true` sync option. ArgoCD validates all resources (including wave 10 Tekton Tasks/Pipelines) before applying any wave, and rejects resources whose CRDs have not yet been registered by the Pipelines operator (wave 1).
+
+[source,bash]
+----
+oc get application hummingbird-workshop -n openshift-gitops \
+  -o jsonpath='{.status.operationState.syncResult.resources}' | python3 -m json.tool
+----
+
+Fix: ensure `SkipDryRunOnMissingResource=true` is present in the ArgoCD Application's `spec.syncPolicy.syncOptions`, then re-apply the application:
+
+[source,bash]
+----
+# Re-run the bootstrap script to update the ArgoCD Application
+./bootstrap/setup-all.sh
 ----
 
 **Issue: Gitea instance route not available**
