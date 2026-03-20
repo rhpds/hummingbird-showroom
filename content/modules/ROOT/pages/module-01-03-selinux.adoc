@@ -27,7 +27,9 @@ One of the common things developers need to deal with is custom SSL certificates
 
 For this lab, we'll rely on Caddy's built in TLS support. We can activate this with a custom Caddyfile, enabling the default SSL port and using the `internal` directive to turn on it's CA. We can rebuild our previous caddy-server with this new configuration and rebuild the image.
 
-[source,bash,role=execute,subs=attributes+]
+=== Step 1: Create Caddyfile with TLS
+
+[source,bash,role=execute]
 ----
 cat  > ~/webserver/Caddyfile << 'EOF'
 {
@@ -41,16 +43,29 @@ localhost {
     file_server
 }
 EOF
+----
 
+=== Step 2: Build SSL-enabled Caddy image
+
+[source,bash,role=execute,subs=attributes+]
+----
 cat  > ~/webserver/Containerfile << 'EOF'
 FROM {hummingbird-registry}/caddy:latest
 COPY Caddyfile /etc/caddy/Caddyfile
 
 COPY index.html /usr/share/caddy/
 EOF
+----
 
-
+[source,bash,role=execute]
+----
 podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
+----
+
+=== Step 3: Run and test SSL Caddy server
+
+[source,bash,role=execute]
+----
 podman run -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
 ----
 
@@ -60,13 +75,25 @@ With the new SSL enabled Caddy site running, we can test against the new port
 podman run --net=host --rm -it  {hummingbird-registry}/curl https://localhost:8443
 ----
 
+=== Step 4: Extract CA certificate and key
+
 We can get the certificate and key for the internal CA from the running container and create a PEM file from them. This is similar to what you'd need for your internal organization's CA.
 [source,bash,role=execute]
 ----
 podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
+----
+
+[source,bash,role=execute]
+----
 podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
+----
+
+[source,bash,role=execute]
+----
 cat root.key root.crt > ca.pem
 ----
+
+=== Step 5: Build custom curl with CA bundle
 
 Using our internal CA as part of the trusted chain, we'd need to embed it in the image for our applications or tools. We'll use the `builder` variant of the `curl` image to create a custom internal `curl` we could use to validate custom certificates in a pipeline.
 
@@ -91,8 +118,17 @@ USER ${CONTAINER_DEFAULT_USER}
 FROM {hummingbird-registry}/curl:latest
 COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 EOF
+----
 
+[source,bash,role=execute]
+----
 podman build -t curl:local-ca -f ~/Containerfile.pem ~
+----
+
+=== Step 6: Test curl with custom CA
+
+[source,bash,role=execute]
+----
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
 ----
 
@@ -103,12 +139,16 @@ In addition to the `default` and `builder` variants already discussed, we also h
 
 The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
 
+=== Step 7: Check FIPS mode on host
+
 In this lab, the host and cluster are *not* in FIPS mode, however the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
 
 [source,bash,role=execute]
 ----
 cat /proc/sys/crypto/fips_enabled
 ----
+
+=== Step 8: Create standard Python Containerfile
 
 We've built a python application to demonstrate the differences an application would see based on the use of a `default` or `fips` variant. The only difference between our two containers is the source image.
 
@@ -134,6 +174,8 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 ----
 
+=== Step 9: Create FIPS Python Containerfile
+
 [source,bash,role=execute,subs=attributes+]
 ----
 # Create FIPS-enabled Python Containerfile
@@ -151,17 +193,31 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 ----
 
+=== Step 10: Build and compare both images
+
 We can build these and tag them so we can tell them apart
+
 [source,bash,role=execute]
 ----
 podman build -t fips:no -f ~/fips/Containerfile ~/fips
+----
+
+[source,bash,role=execute]
+----
 podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
 ----
 
+=== Step 11: Run and compare FIPS enforcement
+
 Running our application, we can see that MD5 and other methods considered less secure are disallowed in our `fips` based container.
+
 [source,bash,role=execute]
 ----
 podman run --rm fips:no
+----
+
+[source,bash,role=execute]
+----
 podman run --rm fips:yes
 ----
 
@@ -221,7 +277,7 @@ The policy generation relies on `podman inspect` output and audit log analysis, 
 [[installation]]
 == Installation
 
-=== Step 2: Confirm SELinux is Enforcing
+=== Step 12: Confirm SELinux is Enforcing
 
 [source,bash,role=execute]
 ----
@@ -247,7 +303,7 @@ sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
 SELinux in permissive mode logs denials but doesn't block them. For this workshop, we need enforcing mode to see the real benefit.
 ====
 
-=== Step 3: Verify udica Installation
+=== Step 13: Verify udica Installation
 
 [source,bash,role=execute]
 ----
@@ -264,17 +320,32 @@ udica --version
 
 We'll generate a custom SELinux policy for the `hummingbird-demo:v1` application built in Sub-Module 1.1, this time with **bind-mounted host directories** for configuration and logs. This is where udica provides the most value -- the default `container_t` policy doesn't know about your specific mount points.
 
-=== Step 4: Prepare Host Directories
+=== Step 14: Prepare Host Directories
 
 Create the directories on the host, set ownership for rootless Podman, and label them so SELinux knows containers should be allowed to access them:
 
 [source,bash,role=execute]
 ----
 sudo mkdir -p /opt/myapp/config /opt/myapp/logs
-sudo chown -R $(id -u):$(id -g) /opt/myapp
+----
 
+[source,bash,role=execute]
+----
+sudo chown -R $(id -u):$(id -g) /opt/myapp
+----
+
+[source,bash,role=execute]
+----
 sudo semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?"
+----
+
+[source,bash,role=execute]
+----
 sudo semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?"
+----
+
+[source,bash,role=execute]
+----
 sudo restorecon -Rv /opt/myapp
 ----
 
@@ -301,7 +372,7 @@ drwxr-xr-x. <user> <user> unconfined_u:object_r:container_file_t:s0 logs
 `container_file_t` is the SELinux type that containers are allowed to read/write. By labeling the host directories with this type, we tell SELinux these paths are intended for container use. udica will detect these labels and generate appropriately scoped rules.
 ====
 
-=== Step 5: First Run with Default Policy
+=== Step 15: First Run with Default Policy
 
 Run the quarkus application container with the default `container_t` policy, bind mounts, and an exposed port:
 
@@ -329,7 +400,15 @@ Give it a moment to start and verify it's running:
 [source,bash,role=execute]
 ----
 sleep 3
+----
+
+[source,bash,role=execute]
+----
 podman ps -a --filter name=demo-policy-run
+----
+
+[source,bash,role=execute]
+----
 curl http://localhost:8080/
 ----
 
@@ -338,7 +417,8 @@ curl http://localhost:8080/
 {"message":"Hello from Hummingbird!"...}
 ----
 
-=== Step 6: Generate udica Policy
+=== Step 16: Generate udica Policy
+
 Let's double check the context of our running container.
 
 
@@ -369,7 +449,7 @@ Please load these modules using:
 Restart the container with: "--security-opt label=type:hummingbird_demo.process" parameter
 ----
 
-=== Step 7: Walk Through the Generated CIL
+=== Step 17: Walk Through the Generated CIL
 
 This is the most important step -- understanding exactly what udica allowed:
 
@@ -423,7 +503,7 @@ http_cache_port_t    tcp    8080, 8118, 8123, 10001-10010
 [[load-and-apply-policy]]
 == Load and Apply the Policy
 
-=== Step 8: Load the SELinux Policy
+=== Step 18: Load the SELinux Policy
 
 [source,bash,role=execute]
 ----
@@ -443,7 +523,7 @@ sudo semodule -l | grep hummingbird_demo
 hummingbird_demo
 ----
 
-=== Step 9: Restart with Custom Policy
+=== Step 19: Restart with Custom Policy
 
 Stop the first run and restart with the custom policy applied:
 
@@ -451,7 +531,10 @@ Stop the first run and restart with the custom policy applied:
 ----
 podman stop demo-policy-run
 podman rm demo-policy-run
+----
 
+[source,bash,role=execute]
+----
 podman run -d \
   --name demo-selinux \
   --env container=podman \
@@ -462,7 +545,7 @@ podman run -d \
   hummingbird-demo:v1
 ----
 
-=== Step 10: Verify Custom Process Label
+=== Step 20: Verify Custom Process Label
 
 Confirm the container is running under the custom SELinux type:
 
@@ -481,13 +564,17 @@ system_u:system_r:hummingbird_demo.process:s0:c123,c456
 The `hummingbird_demo.process` type confirms the custom policy is active. The `c123,c456` portion is the Multi-Category Security (MCS) label that provides isolation between containers.
 ====
 
-=== Step 11: Test Functionality
+=== Step 21: Test Functionality
 
 Verify the application still works under the custom policy:
 
 [source,bash,role=execute]
 ----
 curl http://localhost:8080/
+----
+
+[source,bash,role=execute]
+----
 curl http://localhost:8080/health
 ----
 

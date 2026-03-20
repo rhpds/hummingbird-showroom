@@ -36,9 +36,14 @@ We've worked with several different vendors to ensure our CVE feeds available an
 
 Grype scans container images for known CVEs.
 Syft generates Software Bill of Materials (SBOMs) from container images.
+
 [source,bash,role=execute]
 ----
 grype version
+----
+
+[source,bash,role=execute]
+----
 syft version
 ----
 
@@ -46,8 +51,6 @@ Let's build our sample quarkus app using the UBI openjdk image so we can do some
 
 [source,bash,role=execute]
 ----
-
-# Create a UBI single stage Containerfile 
 cat > ~/sample-app/Containerfile.ubi << 'EOF'
 FROM registry.access.redhat.com/ubi9/openjdk-21:latest
 USER root
@@ -64,8 +67,10 @@ EXPOSE 8080
 USER 1001
 ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
+----
 
-# Build UBI-only version
+[source,bash,role=execute]
+----
 podman build -f ~/sample-app/Containerfile.ubi -t demo-ubi:v1 ~/sample-app
 ----
 
@@ -166,8 +171,10 @@ Create a Software Bill of Materials for compliance:
 [source,bash,role=execute]
 ----
 syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
+----
 
-# View package count
+[source,bash,role=execute]
+----
 jq '.packages | length' hummingbird-demo.spdx
 ----
 
@@ -216,15 +223,26 @@ Cosign signs and verifies images stored in OCI registries. Since our image lives
 
 [source,bash,role=execute]
 ----
-# Start a local OCI registry
 podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
+----
 
-# Tag and push our image to the local registry
+[source,bash,role=execute]
+----
 podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
-podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
+----
 
-# Capture the image digest for use with cosign
+[source,bash,role=execute]
+----
+podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
+----
+
+[source,bash,role=execute]
+----
 IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
+----
+
+[source,bash,role=execute]
+----
 echo "Image digest: ${IMAGE_DIGEST}"
 ----
 
@@ -249,6 +267,10 @@ Generate a key pair for testing (in production, use keyless signing or KMS), for
 [source,bash,role=execute]
 ----
 export COSIGN_PASSWORD=""
+----
+
+[source,bash,role=execute]
+----
 cosign generate-key-pair
 ----
 
@@ -396,6 +418,10 @@ Once you're done with signing and attestation, you can stop the local registry:
 [source,bash,role=execute]
 ----
 podman stop registry && podman rm registry
+----
+
+[source,bash,role=execute]
+----
 cd ~
 ----
 
