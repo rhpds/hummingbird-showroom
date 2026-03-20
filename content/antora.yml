@@ -47,6 +47,10 @@ asciidoc:
     gitea-namespace: 'gitea'
     gitea-admin-user: 'gitea-admin'
 
+    # On-cluster Quay registry
+    workshop-registry: 'TO-BE-PROVIDED'
+    quay-namespace: 'quay'
+
     # Placeholders for lab environment
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'
