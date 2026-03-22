@@ -249,7 +249,7 @@ EOF
 
 [source,bash,role=execute]
 ----
-oc get pipelinerun generate-nodejs-policy -w
+oc get pipelinerun generate-nodejs-policy -n hummingbird-builds -w
 ----
 
 Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
@@ -258,10 +258,14 @@ You can also watch the PipelineRun in the OpenShift console under **Pipelines â†
 
 === Step 7: View the Generated Policy
 
+The Task results (CIL policy, digest, policy type) are stored in the TaskRun. Retrieve them:
+
 [source,bash,role=execute]
 ----
-oc get pipelinerun generate-nodejs-policy \
-  -o jsonpath='{.status.pipelineResults}' | python3 -m json.tool
+TASKRUN=$(oc get pipelinerun generate-nodejs-policy -n hummingbird-builds \
+  -o jsonpath='{.status.childReferences[0].name}')
+oc get taskrun $TASKRUN -n hummingbird-builds \
+  -o jsonpath='{.status.results}' | python3 -m json.tool
 ----
 
 The `POLICY_CIL` result contains the generated CIL policy. The `POLICY_TYPE` result gives you the SELinux type name (`hummingbird_nodejs.process`) to use in your Deployment spec.
@@ -270,7 +274,7 @@ View the detailed logs:
 
 [source,bash,role=execute]
 ----
-oc logs generate-nodejs-policy-generate-policy-pod -c step-generate-policy
+oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-generate-policy
 ----
 
 [TIP]

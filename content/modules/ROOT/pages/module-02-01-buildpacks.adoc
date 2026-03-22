@@ -191,7 +191,7 @@ Watch the build execution:
 
 [source,bash,role=execute]
 ----
-oc get buildrun sample-quarkus-app-run-1 -w
+oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds -w
 ----
 
 .*Expected output:*
@@ -223,7 +223,7 @@ Check detailed build logs:
 
 [source,bash,role=execute]
 ----
-BUILDRUN_POD=$(oc get buildrun sample-quarkus-app-run-1 -o jsonpath='{.status.taskRunName}')-pod
+BUILDRUN_POD=$(oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds -o jsonpath='{.status.taskRunName}')-pod
 
 oc logs $BUILDRUN_POD -n hummingbird-builds --all-containers
 ----
@@ -266,7 +266,7 @@ Confirm the image was pushed successfully:
 
 [source,bash,role=execute]
 ----
-oc get buildrun sample-quarkus-app-run-1 -o jsonpath='{.status.output.digest}'
+oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds -o jsonpath='{.status.output.digest}'
 echo ""
 ----
 
@@ -307,7 +307,7 @@ Use `skopeo` to examine the built image and confirm it uses the Hummingbird runt
 
 [source,bash,role=execute,subs="attributes"]
 ----
-skopeo inspect docker://{workshop-registry}/{registry-user}/sample-quarkus:latest 2>/dev/null \
+skopeo inspect --tls-verify=false --creds {registry-user}:{registry-password} docker://{workshop-registry}/{registry-user}/sample-quarkus:latest \
   | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -318,14 +318,25 @@ labels = d.get('Labels',{})
 for k,v in sorted(labels.items()):
     if 'hummingbird' in k.lower():
         print(f'Label {k}: {v}')
-" \
-  || echo "Note: skopeo inspect requires TLS trust for the on-cluster registry"
+"
 ----
 
 [NOTE]
 ====
 The image labels from the Hummingbird base image (e.g., `io.hummingbird-project.*`) are inherited by the final image. This provides built-in provenance showing which Hummingbird runtime was used.
 ====
+
+=== Step 9b: Verify in Quay Console
+
+Open the Quay console and navigate to **Repositories** -> **workshopuser/sample-quarkus**. You should see the `latest` tag with a successful security scan:
+
+.Quay repository showing the pushed sample-quarkus:latest image
+image::module-02/quay-sample-quarkus-tags.png[Quay Repository Tags,width=800]
+
+Click the security scan result to view the Clair vulnerability report. A Hummingbird-based image should show **zero vulnerabilities**:
+
+.Clair security scan: zero CVEs detected in the Hummingbird runtime image
+image::module-02/quay-clair-zero-cve.png[Clair Zero CVE Scan,width=800]
 
 [[deploy-application]]
 == Deploy Built Image
@@ -361,18 +372,24 @@ The `oc secrets link default registry-credentials --for=pull` step is required b
 
 [source,bash,role=execute]
 ----
-ROUTE=$(oc get route sample-quarkus -o jsonpath='{.spec.host}')
-echo "Application URL: http://$ROUTE"
+ROUTE=$(oc get route sample-quarkus -n hummingbird-builds -o jsonpath='{.spec.host}')
+echo "Application URL: http://$ROUTE/hello"
 curl -s http://$ROUTE/hello | python3 -m json.tool
 ----
 
 .*Expected output:*
 ----
+Application URL: http://sample-quarkus-hummingbird-builds.apps.<cluster-domain>/hello
 {
     "message": "Hello from Hummingbird!",
     "runtime": "Quarkus + JDK 21.0.10"
 }
 ----
+
+You can also open the URL in your browser by navigating to `http://<route>/hello`:
+
+.Browser showing the Hummingbird Quarkus /hello endpoint response
+image::module-02/quarkus-hello-endpoint.png[Quarkus Hello Endpoint,width=800]
 
 Also verify the Quarkus health endpoint:
 
@@ -398,6 +415,16 @@ If you get a timeout, the application may still be starting. Check pod status:
 oc get pods -l app=sample-quarkus -n hummingbird-builds
 oc logs -l app=sample-quarkus -n hummingbird-builds
 ----
+====
+
+.OpenShift console: hummingbird-builds pods showing the completed build and running application
+image::module-02/openshift-hummingbird-builds-pods.png[OpenShift Pods,width=800]
+
+[IMPORTANT]
+====
+The route created by `oc expose service` uses **HTTP** (not HTTPS). Access the application at `http://` -- using `https://` will return a 503 error.
+
+The root path `/` returns "Resource not found" which is expected for Quarkus REST applications. Use the `/hello` endpoint to verify the app is working.
 ====
 
 [[verify-runtime]]

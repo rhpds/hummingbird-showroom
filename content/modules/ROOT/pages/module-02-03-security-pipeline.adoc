@@ -211,7 +211,7 @@ Monitor the build:
 
 [source,bash,role=execute]
 ----
-oc get buildrun secure-build-run-1 -w
+oc get buildrun secure-build-run-1 -n hummingbird-builds -w
 ----
 
 [[view-security-steps]]
@@ -223,8 +223,8 @@ Once the build completes, view the SBOM generation output:
 
 [source,bash,role=execute]
 ----
-TASKRUN=$(oc get buildrun secure-build-run-1 -o jsonpath='{.status.taskRunName}')
-oc logs $TASKRUN -c step-generate-sbom
+TASKRUN=$(oc get buildrun secure-build-run-1 -n hummingbird-builds -o jsonpath='{.status.taskRunName}')
+oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-generate-sbom
 ----
 
 .*Expected output (excerpt):*
@@ -248,7 +248,7 @@ Syft is invoked directly (`/syft`) because the `anchore/syft` image is distroles
 
 [source,bash,role=execute]
 ----
-oc logs $TASKRUN -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-scan-vulnerabilities
 ----
 
 .*Expected output for Hummingbird image:*
@@ -272,62 +272,33 @@ The scan shows **0 vulnerabilities** in the base image. This is the power of Hum
 
 Because you pushed the image to the on-cluster Quay registry, Clair has already scanned it automatically. This provides a second layer of vulnerability assessment without any pipeline configuration.
 
-[NOTE]
-====
-The Quay API requires authentication for private repositories. If the API calls below return `401 Unauthorized`, you can view Clair scan results directly in the Quay console at `+https://{workshop-registry}/repository/{registry-user}/secure-nodejs+` under the **Security Scan** tab.
-====
-
-Query the Clair results via the Quay API:
+Use `skopeo` to inspect the image and confirm it was built on the Hummingbird runtime:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-DIGEST=$(oc get buildrun secure-build-run-1 -o jsonpath='{.status.output.digest}')
-QUAY_ROUTE={workshop-registry}
-
-curl -sk "https://${QUAY_ROUTE}/api/v1/repository/{registry-user}/secure-nodejs/manifest/${DIGEST}/security?vulnerabilities=true" | \
-  python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-status = data.get('status', 'unknown')
-print(f'Clair scan status: {status}')
-if status == 'scanned':
-    features = data.get('data', {}).get('Layer', {}).get('Features', [])
-    total_vulns = sum(len(f.get('Vulnerabilities', [])) for f in features)
-    print(f'Packages scanned: {len(features)}')
-    print(f'Total vulnerabilities: {total_vulns}')
-else:
-    print('Scan may still be in progress -- check the Quay console.')
+skopeo inspect --tls-verify=false --creds {registry-user}:{registry-password} \
+  docker://{workshop-registry}/{registry-user}/secure-nodejs:latest \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(f'Architecture: {d.get(\"Architecture\")}')
+print(f'OS: {d.get(\"Os\")}')
+print(f'Layers: {len(d.get(\"Layers\",[]))}')
+labels = d.get('Labels',{})
+for k,v in sorted(labels.items()):
+    if 'hummingbird' in k.lower():
+        print(f'Label {k}: {v}')
 "
-----
-
-.*Expected output for a Hummingbird image:*
-----
-Clair scan status: scanned
-Packages scanned: 15
-Total vulnerabilities: 0
-----
-
-Query Clair scan results via the Quay API:
-
-[source,bash,role=execute,subs="attributes"]
-----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
-curl -sk "https://${QUAY_ROUTE}/api/v1/repository/{registry-user}/secure-nodejs/tag/latest/security?vulnerabilities=true" \
-  | jq '{vulnerabilities: ([.data.Layer.Features[]?.Vulnerabilities[]? | select(. != null)] | length), status: .status}'
 ----
 
 .*Expected output:*
 ----
-{
-  "vulnerabilities": 0,
-  "status": "scanned"
-}
+Architecture: amd64
+OS: linux
+Layers: 5
+Label io.hummingbird-project.base: true
+Label io.hummingbird-project.version: 1.0.0
 ----
-
-[NOTE]
-====
-If the scan shows `"status": "queued"`, wait 30-60 seconds and retry the query. Clair scanning happens asynchronously after the image is pushed to the registry.
-====
 
 [NOTE]
 ====
@@ -338,6 +309,16 @@ If the scan shows `"status": "queued"`, wait 30-60 seconds and retry the query. 
 
 Using both gives you immediate feedback in the pipeline _and_ continuous monitoring in the registry.
 ====
+
+You can also verify the results visually in the Quay console. Navigate to **Repositories** -> **workshopuser/secure-nodejs**:
+
+.Quay repository showing the secure-nodejs:latest image with a passed security scan
+image::module-02/quay-secure-nodejs-tags.png[Quay Secure Node.js Tags,width=800]
+
+Click the security scan result to view the Clair vulnerability report. A Hummingbird-based image should show zero vulnerabilities:
+
+.Clair security scan: zero CVEs detected in the secure-nodejs Hummingbird image
+image::module-02/quay-secure-nodejs-clair-zero-cve.png[Clair Zero CVE Scan,width=800]
 
 [[production-deployment]]
 == Production Deployment
@@ -479,6 +460,9 @@ production-app-def456-uvw        1/1     Running   0          30s
 production-app-ghi789-rst        1/1     Running   0          30s
 ----
 
+.OpenShift console: three production-app replicas running in hummingbird-production
+image::module-02/openshift-production-pods.png[Production Pods,width=800]
+
 === Step 9: Get Application Route
 
 [source,bash,role=execute]
@@ -498,6 +482,9 @@ curl -sk https://$ROUTE
 ----
 {"nodeVersion":"v20.20.0","expressVersion":"5.2.1","v8Version":"...","platform":"linux","architecture":"x64"}
 ----
+
+.Production app JSON response showing Node.js version details
+image::module-02/production-app-response.png[Production App Response,width=400]
 
 [TIP]
 ====
@@ -521,7 +508,7 @@ echo "    --certificate-oidc-issuer=https://token.actions.githubusercontent.com 
 echo "    {workshop-registry}/{registry-user}/secure-nodejs:latest"
 echo ""
 echo "For this workshop, verify the image digest matches the BuildRun output:"
-BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
+BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -n hummingbird-builds -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
 echo "  BuildRun digest: $BUILDRUN_DIGEST"
 ----
 
@@ -650,7 +637,7 @@ Create Tekton Tasks that generate udica policies alongside image builds, deploy 
 [source,bash]
 ----
 # Check syft step logs
-oc logs $TASKRUN -c step-generate-sbom
+oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-generate-sbom
 
 # Verify image is accessible
 podman pull <image>
@@ -660,7 +647,7 @@ podman pull <image>
 [source,bash]
 ----
 # View scan results
-oc logs $TASKRUN -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-scan-vulnerabilities
 
 # Review CVEs found
 grype <image> --only-fixed

@@ -306,7 +306,7 @@ Monitor the build:
 
 [source,bash,role=execute]
 ----
-oc get buildrun auto-detect-build-run-1 -w
+oc get buildrun auto-detect-build-run-1 -n hummingbird-builds -w
 ----
 
 Press `Ctrl+C` once the build succeeds.
@@ -317,10 +317,10 @@ Check that the language was detected correctly:
 
 [source,bash,role=execute]
 ----
-BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -o jsonpath='{.status.taskRunName}')-pod
+BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -n hummingbird-builds -o jsonpath='{.status.taskRunName}')-pod
 
 # View detect-and-generate step output
-oc logs $BUILDRUN_POD -c step-detect-and-generate
+oc logs $BUILDRUN_POD -n hummingbird-builds -c step-detect-and-generate
 ----
 
 .*Expected output:*
@@ -338,7 +338,7 @@ Confirm the full build pipeline worked by inspecting the build step output:
 
 [source,bash,role=execute]
 ----
-oc logs $BUILDRUN_POD -c step-build-and-push | head -20
+oc logs $BUILDRUN_POD -n hummingbird-builds -c step-build-and-push | head -20
 ----
 
 .*Expected output:*
@@ -434,7 +434,7 @@ build.shipwright.io/internal-registry-build created
 
 [source,yaml,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
+cat << 'EOF' | oc create -f -
 apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
@@ -450,6 +450,28 @@ EOF
 ====
 Using `generateName` instead of `name` allows OpenShift to auto-generate unique names, which is useful for repeated builds.
 ====
+
+=== Step 8b: Verify ImageStream in OpenShift
+
+Confirm the image was pushed to the internal registry by checking the ImageStream:
+
+[source,bash,role=execute]
+----
+oc get imagestream sample-app -n hummingbird-builds
+oc get imagestream sample-app -n hummingbird-builds -o jsonpath='{.status.tags[0].items[0].dockerImageReference}'
+echo ""
+----
+
+.*Expected output:*
+----
+NAME         IMAGE REPOSITORY                                                                TAGS     UPDATED
+sample-app   image-registry.openshift-image-registry.svc:5000/hummingbird-builds/sample-app   latest   ...
+----
+
+You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `hummingbird-builds` project:
+
+.OpenShift console showing the sample-app ImageStream created by the internal registry build
+image::module-02/openshift-imagestream-sample-app.png[OpenShift ImageStreams,width=800]
 
 [[air-gap-registry-mirrors]]
 == Air-Gapped Registry Mirrors
