@@ -12,11 +12,6 @@
 ** xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
 ** xref:module-02-07-acs-zero-cve.adoc[2.5: Zero-CVE with ACS Enforcement]
 
-* Optional Exercises
-** xref:module-02-05-chunkah-pipeline.adoc[chunkah in CI/CD Pipelines]
-** xref:module-02-06-rhtas.adoc[Keyless Signing with RHTAS]
-** xref:module-02-08-renovate-podman.adoc[Automated Dependency Updates with Renovate + Podman]
-
 * Appendix: Environment Setup
 ** xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]
 ** xref:appendix-b-openshift-setup.adoc[Appendix B: OpenShift Platform Environment]
