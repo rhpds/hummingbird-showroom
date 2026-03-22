@@ -533,7 +533,7 @@ This ensures every image version has a matching, auditable SELinux policy.
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
+Congratulations! You've completed Sub-Module 2.4.
 
 .*What You've Accomplished*
 ✅ Created a Tekton Task for automated udica policy generation +
@@ -562,35 +562,13 @@ Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
 * udica SELinux policies (kernel-level access control)
 * Image signing (provenance verification)
 
-=== Workshop Complete!
+=== Next: Enforce Zero-CVE with ACS
 
-You've finished both modules of the Zero CVE Hummingbird Workshop!
+Continue to the final required exercise:
 
-**What You've Mastered:**
+**xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.5: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**
 
-**Module 1 -- Developer Environment:**
-* Multi-stage builds with Hummingbird runtimes
-* Security scanning, SBOM generation, image signing
-* Custom SELinux policies with udica (fundamentals and advanced)
-* Production-ready iteration and distribution workflows
-
-**Module 2 -- Platform Engineering:**
-* Shipwright Builds operator on OpenShift
-* Buildpacks and custom BuildStrategies
-* Multi-language auto-detection
-* Complete security pipeline (build -> scan -> SBOM -> deploy)
-* Automated SELinux policy generation with Tekton
-
-**Combined Workflow:**
-1. **Module 1**: Develop and validate locally with Podman
-2. **Module 2**: Deploy to platform with Shipwright + Tekton
-3. **Production**: Automated builds, scanning, signing, SELinux policies, and deployment
-
-=== Optional Exercise
-
-**xref:module-02-05-chunkah-pipeline.adoc[Sub-Module 2.5: chunkah in CI/CD Pipelines]**
-
-Learn how to integrate chunkah content-based layer splitting into the Tekton pipeline for automated image optimisation (~12 min).
+Prove the zero-CVE posture by deploying a legacy vulnerable image alongside a Hummingbird image, then enforce admission control policies with Red Hat Advanced Cluster Security (~25 min).
 
 === Next Steps for Production
 

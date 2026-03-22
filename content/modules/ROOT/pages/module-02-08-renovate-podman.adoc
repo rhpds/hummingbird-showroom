@@ -1,10 +1,11 @@
-= Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman
+= Sub-Module 2.8: Automated Dependency Updates with Renovate + Podman (Optional)
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~35-40 minutes +
 *Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline); Sub-Module 2.4 (Tekton) recommended +
+*Status:* Optional exercise -- not required for Module 2 completion +
 *Learning Objectives:*
 
 * Deploy Renovate Bot as a scheduled Tekton Pipeline that scans repos for stale dependencies
