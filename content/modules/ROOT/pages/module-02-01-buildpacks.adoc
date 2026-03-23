@@ -138,7 +138,7 @@ spec:
   - name: dockerfile
     value: "Containerfile"
   output:
-    image: {quay_url}/{quay_user}/sample-quarkus:latest
+    image: {quay_hostname}/{quay_user}/sample-quarkus:latest
     credentials:
       name: registry-credentials
 EOF
@@ -288,8 +288,7 @@ Verify the image was pushed to Quay via the Docker v2 registry API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_HOSTNAME=${quay_url#https://}
-TOKEN=$(curl -sk "{quay_url}/v2/auth?service=${QUAY_HOSTNAME}&scope=repository:{quay_user}/sample-quarkus:pull" \
+TOKEN=$(curl -sk "{quay_url}/v2/auth?service={quay_hostname}&scope=repository:{quay_user}/sample-quarkus:pull" \
   -u "{quay_user}:{quay_password}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 curl -sk -H "Authorization: Bearer $TOKEN" \
   "{quay_url}/v2/{quay_user}/sample-quarkus/tags/list" | python3 -m json.tool
@@ -314,9 +313,7 @@ Use `skopeo` to examine the built image and confirm it uses the Hummingbird runt
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_HOSTNAME=${quay_url#https://}
-
-skopeo inspect docker://${QUAY_HOSTNAME}/{quay_user}/sample-quarkus:latest 2>/dev/null \
+skopeo inspect docker://{quay_hostname}/{quay_user}/sample-quarkus:latest 2>/dev/null \
   | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -352,10 +349,8 @@ Now create the deployment, service, and route:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_HOSTNAME=${quay_url#https://}
-
 oc create deployment sample-quarkus \
-  --image=$QUAY_HOSTNAME/{quay_user}/sample-quarkus:latest \
+  --image={quay_hostname}/{quay_user}/sample-quarkus:latest \
   -n hummingbird-builds-{user}
 
 oc expose deployment sample-quarkus --port=8080 -n hummingbird-builds-{user}
@@ -503,11 +498,10 @@ oc describe sa pipeline -n hummingbird-builds-{user} | grep registry-credentials
 
 # Recreate secret if needed (use your on-cluster Quay route)
 oc delete secret registry-credentials -n hummingbird-builds-{user}
-QUAY_ROUTE=$(oc get route -n quay -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
 oc create secret docker-registry registry-credentials \
-  --docker-server="${QUAY_ROUTE}" \
-  --docker-username=YOUR_USER \
-  --docker-password=YOUR_PASSWORD \
+  --docker-server="{quay_hostname}" \
+  --docker-username={quay_user} \
+  --docker-password={quay_password} \
   -n hummingbird-builds-{user}
 oc secrets link pipeline registry-credentials -n hummingbird-builds-{user}
 ----
