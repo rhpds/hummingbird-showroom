@@ -295,9 +295,10 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
 ----
 
 .*Expected output:*
+[source,json,subs=attributes]
 ----
 {
-    "name": "workshopuser/sample-quarkus",
+    "name": "{user}/sample-quarkus",
     "tags": [
         "latest"
     ]
