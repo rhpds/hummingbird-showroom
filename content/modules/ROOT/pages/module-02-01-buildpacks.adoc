@@ -314,7 +314,7 @@ Use `skopeo` to examine the built image and confirm it uses the Hummingbird runt
 
 [source,bash,role=execute,subs=attributes]
 ----
-skopeo inspect docker://{quay_hostname}/{quay_user}/sample-quarkus:latest 2>/dev/null \
+skopeo inspect docker://{quay_hostname}/{quay_user}/sample-quarkus:latest --username {quay_user} --password {quay_password} 2>/dev/null \
   | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -325,8 +325,7 @@ labels = d.get('Labels',{})
 for k,v in sorted(labels.items()):
     if 'hummingbird' in k.lower():
         print(f'Label {k}: {v}')
-" \
-  || echo "Note: skopeo inspect requires TLS trust for the on-cluster registry"
+"
 ----
 
 [NOTE]
@@ -412,12 +411,16 @@ oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
 
 === Step 12: Check Image in Quay Console
 
-[source,bash,role=execute,subs=attributes]
-----
-echo "Check image at: {quay_url}/repository/{quay_user}/sample-quarkus"
-echo ""
-echo "Check Quay Security Scanner results for CVE counts."
-----
+Log into Red Hat Quay in the tab on the right hand side.
+
+As a reminder your credentials for Quay are:
+
+* *Username*: `{quay_user}`
+* *Password*: `{quay_password}`
+
+Find your container image clicking on the *{quay_user}* organization, and then clicking on the *sample-quarkus* image. Then on the image switch to the *Tags* tab to examine the available tags and their CVE scan results.
+
+Look at your container image and check the results of the Quay Security Scanner for CVE counts. You can click on *None detected* to open up a detailed security report.
 
 [NOTE]
 ====
