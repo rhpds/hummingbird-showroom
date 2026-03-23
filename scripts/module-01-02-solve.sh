@@ -46,6 +46,9 @@ EOF
 podman build -f ~/sample-app/Containerfile.ubi -t hummingbird-demo:ubi ~/sample-app
 echo "✅ UBI comparison image built successfully"
 
+echo "=== Viewing image comparison ==="
+podman images hummingbird-demo
+
 echo "=== Step 1: Scan Hummingbird image for CVEs ==="
 grype hummingbird-demo:v1
 echo "✅ CVE scan completed"
@@ -156,6 +159,8 @@ echo "=== Cleanup ==="
 echo "Stopping and removing local registry..."
 podman stop registry 2>/dev/null || echo "Registry may already be stopped"
 podman rm registry 2>/dev/null || echo "Registry may already be removed"
+
+cd ~
 
 echo "=== Summary ==="
 echo "✅ CVE scanning and SBOM generation completed"

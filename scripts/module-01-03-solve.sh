@@ -77,7 +77,7 @@ COPY ca.pem /tmp/
 # Temporarily switch to root to add the CA certificate to the trust store
 USER root
 RUN trust anchor /tmp/ca.pem
-USER ${CONTAINER_DEFAULT_USER}
+USER \${CONTAINER_DEFAULT_USER}
 
 # Runtime stage:
 # Copy the trust store from the builder image to the runtime image
@@ -95,6 +95,13 @@ echo "Stopping SSL Caddy server..."
 podman stop caddy-ssl
 
 echo "=== Step 2: FIPS Variants Testing ==="
+
+echo "=== Step 7: Check FIPS mode on host ==="
+echo "Checking if host is in FIPS mode..."
+cat /proc/sys/crypto/fips_enabled
+echo "A value of 0 means the host is NOT in FIPS mode"
+echo "Note: Container FIPS enforcement operates independently of host FIPS mode"
+echo ""
 
 # Create FIPS testing directory and copy test file
 mkdir -p ~/fips
@@ -114,7 +121,7 @@ FROM ${HUMMINGBIRD_REGISTRY}/python:3.14
 COPY test-fips.py .
 
 # Switch back to the default user to install and run the application
-USER ${CONTAINER_DEFAULT_USER}
+USER \${CONTAINER_DEFAULT_USER}
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
 STOPSIGNAL SIGINT
@@ -142,7 +149,7 @@ FROM ${HUMMINGBIRD_REGISTRY}/python:3.14-fips
 COPY test-fips.py .
 
 # Switch back to the default user to install and run the application
-USER ${CONTAINER_DEFAULT_USER}
+USER \${CONTAINER_DEFAULT_USER}
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
 STOPSIGNAL SIGINT

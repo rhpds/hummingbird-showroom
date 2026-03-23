@@ -158,6 +158,22 @@ EOF
 echo "=== Building UBI Flask version ==="
 podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
 
+echo "=== Testing UBI Flask application ==="
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:ubi
+
+# Wait for Flask container to be ready and test
+echo "Testing UBI Flask container readiness..."
+for i in {1..5}; do
+    if curl -f -s http://localhost:8080 > /dev/null 2>&1; then
+        curl http://localhost:8080
+        echo "✅ UBI Flask container responding successfully"
+        break
+    fi
+    echo "Waiting for Flask to start (attempt $i/5)..."
+    sleep 1
+done
+podman stop flask-demo
+
 echo "=== Step 4: Creating Hummingbird Flask Containerfile ==="
 cat > ~/flask/Containerfile.hi << EOF
 # Stage 1: Base Image from Project Hummingbird
@@ -180,8 +196,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 USER root
 RUN python3 -m pip install --index-url http://localhost:8000/simple flask 
 
-# Switch to the default non-root user for runtime 
-USER ${CONTAINER_DEFAULT_USER}
+# Switch to the default non-root user for runtime
+USER \${CONTAINER_DEFAULT_USER}
 
 # Expose the port Flask will listen on
 EXPOSE 8080
