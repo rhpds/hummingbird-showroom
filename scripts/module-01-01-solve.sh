@@ -99,47 +99,20 @@ mkdir -p ~/flask
 cat  > ~/flask/app.py << 'EOF'
 from flask import Flask
 
-app = Flask(__name__)
+app = Flask(__name__,)
 
 @app.route("/")
-def home():
-    return """
-    <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project Hummingbird</title>
-    <!-- Load Tailwind CSS from CDN for instant styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-    </style>
-</head>
-<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
-    <div class="text-center">
-        <h1 class="text-6xl md:text-8xl font-extrabold text-indigo-700
-                   hover:scale-105 transition duration-300 ease-in-out">
-            Welcome to Project Hummingbird
-        </h1>
-        <p class="mt-4 text-xl text-gray-500">
-            Your simple Flask application is running!
-        </p>
-        <p class="mt-5 text-xl text-gray-400">
-	    ....everybody loves hummingbirds
-        </p>
-    </div>
-</body>
-</html>
-    """
+def index():
+    return app.send_static_file("index.html")
 
 if __name__ == "__main__":
     # Listen on all interfaces (0.0.0.0) on port 8080
     app.run(host="0.0.0.0", port=8080)
+
 EOF
+
+echo "=== Copying index.html to Flask directory ==="
+cp ~/webserver/index.html ~/flask/
 
 echo "=== Step 3: Creating UBI Flask Containerfile for comparison ==="
 cat > ~/flask/Containerfile.ubi << EOF
@@ -160,6 +133,7 @@ WORKDIR /app
 # Ensure ownership is set to the new non-root user
 # COPY always executes as root
 COPY --chown=appuser:appgroup app.py .
+COPY --chown=appuser:appgroup index.html static/
 
 # Set environment variables for Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -187,7 +161,7 @@ podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
 echo "=== Step 4: Creating Hummingbird Flask Containerfile ==="
 cat > ~/flask/Containerfile.hi << EOF
 # Stage 1: Base Image from Project Hummingbird
-FROM ${HUMMINGBIRD_REGISTRY}/python:3.14
+FROM ${HUMMINGBIRD_REGISTRY}/python:3.14-builder
 
 # Set the working directory in the container
 WORKDIR /app
@@ -195,6 +169,7 @@ WORKDIR /app
 # Copy the application files to the target directory
 # COPY always executes as root
 COPY --chown=65532 app.py .
+COPY --chown=65532 index.html static/
 
 # Set environment variables for Python
 ENV PYTHONDONTWRITEBYTECODE=1 \

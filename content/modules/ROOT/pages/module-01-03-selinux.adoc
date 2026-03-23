@@ -75,6 +75,16 @@ With the new SSL enabled Caddy site running, we can test against the new port
 podman run --net=host --rm -it  {hummingbird-registry}/curl https://localhost:8443
 ----
 
+As expected, we get an error since `curl` can't verify the issuer of the SSL certificate presnted by Caddy.
+----
+curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the webpage mentioned above.
+----
+
 === Step 4: Extract CA certificate and key
 
 We can get the certificate and key for the internal CA from the running container and create a PEM file from them. This is similar to what you'd need for your internal organization's CA.
@@ -142,6 +152,14 @@ The `fips` variant changes the algorithms available in the container and also us
 === Step 7: Check FIPS mode on host
 
 In this lab, the host and cluster are *not* in FIPS mode, however the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
+
+For **full FIPS 140-3 compliance** (required for FedRAMP, DoD, and other regulatory frameworks):
+
+* Container must use `-fips` variant (provides validated crypto modules)
+* Host/cluster must enable FIPS mode (kernel boot parameter `fips=1`)
+* Hardware may need FIPS-validated TPM (for some compliance levels)
+
+We can still demonstrate how the container restricts algorithms as the image enforcement operates separately. Production deployments requiring certification would need both container AND host in FIPS mode.
 
 [source,bash,role=execute]
 ----
@@ -215,11 +233,62 @@ Running our application, we can see that MD5 and other methods considered less s
 ----
 podman run --rm fips:no
 ----
+----
+============================================================
+FIPS Validated Crypto Library Test
+============================================================
+Python version: 3.14.3
+OpenSSL version: OpenSSL 3.5.5 27 Jan 2026
+FIPS provider: not active # <.>
+
+============================================================
+Running FIPS Validation Checks
+============================================================
+✓ PASS - FIPS-Approved Algorithms # <.>
+  All FIPS-approved algorithms available (SHA-256, HMAC-SHA256, MD5 (usedforsecurity=False), AES-256-GCM cipher)
+✗ FAIL - Disallowed Algorithms Blocked # <.>
+  Failures: MD5 via hashlib.new() was allowed; MD5 via hashlib.md5() was allowed; HMAC-MD5 was allowed; CHACHA20-POLY1305 cipher was allowed
+
+✗ NOT FIPS CAPABLE
+----
+The test program highlights a few details about the algorithms and providers available to an application in this image.
+
+<.> The specialized compliant module for OpenSSL is not present in the `dafault` image
+<.> The specific algorithms approved for use in FIPS environments are available
+<.> The insecure algorithms like MD5 have not been disabled
+
+Running this image in a FIPS environment would not comply with the standard.
+
 
 [source,bash,role=execute]
 ----
 podman run --rm fips:yes
 ----
+----
+============================================================
+FIPS Validated Crypto Library Test
+============================================================
+Python version: 3.14.3
+OpenSSL version: OpenSSL 3.5.5 27 Jan 2026 # <.>
+FIPS provider: active (provider 3.0.7-395c1a240fbfffd8) # <.> 
+
+============================================================
+Running FIPS Validation Checks
+============================================================
+✓ PASS - FIPS-Approved Algorithms
+  All FIPS-approved algorithms available (SHA-256, HMAC-SHA256, MD5 (usedforsecurity=False), AES-256-GCM cipher)
+✓ PASS - Disallowed Algorithms Blocked # <.>
+  All disallowed algorithms properly blocked (4 algorithms)
+
+✓ FIPS CAPABLE
+----
+Here the test programs shows us new details of the inner workings of the `fips` variant.
+
+<.> The main OpenSSL version is the same as in the `default` image
+<.> The compliant module is present and repoting a version different than the main OpenSSL package
+<.> The image has blocked the disallowed algorithms.
+
+This image could then be used as part of a FIPS environment.
 
 [[selinux]]
 == Intro to SELinux
@@ -289,20 +358,6 @@ getenforce
 Enforcing
 ----
 
-[IMPORTANT]
-====
-If the output is `Permissive` or `Disabled`, enable enforcing mode:
-
-[source,bash]
-----
-sudo setenforce 1
-
-sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-----
-
-SELinux in permissive mode logs denials but doesn't block them. For this workshop, we need enforcing mode to see the real benefit.
-====
-
 === Step 13: Verify udica Installation
 
 [source,bash,role=execute]
@@ -312,7 +367,7 @@ udica --version
 
 .*Expected output:*
 ----
-0.2.8 or later
+0.2.8
 ----
 
 [[example-bind-mount]]
@@ -395,13 +450,6 @@ podman run -d \
 * The `Z` flag tells Podman to relabel the content with a private label for this container
 ====
 
-Give it a moment to start and verify it's running:
-
-[source,bash,role=execute]
-----
-sleep 3
-----
-
 [source,bash,role=execute]
 ----
 podman ps -a --filter name=demo-policy-run
@@ -409,22 +457,29 @@ podman ps -a --filter name=demo-policy-run
 
 [source,bash,role=execute]
 ----
-curl http://localhost:8080/
+curl -s http://localhost:8080/ | jq
 ----
 
 .*Expected output:*
 ----
-{"message":"Hello from Hummingbird!"...}
+{
+  "message": "Hello from Hummingbird!",
+  "runtime": "Java 21.0.10",
+  "platform": "linux",
+  "timestamp": "2026-03-23T19:44:28.921499086Z"
+}
 ----
 
 === Step 16: Generate udica Policy
 
-Let's double check the context of our running container.
-
+Let's double check the context of our running container is `container_t`.
 
 [source,bash,role=execute]
 ----
 podman inspect demo-policy-run --format '{{.ProcessLabel}}'
+----
+----
+system_u:system_r:container_t:s0:c338,c964
 ----
 
 Capture the `podman inspect` output and feed it to udica:
@@ -465,28 +520,25 @@ cat hummingbird_demo.cil
     (blockinherit restricted_net_container)    ; <2>
     (allow process http_cache_port_t ( tcp_socket (  name_bind )))           ; <3>
     (allow process container_file_t ( dir ( add_name create getattr ... )))  ; <4>
-    (allow process container_file_t ( file ( append create getattr ... )))   ; <5>
-    (allow process container_file_t ( fifo_file ( getattr read write ... ))) ; <6>
-    (allow process container_file_t ( sock_file ( append getattr ... )))     ; <7>
-    (allow process container_file_t ( dir ( getattr ioctl lock ... )))       ; <8>
-    (allow process container_file_t ( file ( getattr ioctl lock ... )))      ; <9>
+    (allow process container_file_t ( file ( append create getattr ... )))   ; 
+    (allow process container_file_t ( fifo_file ( getattr read write ... ))) ; <5>
+    (allow process container_file_t ( sock_file ( append getattr ... )))     ;
+    (allow process container_file_t ( dir ( getattr ioctl lock ... )))       ; <6>
+    (allow process container_file_t ( file ( getattr ioctl lock ... )))      ;
     ...
 )
 ----
 
 .*Line-by-line explanation:*
 
-* **<1> `(blockinherit container)`** -- Inherits all rules from `base_container.cil`. This gives the container the same baseline permissions as `container_t` (process management, basic filesystem access, etc.)
+<1> **`(blockinherit container)`** -- Inherits all rules from `base_container.cil`. This gives the container the same baseline permissions as `container_t` (process management, basic filesystem access, etc.)
+<2> **`(blockinherit restricted_net_container)`** -- Inherits network access rules from `net_container.cil` (which defines both the `net_container` and `restricted_net_container` blocks). udica chooses `restricted_net_container` which provides TCP/UDP/SCTP socket access plus outbound HTTP connectivity, appropriate because the container exposes port 8080.
+<3> **`(allow process http_cache_port_t ...)`** -- Allows binding to ports with the `http_cache_port_t` SELinux label. Port 8080 shares this label with 8118, 8123, etc.
+<4> **`container_file_t` dir/file write rules** -- Allows the container to create, write, append, and manage files and directories labeled `container_file_t`. This covers the read-write `/opt/myapp/logs` mount.
 
-* **<2> `(blockinherit restricted_net_container)`** -- Inherits network access rules from `net_container.cil` (which defines both the `net_container` and `restricted_net_container` blocks). udica chooses `restricted_net_container` which provides TCP/UDP/SCTP socket access plus outbound HTTP connectivity, appropriate because the container exposes port 8080.
+<5> **`container_file_t` fifo/sock write rules** -- Allows read/write access to named pipes (FIFOs) and socket files within the labeled directories.
 
-* **<3> `(allow process http_cache_port_t ...)`** -- Allows binding to ports with the `http_cache_port_t` SELinux label. Port 8080 shares this label with 8118, 8123, etc.
-
-* **<4>-<5> `container_file_t` dir/file write rules** -- Allows the container to create, write, append, and manage files and directories labeled `container_file_t`. This covers the read-write `/opt/myapp/logs` mount.
-
-* **<6>-<7> `container_file_t` fifo/sock write rules** -- Allows read/write access to named pipes (FIFOs) and socket files within the labeled directories.
-
-* **<8>-<9> `container_file_t` dir/file read rules** -- Allows read-only access to directories and files labeled `container_file_t`. This covers the read-only `/opt/myapp/config` mount.
+<6> **`container_file_t` dir/file read rules** -- Allows read-only access to directories and files labeled `container_file_t`. This covers the read-only `/opt/myapp/config` mount.
 
 The policy captures rules for **both** bind mounts: read-write rules for the logs directory and read-only rules for the config directory, plus the port binding rule. You can see which ports share the `http_cache_port_t` label:
 
@@ -529,8 +581,7 @@ Stop the first run and restart with the custom policy applied:
 
 [source,bash,role=execute]
 ----
-podman stop demo-policy-run
-podman rm demo-policy-run
+podman stop demo-policy-run && podman rm demo-policy-run
 ----
 
 [source,bash,role=execute]
@@ -570,12 +621,12 @@ Verify the application still works under the custom policy:
 
 [source,bash,role=execute]
 ----
-curl http://localhost:8080/
+curl -s http://localhost:8080/ | jq
 ----
 
 [source,bash,role=execute]
 ----
-curl http://localhost:8080/health
+curl -s http://localhost:8080/health | jq
 ----
 
 Both endpoints should respond correctly. The container now runs with **only** the permissions it actually needs -- no more, no less.
@@ -600,8 +651,7 @@ These two layers are **independent and complementary** -- compromising one doesn
 
 [source,bash,role=execute]
 ----
-podman stop demo-selinux
-podman rm demo-selinux
+podman stop demo-selinux && podman rm demo-selinux
 ----
 
 [[summary]]
