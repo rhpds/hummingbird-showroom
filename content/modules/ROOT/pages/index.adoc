@@ -105,7 +105,7 @@ oc project rhel-{user}
 +
 [source,sh,subs=attributes,role=execute]
 ----
-virtctl console rhel-{user}
+virtctl ssh rhel@vm/rhel-{user}
 ----
 +
 [TIP]
@@ -117,7 +117,6 @@ Hit `Enter` once you are connected to see the login prompt.
 
 . Log into the VM using the following credentials:
  
-* *Username*: `rhel`
 * *Password*: `{password}`
 
 ==== OpenShift Console (Module 2)
