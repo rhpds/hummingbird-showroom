@@ -51,6 +51,9 @@ asciidoc:
     workshop-registry: 'TO-BE-PROVIDED'
     quay-namespace: 'quay'
 
+    # ACS (Red Hat Advanced Cluster Security)
+    acs-namespace: 'stackrox'
+
     # Placeholders for lab environment
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'

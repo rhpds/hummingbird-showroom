@@ -1,0 +1,35 @@
+name: Mirror Python Images to Quay.io
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    if: github.repository == 'tosin2013/zero-cve-hummingbird-showroom'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq skopeo
+
+      - name: Mirror python:3.11-buster
+        run: |
+          skopeo copy \
+            --dest-creds="${{ secrets.QUAY_ROBOT_USER }}:${{ secrets.QUAY_ROBOT_TOKEN }}" \
+            docker://docker.io/library/python:3.11-buster \
+            docker://quay.io/takinosh/python3.11-buster:latest
+
+      - name: Mirror python:3.11-slim
+        run: |
+          skopeo copy \
+            --dest-creds="${{ secrets.QUAY_ROBOT_USER }}:${{ secrets.QUAY_ROBOT_TOKEN }}" \
+            docker://docker.io/library/python:3.11-slim \
+            docker://quay.io/takinosh/python3.11-slim:latest
+
+      - name: Verify mirrors
+        run: |
+          skopeo inspect docker://quay.io/takinosh/python3.11-buster:latest | jq '{Digest, Created}'
+          skopeo inspect docker://quay.io/takinosh/python3.11-slim:latest | jq '{Digest, Created}'

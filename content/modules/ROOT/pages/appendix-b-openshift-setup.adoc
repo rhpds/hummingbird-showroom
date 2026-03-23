@@ -780,11 +780,15 @@ oc wait --for=condition=Available deployment/admission-control -n stackrox --tim
 
 ==== Step 22: Install the roxctl CLI
 
+The download endpoint requires authentication with the ACS admin password:
+
 [source,bash,role=execute]
 ----
 ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
 
-curl -sk "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
+curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
 chmod +x roxctl
 sudo mv roxctl /usr/local/bin/
 

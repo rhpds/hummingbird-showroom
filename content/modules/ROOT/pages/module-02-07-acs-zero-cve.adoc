@@ -45,7 +45,7 @@ Phase 4: Attempt to redeploy the legacy image
 * OpenShift {openshift-version} cluster with cluster-admin access
 * `oc` CLI authenticated to the cluster
 * ACS (RHACS) operator installed and Central accessible (see xref:appendix-b-openshift-setup.adoc#acs-setup[Appendix B: ACS Setup])
-* `roxctl` CLI installed and configured
+* `roxctl` CLI (installed in Step 2 below)
 * `cosign` and `syft` available (installed in Sub-Module 2.3)
 
 [[setup]]
@@ -63,63 +63,75 @@ oc new-project hummingbird-acs-lab
 Now using project "hummingbird-acs-lab" on server "https://...".
 ----
 
-=== Step 2: Configure roxctl CLI
+=== Step 2: Set Registry Variables
+
+Look up the on-cluster Quay registry route and configure your registry credentials. These variables are used throughout this module for building, pushing, and deploying images:
+
+[source,bash,role=execute,subs="attributes"]
+----
+export WORKSHOP_REGISTRY=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
+export REGISTRY_USER=workshopuser
+export REGISTRY_PASSWORD=workshoppass123
+
+echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
+echo "REGISTRY_USER=${REGISTRY_USER}"
+
+podman login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "https://${WORKSHOP_REGISTRY}" --tls-verify=false
+----
+
+.*Expected output:*
+----
+WORKSHOP_REGISTRY=quay-registry-quay-quay.apps.<cluster-domain>
+REGISTRY_USER=workshopuser
+Login Succeeded!
+----
+
+=== Step 3: Install the roxctl CLI
+
+The `roxctl` CLI is used to interact with ACS Central from the command line. Download it directly from your ACS installation:
+
+[source,bash,role=execute,subs="attributes"]
+----
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
+
+curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o /tmp/roxctl
+
+chmod +x /tmp/roxctl
+sudo mv /tmp/roxctl /usr/local/bin/roxctl
+roxctl version
+----
+
+.*Expected output:*
+----
+roxctl: 4.x.x
+----
+
+[NOTE]
+====
+The download endpoint requires authentication. We use the ACS admin password stored in the `central-htpasswd` secret. Writing to `/usr/local/bin/` requires `sudo`.
+====
+
+=== Step 4: Configure roxctl CLI
 
 Set the ACS Central endpoint and API token so that `roxctl` can communicate with your ACS installation:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-export ROX_CENTRAL_ADDRESS={acs-central-url}:443
-export ROX_API_TOKEN=$(oc -n {acs-namespace} create token central-service-account --duration=4h 2>/dev/null || echo "SET-MANUALLY")
-----
-
-[TIP]
-====
-If the service account token creation fails, generate an API token using `roxctl` or directly via the ACS API:
-
-**Option 1: Using roxctl** (recommended)
-
-[source,bash,role=execute,subs="attributes"]
-----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+export ROX_ENDPOINT=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}'):443
 ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
 
-# Generate API token via roxctl
-export ROX_API_TOKEN=$(roxctl --insecure-skip-tls-verify \
-  -e "${ACS_ROUTE}:443" \
-  -p "${ACS_PASSWORD}" \
-  central init-bundles generate workshop-token \
-  --output-format json \
-  | jq -r '.token')
-
-echo "Generated ACS API Token: ${ROX_API_TOKEN}"
-----
-
-**Option 2: Using ACS API directly**
-
-[source,bash,role=execute,subs="attributes"]
-----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
-
-# Generate API token via REST API
 export ROX_API_TOKEN=$(curl -sk -u "admin:${ACS_PASSWORD}" \
-  "https://${ACS_ROUTE}/v1/apitokens/generate" \
+  "https://${ROX_ENDPOINT}/v1/apitokens/generate" \
   -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"name":"workshop-token","role":"Admin"}' \
+  -d '{"name":"workshop-token-'$(date +%s)'","role":"Admin"}' \
   | jq -r '.token')
 
-echo "Generated ACS API Token: ${ROX_API_TOKEN}"
+echo "ROX_ENDPOINT=${ROX_ENDPOINT}"
+echo "ROX_API_TOKEN=${ROX_API_TOKEN:0:20}..."
 ----
-
-Validate the token works:
-
-[source,bash,role=execute]
-----
-roxctl central whoami --insecure-skip-tls-verify
-----
-====
 
 Verify connectivity:
 
@@ -135,6 +147,173 @@ User:
   Roles: Admin
   Access: ...
 ----
+
+[WARNING]
+====
+**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set.
+====
+
+=== Step 5: Download Helper Scripts
+
+Several exercises use helper scripts to parse JSON output from `roxctl` and the ACS REST API. Create them now so you can reference them with simple one-line commands later.
+
+**Script 1 -- Scan summary** (parses `roxctl image scan` JSON output):
+
+[source,bash,role=execute]
+----
+mkdir -p ~/acs-fortress-lab && cd ~/acs-fortress-lab
+
+cat > acs-scan-summary.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, sys
+data = json.load(sys.stdin)
+summary = data.get("result", {}).get("summary", {})
+vulns = data.get("result", {}).get("vulnerabilities", [])
+fixable = sum(1 for v in vulns if v.get("componentFixedVersion"))
+if "--brief" in sys.argv:
+    print(f"  Components: {summary.get('TOTAL-COMPONENTS', 'N/A')}"
+          f"  |  Vulnerabilities: {summary.get('TOTAL-VULNERABILITIES', 0)}"
+          f"  |  Fixable: {fixable}")
+else:
+    print(f"Total components:       {summary.get('TOTAL-COMPONENTS', 'N/A')}")
+    print(f"Total vulnerabilities:  {summary.get('TOTAL-VULNERABILITIES', 0)}")
+    print(f"Critical:               {summary.get('CRITICAL', 0)}")
+    print(f"Important:              {summary.get('IMPORTANT', 0)}")
+    print(f"Moderate:               {summary.get('MODERATE', 0)}")
+    print(f"Low:                    {summary.get('LOW', 0)}")
+    print(f"Fixable vulnerabilities: {fixable}")
+PYEOF
+----
+
+**Script 2 -- Admission controller check** (reads ACS `/v1/clusters` API):
+
+[source,bash,role=execute]
+----
+cat > acs-check-admission.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, sys
+data = json.load(sys.stdin)
+cluster = data["clusters"][0]
+ac = cluster.get("dynamicConfig", {}).get("admissionControllerConfig", {})
+print(f"Cluster:              {cluster['name']}")
+print(f"Admission controller: {ac.get('enabled', False)}")
+print(f"Scan inline:          {ac.get('scanInline', False)}")
+print(f"Enforce on updates:   {ac.get('enforceOnUpdates', False)}")
+PYEOF
+----
+
+**Script 3 -- Provenance inspector** (reads `skopeo inspect --raw` manifest):
+
+[source,bash,role=execute]
+----
+cat > acs-inspect-provenance.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, sys
+try:
+    manifest = json.load(sys.stdin)
+except json.JSONDecodeError as e:
+    print(f"Error: could not parse manifest JSON ({e})")
+    sys.exit(1)
+if manifest.get("mediaType") == "application/vnd.oci.image.index.v1+json":
+    found = False
+    for m in manifest.get("manifests", []):
+        ann = m.get("annotations", {})
+        artifact_type = m.get("artifactType", "")
+        if "vnd.sigstore" in json.dumps(ann) or "sbom" in artifact_type.lower():
+            found = True
+            print(f"  Artifact: {artifact_type or 'unknown'}")
+            print(f"  Digest:   {m.get('digest', 'unknown')}")
+            print()
+    if not found:
+        print("No SBOM or sigstore attestations found in the manifest index.")
+else:
+    print("Single-arch manifest (inspect child manifests for attestations)")
+PYEOF
+----
+
+**Script 4 -- Policy creation** (creates enforcement policies via ACS API):
+
+[source,bash,role=execute]
+----
+cat > acs-create-policies.sh << 'SHEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${ROX_API_TOKEN:?ROX_API_TOKEN is not set}"
+: "${ACS_ROUTE:?ACS_ROUTE is not set}"
+API="https://${ACS_ROUTE}/v1/policies"
+AUTH="Authorization: Bearer ${ROX_API_TOKEN}"
+create_policy() {
+  local json_file="$1"
+  local name
+  name=$(python3 -c "import json; print(json.load(open('${json_file}'))['name'])")
+  existing=$(curl -sk -H "${AUTH}" "${API}" | \
+    python3 -c "import json,sys; ids=[p['id'] for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${name}']; print(ids[0] if ids else '')" 2>/dev/null)
+  if [ -n "${existing}" ]; then
+    echo "Policy '${name}' already exists (id: ${existing}). Ensuring enforcement..."
+    curl -sk -H "${AUTH}" "${API}/${existing}" | \
+      python3 -c "
+import json, sys
+p = json.load(sys.stdin)
+desired = ['SCALE_TO_ZERO_ENFORCEMENT']
+if p.get('enforcementActions') == desired:
+    print('  Enforcement already set.')
+else:
+    p['enforcementActions'] = desired
+    json.dump(p, open('/tmp/policy-update.json','w'))
+    print('  Updating enforcement...')
+" 2>/dev/null
+    if [ -f /tmp/policy-update.json ]; then
+      curl -sk -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+        "${API}/${existing}" -d @/tmp/policy-update.json > /dev/null
+      rm -f /tmp/policy-update.json
+      echo "  Enforcement enabled."
+    fi
+    return 0
+  fi
+  response=$(curl -sk -X POST -H "${AUTH}" -H "Content-Type: application/json" "${API}" -d @"${json_file}")
+  echo "${response}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'id' in d:
+    print(f\"Created policy: {d.get('name', 'unknown')} (id: {d['id']})\")
+else:
+    print(f\"Error: {d.get('message', d)}\")
+"
+}
+cat > /tmp/acs-policy-zero-cve.json << 'EOF'
+{"name":"Zero Fixable CVEs Required","description":"Reject deployments where the image has any fixable CVE.","severity":"CRITICAL_SEVERITY","categories":["Vulnerability Management"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"hummingbird-acs-lab"}],"policySections":[{"sectionName":"Fixable CVE threshold","policyGroups":[{"fieldName":"Fixed By","booleanOperator":"OR","negate":false,"values":[{"value":".*"}]},{"fieldName":"CVSS","booleanOperator":"OR","negate":false,"values":[{"value":">= 0.000000"}]}]}]}
+EOF
+echo "=== Creating policy: Zero Fixable CVEs Required ==="
+create_policy /tmp/acs-policy-zero-cve.json
+cat > /tmp/acs-policy-scan-required.json << 'EOF'
+{"name":"Image Scan Required","description":"Reject deployments where the image has not been scanned by ACS.","severity":"HIGH_SEVERITY","categories":["DevOps Best Practices"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"hummingbird-acs-lab"}],"policySections":[{"sectionName":"Scan status","policyGroups":[{"fieldName":"Unscanned Image","booleanOperator":"OR","negate":false,"values":[{"value":"true"}]}]}]}
+EOF
+echo "=== Creating policy: Image Scan Required ==="
+create_policy /tmp/acs-policy-scan-required.json
+echo ""
+echo "Done. Verify in ACS UI: Platform Configuration -> Policy Management"
+SHEOF
+----
+
+Verify the scripts were created:
+
+[source,bash,role=execute]
+----
+ls -1 acs-*
+----
+
+.*Expected output:*
+----
+acs-check-admission.py
+acs-create-policies.sh
+acs-inspect-provenance.py
+acs-scan-summary.py
+----
+
+[TIP]
+====
+These scripts avoid multi-line copy-paste problems when running commands from the browser. Each uses a quoted heredoc (`<< 'EOF'`) so the content is written exactly as shown.
+====
 
 [[deploy-legacy]]
 == Exercise 2: Deploy the Anti-Pattern (Legacy Python API)
@@ -181,7 +360,7 @@ This Containerfile uses `python:3.11-buster`, a full Debian-based image packed w
 [source,bash,role=execute]
 ----
 cat > Containerfile.legacy << 'EOF'
-FROM docker.io/library/python:3.11-buster
+FROM quay.io/takinosh/python3.11-buster:latest
 WORKDIR /app
 COPY app.py .
 RUN chmod 644 app.py && chown 1001:0 app.py
@@ -198,21 +377,45 @@ EOF
 
 === Step 3: Build and Push the Legacy Image
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute]
 ----
 podman build -f Containerfile.legacy -t legacy-python-api:vulnerable .
 
 podman tag legacy-python-api:vulnerable \
-  {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
+  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
 
-podman push {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
+podman push --tls-verify=false \
+  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
 ----
 
-=== Step 4: Deploy to OpenShift
+Verify the image appears in Quay with its security scan:
 
-[source,yaml,role=execute,subs="attributes"]
+image::module-02/legacy-python-quay-tags.png[Quay Repository Tags for legacy-python-api]
+
+Click on the security scan column to view the CVE details. The `python:3.11-buster` base image carries multiple fixable vulnerabilities:
+
+image::module-02/legacy-python-cve-scan.png[Clair Security Scan showing 10 fixable vulnerabilities in legacy-python-api]
+
+=== Step 4: Create Image Pull Secret
+
+The Quay repository is private, so OpenShift needs credentials to pull images:
+
+[source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
+oc create secret docker-registry quay-pull-secret \
+  --docker-server=${WORKSHOP_REGISTRY} \
+  --docker-username=${REGISTRY_USER} \
+  --docker-password=${REGISTRY_PASSWORD} \
+  -n hummingbird-acs-lab
+
+oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-lab
+----
+
+=== Step 5: Deploy to OpenShift
+
+[source,bash,role=execute]
+----
+cat << EOF | oc apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -234,7 +437,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: WORKSHOP_REGISTRY/REGISTRY_USER/legacy-python-api:vulnerable
+        image: ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
         ports:
         - containerPort: 8080
         livenessProbe:
@@ -276,34 +479,66 @@ spec:
 EOF
 ----
 
-[NOTE]
-====
-Replace `WORKSHOP_REGISTRY` and `REGISTRY_USER` with your actual values, or use `oc set image` inline:
+=== Step 6: Verify the Legacy Deployment
 
-[source,bash,subs="attributes"]
-----
-oc set image deployment/legacy-python-api \
-  api={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
-  -n hummingbird-acs-lab
-----
-====
-
-=== Step 5: Verify the Legacy Deployment
+Wait for the deployment to become ready:
 
 [source,bash,role=execute]
 ----
 oc rollout status deployment/legacy-python-api -n hummingbird-acs-lab --timeout=120s
+----
 
-ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
-curl -sk "https://${ROUTE}/api/v1/greeting"
+Get the application route:
+
+[source,bash,role=execute]
+----
+LEGACY_ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+echo "Legacy API URL: https://${LEGACY_ROUTE}"
+----
+
+Query the API endpoints:
+
+[source,bash,role=execute]
+----
+echo "=== Greeting Endpoint ==="
+curl -sk "https://${LEGACY_ROUTE}/api/v1/greeting" | python3 -m json.tool
+
+echo ""
+echo "=== Health Check ==="
+curl -sk "https://${LEGACY_ROUTE}/healthz" | python3 -m json.tool
+
+echo ""
+echo "=== 404 Handler (unknown path) ==="
+curl -sk "https://${LEGACY_ROUTE}/api/v1/nonexistent" | python3 -m json.tool
 ----
 
 .*Expected output:*
 ----
-{"message": "Hello from the Immutable Fortress lab"}
+=== Greeting Endpoint ===
+{
+    "message": "Hello from the Immutable Fortress lab"
+}
+
+=== Health Check ===
+{
+    "status": "healthy"
+}
+
+=== 404 Handler (unknown path) ===
+{
+    "error": "not found"
+}
 ----
 
-The API works. Now let's see what is lurking beneath the surface.
+[TIP]
+====
+You can also open the API in your browser:
+
+* Greeting: `https://<LEGACY_ROUTE>/api/v1/greeting`
+* Health check: `https://<LEGACY_ROUTE>/healthz`
+====
+
+The API works perfectly. Now let's see what is lurking beneath the surface.
 
 [[scan-legacy]]
 == Exercise 3: Scan with ACS -- Exposing Hidden Technical Debt
@@ -313,7 +548,7 @@ The API works. Now let's see what is lurking beneath the surface.
 [source,bash,role=execute,subs="attributes"]
 ----
 roxctl image scan \
-  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
+  --image=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
   --insecure-skip-tls-verify \
   --output=table
 ----
@@ -337,36 +572,74 @@ TOTAL: XX critical, XX high, XX medium, XX low
 You are carrying the security burden of an entire general-purpose operating system for an application that requires only a language runtime.
 ====
 
-=== Step 2: Check the Image in ACS Dashboard (Optional)
+=== Step 2: Check the Image in ACS Dashboard
 
-If you have access to the ACS Central web UI:
-
-. Navigate to *Vulnerability Management* -> *Images*
-. Search for `legacy-python-api`
-. Observe the CVE breakdown by severity and component
-. Note how the vulnerable components are exclusively OS-level packages
-
-=== Step 3: Count the Fixable CVEs
+Open the RHACS Central dashboard in your browser. First, retrieve the URL and admin credentials:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-roxctl image scan \
-  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
-  --insecure-skip-tls-verify \
-  --output=json | \
-  python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-vulns = data.get('result', {}).get('summary', {})
-print(f'Total components: {vulns.get(\"componentCount\", \"N/A\")}')
-print(f'Critical: {vulns.get(\"criticalCount\", 0)}')
-print(f'Important: {vulns.get(\"importantCount\", 0)}')
-print(f'Moderate: {vulns.get(\"moderateCount\", 0)}')
-print(f'Low: {vulns.get(\"lowCount\", 0)}')
-fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
-print(f'Fixable vulnerabilities: {fixable}')
-"
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
+
+echo "ACS Dashboard: https://${ACS_ROUTE}"
+echo "Username:      admin"
+echo "Password:      ${ACS_PASSWORD}"
 ----
+
+Log in to the ACS Central dashboard:
+
+. Open the URL printed above in your browser
+. Accept the self-signed certificate warning if prompted
+. Select *Login with username/password* and log in with username `admin` and the password shown above
+
+image::module-02/acs-login.png[ACS Central Login Page]
+
+After logging in, you will see the ACS Dashboard showing cluster-wide security metrics -- policy violations, images at most risk, and deployments at most risk:
+
+image::module-02/acs-dashboard.png[ACS Central Dashboard showing security overview]
+
+Now navigate to the legacy image vulnerabilities:
+
+. Click *Vulnerability Management* -> *Results* in the left sidebar
+. Search for `legacy-python-api` in the Image Name filter
+. You will see **60 CVEs** across the image, including critical and high severity findings:
+
+image::module-02/acs-legacy-cves-all.png[ACS Vulnerability findings showing 60 CVEs in legacy-python-api]
+
+Filter to show only **fixable Critical and Important** CVEs to see the most actionable findings:
+
+image::module-02/acs-legacy-cves-fixable.png[ACS filtered view showing 3 fixable Critical/Important CVEs]
+
+[NOTE]
+====
+All of these CVEs come from OS-level packages in the `python:3.11-buster` base image -- not from your application code. This is the security debt you carry by using a full OS-based container image.
+====
+
+=== Step 3: Count the Fixable CVEs
+
+[source,bash,role=execute]
+----
+roxctl image scan \
+  --image=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
+  --insecure-skip-tls-verify \
+  --output=json | python3 acs-scan-summary.py
+----
+
+.*Expected output (your counts will vary based on the image scan date):*
+----
+Total components:       <N>
+Total vulnerabilities:  <N>
+Critical:               <N>
+Important:              <N>
+Moderate:               <N>
+Low:                    <N>
+Fixable vulnerabilities: <N>
+----
+
+[NOTE]
+====
+The exact numbers depend on when the base image was last updated and the current state of the CVE databases. The key takeaway is that there are **multiple fixable vulnerabilities** -- all from OS-level packages your application never uses.
+====
 
 Remember these numbers. You will compare them against the Hummingbird image shortly.
 
@@ -381,7 +654,7 @@ cd ~/acs-fortress-lab
 
 cat > Containerfile.fortress << 'EOF'
 # Stage 1: Builder -- install dependencies in a full image
-FROM docker.io/library/python:3.11-slim AS builder
+FROM quay.io/takinosh/python3.11-slim:latest AS builder
 WORKDIR /build
 COPY app.py .
 RUN chmod 644 app.py
@@ -424,10 +697,19 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 podman build -f Containerfile.fortress -t fortress-python-api:zero-cve .
 
 podman tag fortress-python-api:zero-cve \
-  {workshop-registry}/{registry-user}/fortress-python-api:zero-cve
+  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve
 
-podman push {workshop-registry}/{registry-user}/fortress-python-api:zero-cve
+podman push --tls-verify=false \
+  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve
 ----
+
+Verify the fortress image in Quay. Notice the `zero-cve` tag with a **Passed** security scan and a dramatically smaller size (38 MB vs 339 MB):
+
+image::module-02/fortress-quay-tags.png[Quay Repository Tags for fortress-python-api showing Passed security scan]
+
+Click the security scan to confirm -- **zero vulnerabilities detected**:
+
+image::module-02/fortress-zero-cve-scan.png[Clair Security Scanner showing no vulnerabilities in fortress-python-api]
 
 === Step 3: Compare Image Sizes
 
@@ -437,16 +719,16 @@ podman images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | \
   grep -E "(legacy-python-api|fortress-python-api)"
 ----
 
-.*Expected output:*
+.*Expected output (sizes will vary based on image versions):*
 ----
 REPOSITORY:TAG                                   SIZE
-localhost/legacy-python-api:vulnerable            920 MB
-localhost/fortress-python-api:zero-cve            85 MB
+localhost/legacy-python-api:vulnerable            ~900 MB
+localhost/fortress-python-api:zero-cve            ~100 MB
 ----
 
 [NOTE]
 ====
-The Hummingbird image is roughly **10x smaller** because it contains only the Python interpreter, shared libraries it actually links against, and TLS root certificates -- nothing else. No package manager, no shell, no coreutils, no man pages.
+The Hummingbird image is roughly **9x smaller** because it contains only the Python interpreter, shared libraries it actually links against, and TLS root certificates -- nothing else. No package manager, no shell, no coreutils, no man pages. The exact sizes depend on the base image versions, but the order-of-magnitude difference is consistent.
 ====
 
 [[inspect-sbom]]
@@ -482,28 +764,42 @@ Hummingbird image: ~15-25 packages (Python runtime only)
 
 === Step 2: Inspect Hummingbird Upstream Provenance
 
-Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations. Inspect the upstream image:
+Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations, signatures, and SLSA provenance. Inspect the upstream image supply chain:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-cosign tree {hummingbird-registry}/python:latest 2>/dev/null || \
-  echo "cosign tree requires registry access -- inspect with skopeo instead:"
-
-skopeo inspect --raw docker://{hummingbird-registry}/python:latest | \
-  python3 -c "
-import json, sys
-manifest = json.load(sys.stdin)
-if manifest.get('mediaType') == 'application/vnd.oci.image.index.v1+json':
-    for m in manifest.get('manifests', []):
-        ann = m.get('annotations', {})
-        if 'vnd.sigstore' in json.dumps(ann) or 'sbom' in m.get('artifactType', '').lower():
-            print(f'  Artifact: {m.get(\"artifactType\", \"unknown\")}')
-            print(f'  Digest:   {m.get(\"digest\", \"unknown\")}')
-            print()
-else:
-    print('Single-arch manifest (inspect child manifests for attestations)')
-"
+cosign tree {hummingbird-registry}/python:latest
 ----
+
+.*Expected output:*
+----
+📦 Supply Chain Security Related artifacts for an image: quay.io/hummingbird-hatchling/python:latest
+└── 💾 Attestations for an image tag: ...python:sha256-<digest>.att
+   └── 🍒 sha256:<attestation-digest>
+└── 🔐 Signatures for an image tag: ...python:sha256-<digest>.sig
+   └── 🍒 sha256:<signature-digest>
+└── 📦 SBOMs for an image tag: ...python:sha256-<digest>.sbom
+   └── 🍒 sha256:<sbom-digest>
+----
+
+This shows three types of supply chain artifacts attached to the image:
+
+* **Attestations** (`.att`) -- SLSA build provenance recording the source commit, build system, and builder identity
+* **Signatures** (`.sig`) -- Cosign keyless signatures verifying the image was built by a trusted pipeline
+* **SBOMs** (`.sbom`) -- Software Bill of Materials listing every component in the image
+
+[NOTE]
+====
+If `cosign tree` is not available, you can fall back to `skopeo`:
+
+[source,bash,subs="attributes"]
+----
+skopeo inspect --raw docker://{hummingbird-registry}/python:latest | \
+  python3 acs-inspect-provenance.py
+----
+
+Note that `skopeo` only inspects the top-level manifest index. Cosign-style attestations are stored as separate tagged artifacts and may not appear in the raw manifest.
+====
 
 [NOTE]
 ====
@@ -515,9 +811,9 @@ else:
 
 === Step 1: Deploy the Hummingbird Image
 
-[source,yaml,role=execute,subs="attributes"]
+[source,bash,role=execute]
 ----
-cat << 'EOF' | oc apply -f -
+cat << EOF | oc apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -539,7 +835,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: WORKSHOP_REGISTRY/REGISTRY_USER/fortress-python-api:zero-cve
+        image: ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve
         ports:
         - containerPort: 8080
         livenessProbe:
@@ -586,13 +882,6 @@ spec:
   tls:
     termination: edge
 EOF
-----
-
-[source,bash,role=execute,subs="attributes"]
-----
-oc set image deployment/fortress-python-api \
-  api={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
-  -n hummingbird-acs-lab
 
 oc rollout status deployment/fortress-python-api -n hummingbird-acs-lab --timeout=120s
 ----
@@ -617,46 +906,43 @@ Identical functionality. Radically different security posture.
 [source,bash,role=execute,subs="attributes"]
 ----
 roxctl image scan \
-  --image={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
+  --image=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve \
   --insecure-skip-tls-verify \
   --output=table
 ----
 
 .*Expected output:*
 ----
-No fixable vulnerabilities found
+Scan results for image: .../fortress-python-api:zero-cve
+(TOTAL-COMPONENTS: 0, TOTAL-VULNERABILITIES: 0, LOW: 0, MODERATE: 0, IMPORTANT: 0, CRITICAL: 0)
+
++-----------+---------+-----+----------+------+------+---------------+----------+---------------+
+| COMPONENT | VERSION | CVE | SEVERITY | CVSS | LINK | FIXED VERSION | ADVISORY | ADVISORY LINK |
++-----------+---------+-----+----------+------+------+---------------+----------+---------------+
 ----
 
-[source,bash,role=execute,subs="attributes"]
+**Zero components. Zero vulnerabilities.** The attack surface has been eradicated, not managed.
+
+Verify in the ACS dashboard -- search for `fortress-python-api:zero-cve` under *Vulnerability Management* -> *Results*. You should see **0 CVEs, 0 Images affected**:
+
+image::module-02/acs-fortress-zero-cve.png[ACS Vulnerability Management showing zero CVEs for fortress-python-api:zero-cve]
+
+[source,bash,role=execute]
 ----
 echo "=== Side-by-Side Comparison ==="
 echo ""
 echo "Legacy (python:3.11-buster):"
 roxctl image scan \
-  --image={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
+  --image=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
   --insecure-skip-tls-verify \
-  --output=json 2>/dev/null | \
-  python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-s = data.get('result', {}).get('summary', {})
-fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
-print(f'  Components: {s.get(\"componentCount\", \"N/A\")}  |  Fixable CVEs: {fixable}')
-"
+  --output=json 2>/dev/null | python3 acs-scan-summary.py --brief
 
 echo ""
 echo "Fortress (Hummingbird distroless):"
 roxctl image scan \
-  --image={workshop-registry}/{registry-user}/fortress-python-api:zero-cve \
+  --image=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve \
   --insecure-skip-tls-verify \
-  --output=json 2>/dev/null | \
-  python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-s = data.get('result', {}).get('summary', {})
-fixable = sum(1 for v in data.get('result', {}).get('vulnerabilities', []) if v.get('fixedBy'))
-print(f'  Components: {s.get(\"componentCount\", \"N/A\")}  |  Fixable CVEs: {fixable}')
-"
+  --output=json 2>/dev/null | python3 acs-scan-summary.py --brief
 ----
 
 [IMPORTANT]
@@ -669,90 +955,108 @@ This is the paradigm shift. The vulnerability count did not drop because you pat
 
 A zero-CVE scan is only as valuable as the policy that prevents regression. In this exercise you create two ACS policies that make the zero-CVE posture **mandatory** at the admission control level.
 
-=== Step 1: Enable ACS Admission Controller (if not already active)
+=== Step 1: Verify ACS Admission Controller
 
-Verify the admission controller is listening:
+Check that the admission controller webhook is active:
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute]
 ----
 oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
 ----
 
 .*Expected output:*
 ----
-NAME                         WEBHOOKS   AGE
-stackrox-validating-webhook  1          ...
+NAME       WEBHOOKS   AGE
+stackrox   2          ...
 ----
 
-If no webhook exists, enable it via the ACS API:
+Verify the admission controller configuration via the ACS API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-# Get cluster ID
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-CLUSTER_ID=$(roxctl --insecure-skip-tls-verify central clusters list \
-  | grep -i "$(oc config current-context | cut -d/ -f2)" \
-  | awk '{print $1}')
 
-# Enable admission controller webhook
-curl -sk -X PATCH \
-  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  "https://${ACS_ROUTE}/v1/cluster/${CLUSTER_ID}" \
-  -d '{
-    "admissionController": true,
-    "admissionControllerUpdates": true,
-    "admissionControllerEvents": true
-  }'
+curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  "https://${ACS_ROUTE}/v1/clusters" | python3 acs-check-admission.py
+----
 
-echo "Admission controller webhook enabled for cluster ${CLUSTER_ID}"
+.*Expected output:*
+----
+Cluster:              workshop-cluster
+Admission controller: True
+Scan inline:          True
+Enforce on updates:   True
 ----
 
 [NOTE]
 ====
-Wait 30-60 seconds for the webhook configuration to propagate to the OpenShift API server before testing policy enforcement.
+If the admission controller shows `False`, ask your workshop instructor to enable it via the ACS Central dashboard: *Platform Configuration* -> *Clusters* -> select your cluster -> enable *Admission Controller* settings.
 ====
 
-=== Step 2: Create Policy -- Reject Images with Fixable CVEs
+=== Steps 2-3: Create Enforcement Policies
 
-This policy blocks any deployment where the image contains fixable vulnerabilities. Create it via the ACS REST API:
+This script creates two policies via the ACS REST API:
+
+* **Zero Fixable CVEs Required** (Critical) -- blocks any deployment where the image has fixable CVEs
+* **Image Scan Required** (High) -- blocks any deployment where the image has not been scanned
+
+Run the helper script:
 
 [source,bash,role=execute,subs="attributes"]
 ----
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+export ACS_ROUTE ROX_API_TOKEN
 
-curl -sk -X POST \
-  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  "https://${ACS_ROUTE}/v1/policies" \
-  -d '{
-    "name": "Zero Fixable CVEs Required",
-    "description": "Reject deployments where the image has any fixable CVE. Enforces proactive attack surface eradication over reactive patching.",
-    "severity": "CRITICAL_SEVERITY",
-    "categories": ["Vulnerability Management"],
-    "lifecycleStages": ["DEPLOY"],
-    "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
-    "eventSource": "NOT_APPLICABLE",
-    "disabled": false,
-    "scope": [{"namespace": "hummingbird-acs-lab"}],
-    "policySections": [{
-      "sectionName": "Fixable CVE threshold",
-      "policyGroups": [
-        {"fieldName": "Fixed By", "booleanOperator": "OR", "negate": false, "values": [{"value": ".*"}]},
-        {"fieldName": "CVSS", "booleanOperator": "OR", "negate": false, "values": [{"value": ">= 0.000000"}]}
-      ]
-    }]
-  }' | python3 -m json.tool
+bash acs-create-policies.sh
 ----
+
+.*Expected output (first run):*
+----
+=== Creating policy: Zero Fixable CVEs Required ===
+Created policy: Zero Fixable CVEs Required (id: <uuid>)
+=== Creating policy: Image Scan Required ===
+Created policy: Image Scan Required (id: <uuid>)
+
+Done. Verify in ACS UI: Platform Configuration -> Policy Management
+----
+
+.*Expected output (if policies already exist):*
+----
+=== Creating policy: Zero Fixable CVEs Required ===
+Policy 'Zero Fixable CVEs Required' already exists (id: <uuid>). Ensuring enforcement...
+  Enforcement enabled.
+=== Creating policy: Image Scan Required ===
+Policy 'Image Scan Required' already exists (id: <uuid>). Ensuring enforcement...
+  Enforcement enabled.
+
+Done. Verify in ACS UI: Platform Configuration -> Policy Management
+----
+
+[NOTE]
+====
+If the policies already exist, the script ensures enforcement is enabled (`SCALE_TO_ZERO_ENFORCEMENT`). This handles the case where built-in ACS policies exist but default to `INFORM` mode without enforcement.
+====
+
+Verify in the ACS dashboard under *Platform Configuration* -> *Policy Management*. Search for `Zero Fixable CVEs Required`:
+
+image::module-02/acs-policy-zero-cve-list.png[ACS Policy Management showing Zero Fixable CVEs Required policy with Critical severity]
+
+Click the policy to see its details -- severity, description, lifecycle stage, and enforcement action:
+
+image::module-02/acs-policy-zero-cve-detail.png[ACS Policy detail view for Zero Fixable CVEs Required showing Critical severity and Deploy lifecycle]
 
 [IMPORTANT]
 ====
-**Enforcement Action**: Use `SCALE_TO_ZERO_ENFORCEMENT` (not `FAIL_DEPLOYMENT_CREATE_ENFORCEMENT`) for deploy-time policies. This is the enforcement type that the ACS admission controller webhook recognises for blocking deployments at admission time. With `SCALE_TO_ZERO_ENFORCEMENT`, the admission webhook will deny the Kubernetes API request before the pod is created.
+**Enforcement Action**: Both policies use `SCALE_TO_ZERO_ENFORCEMENT` for deploy-time enforcement. This is the enforcement type that the ACS admission controller webhook recognises for blocking deployments at admission time. The admission webhook denies the Kubernetes API request before the pod is created.
 ====
 
 [NOTE]
 ====
-**UI alternative**: Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
+**UI alternative**: You can also create these policies manually in the ACS dashboard:
+
+Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
+
+Policy 1:
 
   - **Name**: `Zero Fixable CVEs Required`
   - **Severity**: Critical
@@ -760,42 +1064,8 @@ curl -sk -X POST \
   - **Response**: Inform and enforce
   - **Policy Criteria**: `Fixed By` matches `.*` AND `CVSS` >= 0
   - **Policy Scope**: namespace `hummingbird-acs-lab`
-====
 
-=== Step 3: Create Policy -- Require SBOM / Image Scanning
-
-This policy rejects images that ACS has not scanned (ensuring every deployed image has been evaluated):
-
-[source,bash,role=execute,subs="attributes"]
-----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-
-curl -sk -X POST \
-  -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  "https://${ACS_ROUTE}/v1/policies" \
-  -d '{
-    "name": "Image Scan Required",
-    "description": "Reject deployments where the image has not been scanned by ACS. Ensures every runtime artifact has a verified vulnerability assessment.",
-    "severity": "HIGH_SEVERITY",
-    "categories": ["DevOps Best Practices"],
-    "lifecycleStages": ["DEPLOY"],
-    "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
-    "eventSource": "NOT_APPLICABLE",
-    "disabled": false,
-    "scope": [{"namespace": "hummingbird-acs-lab"}],
-    "policySections": [{
-      "sectionName": "Scan status",
-      "policyGroups": [
-        {"fieldName": "Unscanned Image", "booleanOperator": "OR", "negate": false, "values": [{"value": "true"}]}
-      ]
-    }]
-  }' | python3 -m json.tool
-----
-
-[NOTE]
-====
-**UI alternative**: Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
+Policy 2:
 
   - **Name**: `Image Scan Required`
   - **Severity**: High
@@ -807,26 +1077,42 @@ curl -sk -X POST \
 
 === Step 4: Verify Policies Are Active
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-roxctl policy ls --insecure-skip-tls-verify 2>/dev/null | \
-  grep -E "(Zero Fixable|Image Scan Required)"
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+
+for POLICY_NAME in "Zero Fixable CVEs Required" "Image Scan Required"; do
+  POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+    "https://${ACS_ROUTE}/v1/policies" | \
+    python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
+  curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+    "https://${ACS_ROUTE}/v1/policies/${POLICY_ID}" | \
+    python3 -c "
+import json, sys
+p = json.load(sys.stdin)
+enf = [e for e in p.get('enforcementActions',[]) if e != 'UNSET_ENFORCEMENT']
+print(f'{p[\"name\"]:<35} {p[\"severity\"]:<20} {\", \".join(enf) or \"INFORM\"}')"
+done
 ----
 
 .*Expected output:*
 ----
-Zero Fixable CVEs Required     DEPLOY    CRITICAL    FAIL_DEPLOYMENT_CREATE
-Image Scan Required            DEPLOY    HIGH        FAIL_DEPLOYMENT_CREATE
+Zero Fixable CVEs Required          CRITICAL_SEVERITY    SCALE_TO_ZERO_ENFORCEMENT
+Image Scan Required                 HIGH_SEVERITY        SCALE_TO_ZERO_ENFORCEMENT
 ----
 
 Both policies are now active and will be evaluated by the admission controller on every deployment create or update in the `hummingbird-acs-lab` namespace.
+
+You can also verify in the ACS UI: navigate to *Platform Configuration* -> *Policy Management* and search for `Zero Fixable` or `Image Scan Required`.
 
 [[prove-guardrails]]
 == Exercise 8: Prove the Guardrails (Simulated Pipeline Failure)
 
 This is the definitive test. You will attempt to redeploy the original vulnerable image. The ACS admission controller must block it.
 
-=== Step 1: Attempt to Deploy the Legacy Image
+=== Step 1: Attempt to Update an Existing Deployment
+
+Try swapping the fortress image for the vulnerable legacy image. The admission controller should block it:
 
 [source,bash,role=execute,subs="attributes"]
 ----
@@ -835,16 +1121,37 @@ echo "This SHOULD fail if ACS policies are enforced correctly."
 echo ""
 
 oc set image deployment/fortress-python-api \
-  api={workshop-registry}/{registry-user}/legacy-python-api:vulnerable \
+  api=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
   -n hummingbird-acs-lab 2>&1
 
 echo ""
 echo "Exit code: $?"
 ----
 
-=== Step 2: Alternative -- Create a New Deployment with the Legacy Image
+.*Expected output:*
+----
+=== Attempting to deploy vulnerable legacy image ===
+This SHOULD fail if ACS policies are enforced correctly.
 
-If the `set image` command does not trigger the admission webhook (some ACS configurations enforce only on create, not update), try creating a new deployment:
+error: failed to patch image update to pod template: admission webhook
+"policyeval.stackrox.io" denied the request:
+The attempted operation violated 1 enforced policy, described below:
+
+Policy: Zero Fixable CVEs Required
+- Description:
+    ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
+      attack surface eradication over reactive patching.
+- Violations:
+    - Fixable CVE-2024-6345 (CVSS 8.8) (severity Important) found in component
+      'setuptools' (version 65.5.1) in container 'api', resolved by version 70.0.0
+    - Fixable CVE-2023-5752 (CVSS 5.5) (severity Moderate) found in component
+      'pip' (version 23.1.2) in container 'api', resolved by version 23.3
+    ... (additional CVEs listed) ...
+----
+
+=== Step 2: Attempt to Create a New Deployment
+
+Also try creating an entirely new deployment with the vulnerable image. This confirms the policy blocks both updates and new deployments:
 
 [source,bash,role=execute,subs="attributes"]
 ----
@@ -868,7 +1175,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: {workshop-registry}/{registry-user}/legacy-python-api:vulnerable
+        image: ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
         ports:
         - containerPort: 8080
 EOF
@@ -879,22 +1186,34 @@ echo "Exit code: $?"
 
 .*Expected output:*
 ----
-Error from server: admission webhook "policyeval.stackrox.io" denied the request:
-The attempted operation violated 1 enforced policy:
+Error from server (Failed currently enforced policies from RHACS):
+error when creating "STDIN": admission webhook "policyeval.stackrox.io"
+denied the request:
+The attempted operation violated 1 enforced policy, described below:
 
 Policy: Zero Fixable CVEs Required
-- Description: Reject deployments where the image has any fixable CVE.
-  Enforces proactive attack surface eradication over reactive patching.
-- Violation: Fixable CVSS score found in image
-- Remediation: Use a distroless base image (e.g., Hummingbird) to eliminate
-  unused OS packages and their associated CVEs.
+- Description:
+    ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
+      attack surface eradication over reactive patching.
+- Violations:
+    - Fixable CVE-2024-6345 (CVSS 8.8) (severity Important) found in component
+      'setuptools' (version 65.5.1) in container 'api', resolved by version 70.0.0
+    - Fixable CVE-2023-5752 (CVSS 5.5) (severity Moderate) found in component
+      'pip' (version 23.1.2) in container 'api', resolved by version 23.3
+    ... (additional CVEs listed) ...
 
-Exit code: 1
+In case of emergency, add the annotation
+{"admission.stackrox.io/break-glass": "ticket-1234"} to your deployment
 ----
+
+[NOTE]
+====
+Both steps should be blocked. The specific CVEs listed will vary depending on the image scan date, but you should see multiple fixable vulnerabilities from components like `pip`, `setuptools`, `wheel`, and `mercurial` in the `python:3.11-buster` base image.
+====
 
 [IMPORTANT]
 ====
-**This is the proof.** The admission controller returned a non-zero exit code. In a real CI/CD pipeline, this blocks the deployment step, fails the pipeline, and surfaces the policy violation in your CI dashboard. The vulnerable image never reaches the cluster.
+**This is the proof.** The admission webhook denied both the image update and the new deployment. In a real CI/CD pipeline, this blocks the deployment step, fails the pipeline, and surfaces the policy violation in your CI dashboard. The vulnerable image never reaches the cluster.
 
 The operational model has shifted:
 
@@ -924,40 +1243,70 @@ fortress-python-api   1/1     1            1           ...
 
 === Step 4: View Policy Violations
 
-Query the policy violations via roxctl:
+Query the policy violations via the ACS REST API:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-# List recent violations
-roxctl deployment check \
-  --deployment=legacy-python-api \
-  --namespace=hummingbird-acs-lab \
-  --insecure-skip-tls-verify 2>/dev/null \
-  || echo "Deployment blocked by ACS admission controller"
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
-# Query violations via API
-ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-lab" \
-  | jq '.alerts[] | {policy: .policy.name, time: .time, violations: .violations[].message}'
+  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-lab" | \
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for a in data.get('alerts', []):
+    policy = a['policy']['name']
+    state = a['state']
+    enf = a.get('enforcementAction', 'none')
+    dep = a.get('deployment', {}).get('name', '?')
+    print(f'Policy: {policy}')
+    print(f'  State: {state}  |  Enforcement: {enf}  |  Deployment: {dep}')
+    print()
+"
 ----
 
 .*Expected output:*
 ----
-{
-  "policy": "Zero Fixable CVEs Required",
-  "time": "2026-03-13T...",
-  "violations": "Image has 127 fixable CVEs"
-}
+Policy: Zero Fixable CVEs Required
+  State: ATTEMPTED  |  Enforcement: FAIL_DEPLOYMENT_CREATE_ENFORCEMENT  |  Deployment: legacy-regression-test
+
+Policy: Zero Fixable CVEs Required
+  State: ATTEMPTED  |  Enforcement: FAIL_DEPLOYMENT_UPDATE_ENFORCEMENT  |  Deployment: fortress-python-api
+
+Policy: Zero Fixable CVEs Required
+  State: ACTIVE  |  Enforcement: SCALE_TO_ZERO_ENFORCEMENT  |  Deployment: legacy-python-api
 ----
 
-[TIP]
+[NOTE]
 ====
-For visual inspection, you can optionally view violations in the ACS Central UI:
+* **ATTEMPTED** means the admission controller blocked the deployment before it was created
+* **ACTIVE** means the policy violation exists on a running deployment
+* You should see violations for both the `oc set image` attempt (update) and the `legacy-regression-test` creation attempt
+====
 
-. Navigate to *Violations*
-. Filter by namespace `hummingbird-acs-lab`
-. Observe which policies blocked the deployment and the specific CVE details
+You can also view violations visually in the ACS Central UI. Navigate to *Violations* in the left sidebar:
+
+image::module-02/acs-violations-list.png[ACS Violations list showing 108 results including Zero Fixable CVEs Required enforced on legacy-python-api]
+
+Click on the *Zero Fixable CVEs Required* violation to see the individual CVEs that triggered it:
+
+image::module-02/acs-violation-cves.png[Violation detail showing fixable CVEs in mercurial pip and setuptools components]
+
+Switch to the *Enforcement* tab to see the enforcement action taken:
+
+image::module-02/acs-violation-enforcement.png[Enforcement tab showing deployment scaled to 0 replicas in response to policy violation]
+
+[IMPORTANT]
+====
+**Why is `legacy-python-api` still running?**
+
+You may notice the original `legacy-python-api` deployment is still active even though the policy is enforced. This is expected behaviour:
+
+* **Admission control** evaluates policies when deployments are **created or updated** -- it does not retroactively terminate existing pods that were deployed before the policy was enabled
+* The `SCALE_TO_ZERO_ENFORCEMENT` action scales the deployment to 0 replicas as a background enforcement, but if the deployment was created before the policy existed, the timing depends on ACS reassessment cycles
+* **What the policy definitively prevents**: any *new* deployment or *update* that references a vulnerable image is blocked at the Kubernetes API level before a pod is ever scheduled
+
+This is the correct security model. Admission control is a **gate**, not a kill switch. For existing workloads, use the *Violations* dashboard to identify and remediate them through your normal change management process.
 ====
 
 [TIP]
@@ -992,12 +1341,22 @@ For detailed notifier configuration options, see the ACS API documentation.
 
 Remove the lab resources when you are finished:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
 oc delete project hummingbird-acs-lab
 
-roxctl policy delete --name="Zero Fixable CVEs Required" --insecure-skip-tls-verify 2>/dev/null
-roxctl policy delete --name="Image Scan Required" --insecure-skip-tls-verify 2>/dev/null
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+
+for POLICY_NAME in "Zero Fixable CVEs Required" "Image Scan Required"; do
+  POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+    "https://${ACS_ROUTE}/v1/policies" | \
+    python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
+  if [ -n "${POLICY_ID}" ]; then
+    curl -sk -X DELETE -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+      "https://${ACS_ROUTE}/v1/policies/${POLICY_ID}"
+    echo "Deleted policy: ${POLICY_NAME}"
+  fi
+done
 ----
 
 [[summary]]
@@ -1059,7 +1418,7 @@ The operational mindset shifts from "how fast can we patch?" to "there is nothin
 **Issue: roxctl cannot reach ACS Central**
 [source,bash]
 ----
-curl -sk https://$ROX_CENTRAL_ADDRESS/v1/metadata
+curl -sk https://$ROX_ENDPOINT/v1/metadata
 oc get route -n stackrox
 ----
 
@@ -1072,9 +1431,12 @@ oc logs -n stackrox deploy/admission-control
 ----
 
 **Issue: Policy not triggering on deployment**
-[source,bash]
+[source,bash,subs="attributes"]
 ----
-roxctl policy ls --insecure-skip-tls-verify | grep -i "zero fixable"
+ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
+  "https://${ACS_ROUTE}/v1/policies" | \
+  python3 -c "import json,sys; [print(p['name'], p['disabled']) for p in json.load(sys.stdin).get('policies',[]) if 'zero fixable' in p['name'].lower()]"
 
 oc get events -n hummingbird-acs-lab --sort-by=.metadata.creationTimestamp | tail -20
 ----
