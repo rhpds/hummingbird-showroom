@@ -29,7 +29,7 @@ This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, b
 * **2.2 Custom Multi-Language Strategies** -- Auto-detection for Node.js, Python, Java, Go
 * **2.3 Security Pipeline & Production** -- SBOM generation, vulnerability scanning, image signing
 * **2.4 SELinux Policy CI/CD with Tekton** -- Automated udica policy generation in pipelines
-* **2.8 Automated Dependency Updates with Renovate + Podman** -- Renovate Bot as Tekton pipeline with Buildah/Skopeo toolchain
+* **2.5 The Immutable Fortress -- Zero-CVE with ACS Enforcement** -- ACS admission control, policy enforcement, vulnerability scanning
 
 === Optional Exercises
 
@@ -39,7 +39,7 @@ This repository hosts the lab guide for the **Zero CVE Hummingbird Workshop**, b
 * **1.8 Layering Tomcat on Hummingbird**
 * **2.5 chunkah in CI/CD Pipelines** -- Automated layer splitting in Tekton pipelines
 * **2.6 Keyless Signing with RHTAS**
-* **2.7 The Immutable Fortress -- Zero-CVE with ACS**
+* **2.7 Automated Dependency Updates with Renovate + Podman** -- Renovate Bot as Tekton pipeline with Buildah/Skopeo toolchain
 
 === Appendix: Environment Setup
 
@@ -116,7 +116,11 @@ zero-cve-hummingbird-showroom/
 ├── renovate.json                        # Renovate Bot dependency scanning config
 ├── site.yml                             # Antora site configuration
 ├── ui-config.yml                        # Showroom UI configuration
-├── .github/workflows/gh-pages.yml       # GitHub Actions for Pages
+├── scripts/
+│   └── validate-bootstrap.sh            # Cluster bootstrap validation script
+├── .github/workflows/
+│   ├── gh-pages.yml                     # GitHub Actions for Pages
+│   └── mirror-python-images.yml         # Mirror Python base images to Quay.io
 └── README.adoc                          # This file
 ----
 
