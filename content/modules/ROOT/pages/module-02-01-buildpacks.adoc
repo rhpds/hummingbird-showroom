@@ -117,7 +117,7 @@ The `buildah` strategy ships with the operator and is maintained by Red Hat. It 
 
 Create a Build resource pointing to the sample Quarkus application with a Hummingbird multi-stage Containerfile:
 
-[source,yaml,role=execute,subs="attributes"]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
@@ -286,7 +286,7 @@ sha256:abc123def456789...
 ====
 Verify the image was pushed to Quay via the Docker v2 registry API:
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute,subs=attributes]
 ----
 TOKEN=$(curl -sk "{quay_url}/v2/auth?service={quay_hostname}&scope=repository:{quay_user}/sample-quarkus:pull" \
   -u "{quay_user}:{quay_password}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
@@ -311,7 +311,7 @@ NOTE: The Quay repository is created as **private** by default. The v2 registry 
 
 Use `skopeo` to examine the built image and confirm it uses the Hummingbird runtime:
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute,subs=attributes]
 ----
 skopeo inspect docker://{quay_hostname}/{quay_user}/sample-quarkus:latest 2>/dev/null \
   | python3 -c "
@@ -347,7 +347,7 @@ oc secrets link default registry-credentials --for=pull -n hummingbird-builds-{u
 
 Now create the deployment, service, and route:
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute,subs=attributes]
 ----
 oc create deployment sample-quarkus \
   --image={quay_hostname}/{quay_user}/sample-quarkus:latest \
@@ -411,7 +411,7 @@ oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
 
 === Step 12: Check Image in Quay Console
 
-[source,bash,role=execute,subs="attributes"]
+[source,bash,role=execute,subs=attributes]
 ----
 echo "Check image at: {quay_url}/repository/{quay_user}/sample-quarkus"
 echo ""
