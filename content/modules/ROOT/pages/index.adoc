@@ -107,14 +107,9 @@ oc project rhel-{user}
 ----
 virtctl ssh rhel@vm/rhel
 ----
-. Log into the VM using the following credentials (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
+. Log into the VM using the `rhel` user's password (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
 
 * *Password*: `{password}`
-
-[TIP]
-====
-You can use `Ctrl-]` to exit the VM console at any time.
-====
 
 ==== OpenShift Console (Module 2)
 
