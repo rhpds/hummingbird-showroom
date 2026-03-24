@@ -43,15 +43,18 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 # Build UBI-only version for comparison
-podman build -f ~/sample-app/Containerfile.ubi -t demo-ubi:v1 ~/sample-app
+podman build -f ~/sample-app/Containerfile.ubi -t hummingbird-demo:ubi ~/sample-app
 echo "✅ UBI comparison image built successfully"
+
+echo "=== Viewing image comparison ==="
+podman images hummingbird-demo
 
 echo "=== Step 1: Scan Hummingbird image for CVEs ==="
 grype hummingbird-demo:v1
 echo "✅ CVE scan completed"
 
 echo "=== Step 2: Compare with Full UBI Image ==="
-grype demo-ubi:v1 --only-fixed
+grype hummingbird-demo:ubi --only-fixed
 
 echo "=== Step 3: Generate SBOM (human-readable table) ==="
 syft hummingbird-demo:v1 -o table
@@ -135,12 +138,12 @@ cosign verify-attestation --key cosign.pub \
 
 echo "=== Step 11: Compare Image Sizes ==="
 # Compare sizes (filter out the registry copy)
-podman images | grep -E "hummingbird-demo|demo-ubi" | grep -v "5000"
+podman images | grep "hummingbird-demo" | grep -v "5000"
 
 echo "=== Calculating size reduction percentage ==="
 # Calculate percentage based on actual image sizes
-HUMMINGBIRD_SIZE=$(podman images hummingbird-demo --format "{{.Size}}" | head -1 | sed 's/MB//')
-UBI_SIZE=$(podman images demo-ubi --format "{{.Size}}" | head -1 | sed 's/MB//')
+HUMMINGBIRD_SIZE=$(podman images hummingbird-demo:v1 --format "{{.Size}}" | head -1 | sed 's/MB//')
+UBI_SIZE=$(podman images hummingbird-demo:ubi --format "{{.Size}}" | head -1 | sed 's/MB//')
 
 if [ -n "$HUMMINGBIRD_SIZE" ] && [ -n "$UBI_SIZE" ]; then
     awk -v h="$HUMMINGBIRD_SIZE" -v u="$UBI_SIZE" 'BEGIN { 
@@ -156,6 +159,8 @@ echo "=== Cleanup ==="
 echo "Stopping and removing local registry..."
 podman stop registry 2>/dev/null || echo "Registry may already be stopped"
 podman rm registry 2>/dev/null || echo "Registry may already be removed"
+
+cd ~
 
 echo "=== Summary ==="
 echo "✅ CVE scanning and SBOM generation completed"
