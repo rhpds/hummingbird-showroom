@@ -264,7 +264,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: auto-detect-build
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   source:
     type: Git
@@ -275,7 +275,7 @@ spec:
     name: hummingbird-multi-lang
     kind: ClusterBuildStrategy
   output:
-    image: {workshop-registry}/{registry-user}/auto-detect-app:latest
+    image: {quay_hostname}/{quay_user}/auto-detect-app:latest
     credentials:
       name: registry-credentials
 EOF
@@ -288,14 +288,14 @@ Notice we're using the **same Git repository** from Module 2.1 but with the `hum
 
 === Step 3: Trigger Build
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   name: auto-detect-build-run-1
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   build:
     name: auto-detect-build
@@ -304,9 +304,9 @@ EOF
 
 Monitor the build:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun auto-detect-build-run-1 -n hummingbird-builds -w
+oc get buildrun auto-detect-build-run-1 -n hummingbird-builds-{user} -w
 ----
 
 Press `Ctrl+C` once the build succeeds.
@@ -315,12 +315,12 @@ Press `Ctrl+C` once the build succeeds.
 
 Check that the language was detected correctly:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -n hummingbird-builds -o jsonpath='{.status.taskRunName}')-pod
+BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.taskRunName}')-pod
 
 # View detect-and-generate step output
-oc logs $BUILDRUN_POD -n hummingbird-builds -c step-detect-and-generate
+oc logs $BUILDRUN_POD -n hummingbird-builds-{user} -c step-detect-and-generate
 ----
 
 .*Expected output:*
@@ -336,9 +336,9 @@ The strategy detected Java via `pom.xml` and found the existing `Containerfile` 
 
 Confirm the full build pipeline worked by inspecting the build step output:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc logs $BUILDRUN_POD -n hummingbird-builds -c step-build-and-push | head -20
+oc logs $BUILDRUN_POD -n hummingbird-builds-{user} -c step-build-and-push | head -20
 ----
 
 .*Expected output:*
@@ -393,14 +393,14 @@ If the route doesn't exist yet, it may take 1-2 minutes for the operator to crea
 
 Create a Build targeting the internal registry:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: internal-registry-build
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   source:
     type: Git
@@ -411,7 +411,7 @@ spec:
     name: hummingbird-multi-lang
     kind: ClusterBuildStrategy
   output:
-    image: image-registry.openshift-image-registry.svc:5000/hummingbird-builds/sample-app:latest
+    image: image-registry.openshift-image-registry.svc:5000/hummingbird-builds-{user}/sample-app:latest
 EOF
 ----
 
@@ -432,14 +432,14 @@ build.shipwright.io/internal-registry-build created
 
 === Step 8: Trigger Internal Registry Build
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc create -f -
 apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   generateName: internal-registry-build-run-
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   build:
     name: internal-registry-build
@@ -455,20 +455,20 @@ Using `generateName` instead of `name` allows OpenShift to auto-generate unique 
 
 Confirm the image was pushed to the internal registry by checking the ImageStream:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get imagestream sample-app -n hummingbird-builds
-oc get imagestream sample-app -n hummingbird-builds -o jsonpath='{.status.tags[0].items[0].dockerImageReference}'
+oc get imagestream sample-app -n hummingbird-builds-{user}
+oc get imagestream sample-app -n hummingbird-builds-{user} -o jsonpath='{.status.tags[0].items[0].dockerImageReference}'
 echo ""
 ----
 
 .*Expected output:*
 ----
 NAME         IMAGE REPOSITORY                                                                TAGS     UPDATED
-sample-app   image-registry.openshift-image-registry.svc:5000/hummingbird-builds/sample-app   latest   ...
+sample-app   image-registry.openshift-image-registry.svc:5000/hummingbird-builds-{user}/sample-app   latest   ...
 ----
 
-You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `hummingbird-builds` project:
+You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `hummingbird-builds-{user}` project:
 
 .OpenShift console showing the sample-app ImageStream created by the internal registry build
 image::module-02/openshift-imagestream-sample-app.png[OpenShift ImageStreams,width=800]

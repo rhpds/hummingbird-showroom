@@ -69,9 +69,9 @@ Look up the on-cluster Quay registry route and configure your registry credentia
 
 [source,bash,role=execute,subs="attributes"]
 ----
-export WORKSHOP_REGISTRY=$(oc get route -n {quay-namespace} -o jsonpath='{.items[0].spec.host}')
-export REGISTRY_USER=workshopuser
-export REGISTRY_PASSWORD=workshoppass123
+export WORKSHOP_REGISTRY="{quay_hostname}"
+export REGISTRY_USER="{quay_user}"
+export REGISTRY_PASSWORD="{quay_password}"
 
 echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
 echo "REGISTRY_USER=${REGISTRY_USER}"
@@ -81,8 +81,8 @@ podman login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "https://${WORKSHOP
 
 .*Expected output:*
 ----
-WORKSHOP_REGISTRY=quay-registry-quay-quay.apps.<cluster-domain>
-REGISTRY_USER=workshopuser
+WORKSHOP_REGISTRY=<quay-hostname>
+REGISTRY_USER=<quay-user>
 Login Succeeded!
 ----
 

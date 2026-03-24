@@ -162,7 +162,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: secure-nodejs-build
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   source:
     type: Git
@@ -176,7 +176,7 @@ spec:
   - name: RUNTIME_IMAGE
     value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
   output:
-    image: {workshop-registry}/{registry-user}/secure-nodejs:latest
+    image: {quay_hostname}/{quay_user}/secure-nodejs:latest
     credentials:
       name: registry-credentials
   retention:
@@ -193,14 +193,14 @@ EOF
 
 === Step 3: Trigger Secure Build
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   name: secure-build-run-1
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   build:
     name: secure-nodejs-build
@@ -209,9 +209,9 @@ EOF
 
 Monitor the build:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun secure-build-run-1 -n hummingbird-builds -w
+oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -w
 ----
 
 [[view-security-steps]]
@@ -221,10 +221,10 @@ oc get buildrun secure-build-run-1 -n hummingbird-builds -w
 
 Once the build completes, view the SBOM generation output:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-TASKRUN=$(oc get buildrun secure-build-run-1 -n hummingbird-builds -o jsonpath='{.status.taskRunName}')
-oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-generate-sbom
+TASKRUN=$(oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.taskRunName}')
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-sbom
 ----
 
 .*Expected output (excerpt):*
@@ -246,9 +246,9 @@ Syft is invoked directly (`/syft`) because the `anchore/syft` image is distroles
 
 === Step 5: View Vulnerability Scan Results
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-scan-vulnerabilities
 ----
 
 .*Expected output for Hummingbird image:*
@@ -276,8 +276,7 @@ Use `skopeo` to inspect the image and confirm it was built on the Hummingbird ru
 
 [source,bash,role=execute,subs="attributes"]
 ----
-skopeo inspect --tls-verify=false --creds {registry-user}:{registry-password} \
-  docker://{workshop-registry}/{registry-user}/secure-nodejs:latest \
+skopeo inspect docker://{quay_hostname}/{quay_user}/secure-nodejs:latest --username {quay_user} --password {quay_password} 2>/dev/null \
   | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -310,7 +309,7 @@ Label io.hummingbird-project.version: 1.0.0
 Using both gives you immediate feedback in the pipeline _and_ continuous monitoring in the registry.
 ====
 
-You can also verify the results visually in the Quay console. Navigate to **Repositories** -> **workshopuser/secure-nodejs**:
+You can also verify the results visually in the Quay console. Navigate to **Repositories** -> **{quay_user}/secure-nodejs**:
 
 .Quay repository showing the secure-nodejs:latest image with a passed security scan
 image::module-02/quay-secure-nodejs-tags.png[Quay Secure Node.js Tags,width=800]
@@ -337,9 +336,9 @@ The production namespace needs access to the private Quay registry:
 [source,bash,role=execute,subs="attributes"]
 ----
 oc create secret docker-registry registry-credentials \
-    --docker-server="{workshop-registry}" \
-    --docker-username="{registry-user}" \
-    --docker-password="{registry-password}" \
+    --docker-server="{quay_hostname}" \
+    --docker-username="{quay_user}" \
+    --docker-password="{quay_password}" \
     -n hummingbird-production
 
 oc secrets link default registry-credentials --for=pull -n hummingbird-production
@@ -373,7 +372,7 @@ spec:
       - name: registry-credentials
       containers:
       - name: app
-        image: {workshop-registry}/{registry-user}/secure-nodejs:latest
+        image: {quay_hostname}/{quay_user}/secure-nodejs:latest
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -500,15 +499,15 @@ In a production pipeline with signing enabled, verify the deployed image's signa
 echo "=== Verifying image trust chain ==="
 echo ""
 echo "In production with cosign signing enabled:"
-echo "  cosign verify --key cosign.pub {workshop-registry}/{registry-user}/secure-nodejs:latest"
+echo "  cosign verify --key cosign.pub {quay_hostname}/{quay_user}/secure-nodejs:latest"
 echo ""
 echo "With keyless (Sigstore):"
 echo "  cosign verify --certificate-identity=builder@example.com \\"
 echo "    --certificate-oidc-issuer=https://token.actions.githubusercontent.com \\"
-echo "    {workshop-registry}/{registry-user}/secure-nodejs:latest"
+echo "    {quay_hostname}/{quay_user}/secure-nodejs:latest"
 echo ""
 echo "For this workshop, verify the image digest matches the BuildRun output:"
-BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -n hummingbird-builds -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
+BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
 echo "  BuildRun digest: $BUILDRUN_DIGEST"
 ----
 
@@ -527,10 +526,10 @@ If you have podman access locally:
 [source,bash,role=execute,subs="attributes"]
 ----
 # Pull and compare
-podman pull {workshop-registry}/{registry-user}/secure-nodejs:latest 2>/dev/null || echo "Run on a machine with podman"
+podman pull {quay_hostname}/{quay_user}/secure-nodejs:latest 2>/dev/null || echo "Run on a machine with podman"
 
 # Alternative: Check in Quay console
-echo "Check image size at: {workshop-registry-console}/repository/{registry-user}/secure-nodejs"
+echo "Check image size at: {quay_console_url}/repository/{quay_user}/secure-nodejs"
 ----
 
 .*Expected size:* ~95-120 MB (Hummingbird) vs 400+ MB (full UBI Node.js)
@@ -634,20 +633,20 @@ Create Tekton Tasks that generate udica policies alongside image builds, deploy 
 === Troubleshooting
 
 **Issue: SBOM generation fails**
-[source,bash]
+[source,bash,subs=attributes]
 ----
 # Check syft step logs
-oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-generate-sbom
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-sbom
 
 # Verify image is accessible
 podman pull <image>
 ----
 
 **Issue: Vulnerability scan fails build**
-[source,bash]
+[source,bash,subs=attributes]
 ----
 # View scan results
-oc logs ${TASKRUN}-pod -n hummingbird-builds -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-scan-vulnerabilities
 
 # Review CVEs found
 grype <image> --only-fixed

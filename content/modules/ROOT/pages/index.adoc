@@ -105,19 +105,10 @@ oc project rhel-{user}
 +
 [source,sh,subs=attributes,role=execute]
 ----
-virtctl console rhel-{user}
+virtctl ssh rhel@vm/rhel
 ----
-+
-[TIP]
-====
-You can use `Ctrl-]` to exit the VM console at any time.
+. Log into the VM using the `rhel` user's password (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
 
-Hit `Enter` once you are connected to see the login prompt.
-====
-
-. Log into the VM using the following credentials:
- 
-* *Username*: `rhel`
 * *Password*: `{password}`
 
 ==== OpenShift Console (Module 2)
@@ -134,10 +125,9 @@ Your OpenShift console is available on the right or if you prefer a separate win
 For pushing images to registries:
 
 * *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}[window=blank].
-
-You will need to register with Quay as user `{user}`. To make things easier use password `{password}` (the same as your OpenShift credentials).
-// * *Registry User:* `{user}`
-// * *Registry Password:* `{registry-password}`
+* Your credentials for Red Hat Quay:
+** *Registry User:* `{quay_user}`
+** *Registry Password:* `{quay_password}`
 
 ==== GUID Information
 
