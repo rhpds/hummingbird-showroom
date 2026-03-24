@@ -47,15 +47,20 @@ asciidoc:
     gitea-namespace: 'gitea'
     gitea-admin-user: 'gitea-admin'
 
-    # Placeholders for lab environment
+    # On-cluster Quay registry (quay_hostname, quay_user, quay_password,
+    # quay_url, quay_console_url are injected by the showroom platform)
+    quay-namespace: 'quay'
+
+    # ACS (Red Hat Advanced Cluster Security)
+    acs-namespace: 'stackrox'
+
+    # Placeholders for lab environment (most are injected by showroom)
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'
     openshift-console: 'https://console-openshift-console.apps.cluster-{guid}.example.com'
     openshift-api: 'https://api.cluster-{guid}.example.com:6443'
     openshift-user: 'admin'
     openshift-password: 'PROVIDED-IN-LAB'
-    registry-user: 'PROVIDED-IN-LAB'
-    registry-password: 'PROVIDED-IN-LAB'
 
   extensions:
     - ./content/lib/tab-block.js

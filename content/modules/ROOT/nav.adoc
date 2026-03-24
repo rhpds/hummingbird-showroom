@@ -10,7 +10,7 @@
 ** xref:module-02-02-custom-strategies.adoc[2.2: Custom Multi-Language Strategies]
 ** xref:module-02-03-security-pipeline.adoc[2.3: Security Pipeline & Production]
 ** xref:module-02-04-tekton-udica.adoc[2.4: SELinux Policy CI/CD with Tekton]
-** xref:module-02-08-renovate-podman.adoc[2.8: Automated Dependency Updates with Renovate + Podman]
+** xref:module-02-07-acs-zero-cve.adoc[2.5: Zero-CVE with ACS Enforcement]
 
 * Appendix: Environment Setup
 ** xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]

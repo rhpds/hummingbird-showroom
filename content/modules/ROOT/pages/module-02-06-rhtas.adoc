@@ -55,7 +55,7 @@ Client software like `cosign` uses these trust root targets to sign and verify a
 
 [NOTE]
 ====
-**No key files anywhere in this workflow.** The signing identity for a Tekton task is a URI -- `https://kubernetes.io/namespaces/hummingbird-builds/serviceaccounts/rhtas-signer` -- not a key. You can see which pipeline run signed which image directly in the Rekor log.
+**No key files anywhere in this workflow.** The signing identity for a Tekton task is a URI -- `https://kubernetes.io/namespaces/hummingbird-builds-{user}/serviceaccounts/rhtas-signer` -- not a key. You can see which pipeline run signed which image directly in the Rekor log.
 ====
 
 === Prerequisites
@@ -246,14 +246,14 @@ Both identities appear in the Fulcio-issued certificate's Subject Alternative Na
 
 Tekton tasks need a service account whose projected OIDC token Fulcio will accept as an identity:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: rhtas-signer
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   annotations:
     rhtas.redhat.com/signing-identity: "true"
 ---
@@ -261,7 +261,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: rhtas-signer-pipeline-binding
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -269,7 +269,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: rhtas-signer
-    namespace: hummingbird-builds
+    namespace: hummingbird-builds-{user}
 EOF
 ----
 
@@ -279,13 +279,13 @@ serviceaccount/rhtas-signer created
 rolebinding.rbac.authorization.k8s.io/rhtas-signer-pipeline-binding created
 ----
 
-The OIDC token gets projected into the task pod automatically by Kubernetes; no manual token handling is needed in your Task scripts. The signing identity URI -- `https://kubernetes.io/namespaces/hummingbird-builds/serviceaccounts/rhtas-signer` -- appears in the Fulcio-issued certificate's SAN and is what you verify against later.
+The OIDC token gets projected into the task pod automatically by Kubernetes; no manual token handling is needed in your Task scripts. The signing identity URI -- `https://kubernetes.io/namespaces/hummingbird-builds-{user}/serviceaccounts/rhtas-signer` -- appears in the Fulcio-issued certificate's SAN and is what you verify against later.
 
 === Step 5: Create the RHTAS Endpoints ConfigMap
 
 This ConfigMap is created once and referenced by every signing Task via `envFrom`. Pull the URLs dynamically from the operator-managed resources:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
 NS=trusted-artifact-signer
 
@@ -295,7 +295,7 @@ TUF_URL=$(oc get tuf -n $NS -o jsonpath='{.items[0].status.url}')
 QUAY_URL=$(oc get route -n quay quay-registry-quay -o jsonpath='{.spec.host}')
 
 oc create configmap rhtas-config \
-  -n hummingbird-builds \
+  -n hummingbird-builds-{user} \
   --from-literal=FULCIO_URL="$FULCIO_URL" \
   --from-literal=REKOR_URL="$REKOR_URL" \
   --from-literal=TUF_URL="$TUF_URL" \
@@ -320,14 +320,14 @@ This exercise creates three Tekton Tasks that form the signing portion of the pi
 
 === Step 6: Task 1 -- Generate SBOM with Syft
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: generate-sbom
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE
@@ -379,14 +379,14 @@ The Task scans the built image via OCI and also scans the source workspace (if p
 
 This is the core RHTAS Task. It initialises the enterprise TUF root, signs the image keylessly, attaches the SBOM as an OCI referrer, creates a signed in-toto attestation in Rekor, and captures the Fulcio certificate for audit:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: rhtas-sign-and-attest
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE
@@ -536,14 +536,14 @@ task.tekton.dev/rhtas-sign-and-attest created
 
 Conforma (formerly Enterprise Contract) is a tool for maintaining the security of software supply chains. You can use the `ec` binary to verify the attestation and signature of container images that use the RHTAS signing framework. It generates a pass-fail report with details on any security violations, and when you add the `--info` flag, the report includes more details and possible solutions for any violations:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: conforma-verify
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE
@@ -630,9 +630,9 @@ If Conforma fails, the pipeline fails -- the image never gets promoted to produc
 
 === Step 9: Verify All Tasks Are Created
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get tasks -n hummingbird-builds
+oc get tasks -n hummingbird-builds-{user}
 ----
 
 .*Expected output:*
@@ -650,14 +650,14 @@ This pipeline ties together every stage: clone, build, chunkah layer splitting, 
 
 === Step 10: Apply the Pipeline
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: hummingbird-rhtas-pipeline
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE
@@ -847,7 +847,7 @@ cosign verify \
     "optional": {
       "Bundle": { ... },
       "Issuer": "https://kubernetes.default.svc",
-      "Subject": "https://kubernetes.io/namespaces/hummingbird-builds/serviceaccounts/rhtas-signer"
+      "Subject": "https://kubernetes.io/namespaces/hummingbird-builds-{user}/serviceaccounts/rhtas-signer"
     }
   }
 ]
@@ -1030,19 +1030,19 @@ oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
 ----
 
 **Issue: Fulcio rejects the OIDC token**
-[source,bash]
+[source,bash,subs=attributes]
 ----
-oc get sa rhtas-signer -n hummingbird-builds -o yaml
+oc get sa rhtas-signer -n hummingbird-builds-{user} -o yaml
 
 oc logs -l app.kubernetes.io/component=fulcio -n trusted-artifact-signer
 ----
 
 **Issue: cosign sign fails with certificate errors**
-[source,bash]
+[source,bash,subs=attributes]
 ----
 cosign initialize --mirror="$TUF_URL" --root="$TUF_URL/root.json"
 
-oc get configmap rhtas-config -n hummingbird-builds -o yaml
+oc get configmap rhtas-config -n hummingbird-builds-{user} -o yaml
 ----
 
 **Issue: Conforma reports violations**

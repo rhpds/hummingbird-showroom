@@ -10,7 +10,7 @@
 *What gets configured:*
 
 * OpenShift HA cluster access verified (3+ nodes required)
-* `hummingbird-builds` namespace created
+* `hummingbird-builds-{user}` namespace created
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
 * OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
@@ -85,7 +85,7 @@ For multi-user workshops, set the `NUM_USERS` environment variable to create mul
 NUM_USERS=10 ./bootstrap/setup-all.sh
 ----
 
-The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
+The script installs the OpenShift GitOps operator, creates an ArgoCD Application that deploys all components via sync waves, and monitors progress. The ArgoCD Application uses `SkipDryRunOnMissingResource=true` so that CRD-dependent resources (e.g., Tekton Pipelines and Tasks at wave 10) can sync after the operator that registers their CRDs (OpenShift Pipelines at wave 1) finishes installing. Post-configuration (Quay user initialization, registry credentials, ACS init-bundle generation) runs as Kubernetes Jobs managed by ArgoCD PostSync hooks.
 
 [TIP]
 ====
@@ -162,14 +162,14 @@ If you see "no", contact your cluster administrator to grant cluster-admin privi
 
 Create a dedicated namespace for your build experiments:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc new-project hummingbird-builds
+oc new-project hummingbird-builds-{user}
 ----
 
 .*Expected output:*
 ----
-Now using project "hummingbird-builds" on server "https://...".
+Now using project "hummingbird-builds-{user}" on server "https://...".
 ----
 
 [TIP]
@@ -312,9 +312,9 @@ Before starting the Module 2 labs, review the Shipwright resource hierarchy.
 **BuildStrategy** (Namespace-scoped)::
 Defines how to build images within a single namespace. Use for team-specific or experimental build patterns.
 +
-[source,bash]
+[source,bash,subs=attributes]
 ----
-oc get buildstrategy -n hummingbird-builds
+oc get buildstrategy -n hummingbird-builds-{user}
 ----
 
 **ClusterBuildStrategy** (Cluster-scoped)::
@@ -499,10 +499,8 @@ oc wait --for=condition=Available deployment -l quay-operator/quayregistry=quay-
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_ROUTE=$(oc get route quay-registry-quay-quay -n {quay-namespace} -o jsonpath='{.spec.host}' 2>/dev/null || \
-  oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-echo "Quay registry: $QUAY_ROUTE"
-echo "Quay console:  https://$QUAY_ROUTE"
+echo "Quay registry: {quay_hostname}"
+echo "Quay console:  {quay_console_url}"
 ----
 
 [TIP]
@@ -516,9 +514,7 @@ Create a Quay user account for the workshop via the API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
-curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
+curl -sk "https://{quay_hostname}/api/v1/user/initialize" \
   -H 'Content-Type: application/json' \
   -d '{
     "username": "workshopuser",
@@ -534,13 +530,13 @@ The `/api/v1/user/initialize` endpoint only works when Quay has no existing user
 
 [source,bash,role=execute,subs="attributes"]
 ----
-echo "https://$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')"
+echo "{quay_console_url}"
 ----
 
 Click **Create Account** at the bottom of the login page and register with:
 
-* **Username:** `{registry-user}`
-* **Password:** `{registry-password}`
+* **Username:** `{quay_user}`
+* **Password:** `{quay_password}`
 * **Email:** `workshop@example.com`
 
 image::module-02/quay-create-account.png[Quay Create Account page,500,align="center"]
@@ -556,13 +552,11 @@ Create the `registry-credentials` secret that all Module 2 labs reference for pu
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
 oc create secret docker-registry registry-credentials \
-  --docker-server="${QUAY_ROUTE}" \
-  --docker-username={registry-user} \
-  --docker-password={registry-password} \
-  -n hummingbird-builds
+  --docker-server="{quay_hostname}" \
+  --docker-username={quay_user} \
+  --docker-password={quay_password} \
+  -n hummingbird-builds-{user}
 ----
 
 .*Expected output:*
@@ -572,9 +566,9 @@ secret/registry-credentials created
 
 ==== Step 15: Link Secret to Pipeline ServiceAccount
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds
+oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds-{user}
 ----
 
 [NOTE]
@@ -588,11 +582,9 @@ Confirm you can authenticate to the on-cluster Quay registry:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-QUAY_ROUTE=$(oc get route -n {quay-namespace} -l quay-operator/quayregistry=quay-registry -o jsonpath='{.items[0].spec.host}')
-
-podman login "${QUAY_ROUTE}" \
-  --username={registry-user} \
-  --password={registry-password}
+podman login "{quay_hostname}" \
+  --username={quay_user} \
+  --password={quay_password}
 ----
 
 .*Expected output:*
@@ -780,11 +772,15 @@ oc wait --for=condition=Available deployment/admission-control -n stackrox --tim
 
 ==== Step 22: Install the roxctl CLI
 
+The download endpoint requires authentication with the ACS admin password:
+
 [source,bash,role=execute]
 ----
 ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+ACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
 
-curl -sk "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
+curl -sk -u "admin:${ACS_PASSWORD}" \
+  "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o roxctl
 chmod +x roxctl
 sudo mv roxctl /usr/local/bin/
 
@@ -1063,7 +1059,7 @@ EOF
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role.yaml
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/service_account.yaml -n gitea
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/cluster_role_binding.yaml
-oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/crds/gpte.opentlc.com_giteas_crd.yaml
+oc apply -k https://github.com/rhpds/gitea-operator/config/crd
 oc apply -f https://raw.githubusercontent.com/rhpds/gitea-operator/main/deploy/operator.yaml -n gitea
 ----
 
@@ -1088,7 +1084,7 @@ gitea-operator-xxxxxxxxx-xxxxx    1/1     Running   0          ...
 [source,bash,role=execute]
 ----
 cat << 'EOF' | oc apply -f -
-apiVersion: gpte.opentlc.com/v1
+apiVersion: pfe.rhpds.com/v1
 kind: Gitea
 metadata:
   name: gitea-server
@@ -1104,7 +1100,6 @@ spec:
   giteaUserPassword: openshift
   postgresqlVolumeSize: 4Gi
   giteaVolumeSize: 4Gi
-  giteaImage: quay.io/rhpds/openshift-gitea:latest
 EOF
 ----
 
@@ -1400,6 +1395,24 @@ oc logs -l app=keycloak -n keycloak --tail=50
 oc get pods -n gitea
 
 oc get events -n gitea --sort-by=.metadata.creationTimestamp
+----
+
+**Issue: ArgoCD sync fails with "could not find tekton.dev/Pipeline"**
+
+This happens when the ArgoCD Application is missing the `SkipDryRunOnMissingResource=true` sync option. ArgoCD validates all resources (including wave 10 Tekton Tasks/Pipelines) before applying any wave, and rejects resources whose CRDs have not yet been registered by the Pipelines operator (wave 1).
+
+[source,bash]
+----
+oc get application hummingbird-workshop -n openshift-gitops \
+  -o jsonpath='{.status.operationState.syncResult.resources}' | python3 -m json.tool
+----
+
+Fix: ensure `SkipDryRunOnMissingResource=true` is present in the ArgoCD Application's `spec.syncPolicy.syncOptions`, then re-apply the application:
+
+[source,bash]
+----
+# Re-run the bootstrap script to update the ArgoCD Application
+./bootstrap/setup-all.sh
 ----
 
 **Issue: Gitea instance route not available**

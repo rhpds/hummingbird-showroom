@@ -14,6 +14,8 @@
 #   Wave 6: SecuredCluster
 #   Wave 7: RHTAS operator (Red Hat Trusted Artifact Signer)
 #   Wave 8: Keycloak realm for RHTAS (trusted-artifact-signer)
+#   Wave 9: Gitea in-cluster Git service
+#   Wave 10: Renovate build infrastructure (Tekton Tasks, Pipelines, RBAC)
 #
 # Usage:
 #   ./bootstrap/setup-all.sh                          # defaults: fork repo, main branch
