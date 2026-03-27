@@ -402,12 +402,12 @@ The Showroom terminal does not include `podman`, so we use OpenShift's built-in 
 oc new-build --strategy=docker --binary=true \
   --name=legacy-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable" \
-  -n hummingbird-acs-lab 2>/dev/null || true
+  -n hummingbird-acs-lab &>/dev/null || true
 
-oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-lab
+oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-lab 2>/dev/null || true
 
 cp Containerfile.legacy Dockerfile
-oc start-build legacy-python-api --from-dir=. --follow -n hummingbird-acs-lab
+oc start-build legacy-python-api --from-dir=. --follow --wait -n hummingbird-acs-lab
 rm -f Dockerfile
 ----
 
@@ -710,12 +710,12 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 oc new-build --strategy=docker --binary=true \
   --name=fortress-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve" \
-  -n hummingbird-acs-lab 2>/dev/null || true
+  -n hummingbird-acs-lab &>/dev/null || true
 
-oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-lab
+oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-lab 2>/dev/null || true
 
 cp Containerfile.fortress Dockerfile
-oc start-build fortress-python-api --from-dir=. --follow -n hummingbird-acs-lab
+oc start-build fortress-python-api --from-dir=. --follow --wait -n hummingbird-acs-lab
 rm -f Dockerfile
 ----
 
