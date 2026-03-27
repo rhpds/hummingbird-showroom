@@ -173,7 +173,7 @@ We'll ship this application in two ways to explore some differences between the 
 
 == Distroless vs distribution base images
 
-Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined. https://redhat.atlassian.net/browse/RHEL-144380
+Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined. 
 
 Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
 
