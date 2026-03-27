@@ -39,3 +39,5 @@ yarn.lock
 
 # Trusted Libraries module (kept locally for reuse, not part of published workshop)
 module-02-08-trusted-libraries.adoc
+workshop-users-access.txt
+bootstrap-setup-all.pid
