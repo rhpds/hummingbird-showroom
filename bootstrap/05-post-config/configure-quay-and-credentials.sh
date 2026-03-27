@@ -88,55 +88,64 @@ else
     echo "    oc secrets link pipeline registry-credentials --for=pull,mount -n ${BUILDS_NAMESPACE}"
 fi
 
-# --- Create additional workshop users (if NUM_USERS > 1) ---
-echo "[5/6] Creating additional workshop users..."
+# --- Create per-user Quay accounts via DB (if NUM_USERS > 1) ---
+USER_PREFIX="${USER_PREFIX:-lab-user}"
+USER_PASSWORD="${USER_PASSWORD:-openshift}"
+
+echo "[5/6] Creating per-user Quay accounts..."
 if [ "${NUM_USERS}" -gt 1 ]; then
-    if [ -z "$ACCESS_TOKEN" ]; then
-        echo "  WARNING: No API token available. Attempting to obtain one via OAuth..."
-        ACCESS_TOKEN=$(curl -sk "https://${QUAY_ROUTE}/api/v1/user/initialize" \
-            -H 'Content-Type: application/json' \
-            -d "{
-                \"username\": \"${REGISTRY_USER}\",
-                \"password\": \"${REGISTRY_PASSWORD}\",
-                \"email\": \"${REGISTRY_EMAIL}\",
-                \"access_token\": true
-            }" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
-    fi
+    QUAY_APP_POD=$(oc get pods -n "${QUAY_NAMESPACE}" -l quay-component=quay-app \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    QUAY_DB_POD=$(oc get pods -n "${QUAY_NAMESPACE}" -l quay-component=postgres \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
-    for n in $(seq 1 "${NUM_USERS}"); do
-        USER="workshopuser${n}"
-        PASS="workshoppass${n}"
-        EMAIL="workshop${n}@example.com"
-        SECRET_NAME="registry-credentials-user${n}"
+    if [ -n "${QUAY_APP_POD}" ] && [ -n "${QUAY_DB_POD}" ]; then
+        echo "  Generating bcrypt hash for per-user password..."
+        BCRYPT_HASH=$(oc exec -n "${QUAY_NAMESPACE}" "${QUAY_APP_POD}" -- \
+            python3 -c "import bcrypt; print(bcrypt.hashpw(b'${USER_PASSWORD}', bcrypt.gensalt(rounds=12)).decode())" 2>/dev/null || true)
 
-        echo "  Creating user: ${USER}"
+        if [ -n "${BCRYPT_HASH}" ]; then
+            QUAY_DB_USER=$(oc get pods -n "${QUAY_NAMESPACE}" "${QUAY_DB_POD}" \
+                -o jsonpath='{.spec.containers[0].env[?(@.name=="POSTGRESQL_USER")].value}' 2>/dev/null || echo "quay-registry-quay-database")
+            QUAY_DB_NAME="${QUAY_DB_USER}"
 
-        if [ -n "$ACCESS_TOKEN" ]; then
-            curl -sk "https://${QUAY_ROUTE}/api/v1/superuser/users/" \
-                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-                -H 'Content-Type: application/json' \
-                -d "{\"username\": \"${USER}\", \"email\": \"${EMAIL}\", \"password\": \"${PASS}\"}" \
-                > /dev/null 2>&1 || echo "    User ${USER} may already exist."
+            for n in $(seq 1 "${NUM_USERS}"); do
+                USERNAME="${USER_PREFIX}-${n}"
+                USER_EMAIL="${USERNAME}@demo.redhat.com"
+                USER_UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c "import uuid; print(str(uuid.uuid4()))")
+                SECRET_NAME="registry-credentials-${USERNAME}"
+
+                echo "  Creating Quay user: ${USERNAME}"
+                oc exec -n "${QUAY_NAMESPACE}" "${QUAY_DB_POD}" -- \
+                    psql -U "${QUAY_DB_USER}" -d "${QUAY_DB_NAME}" -c \
+                    "INSERT INTO \"user\" (uuid, username, password_hash, email, verified, organization, robot, invoice_email, invalid_login_attempts, last_invalid_login, removed_tag_expiration_s, enabled, creation_date)
+                     VALUES ('${USER_UUID}', '${USERNAME}', '${BCRYPT_HASH}', '${USER_EMAIL}', true, false, false, false, 0, '1970-01-01 00:00:00', 1209600, true, now())
+                     ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, verified = true, organization = false, enabled = true;" \
+                    2>/dev/null && echo "    Quay user ${USERNAME}: OK" || echo "    Quay user ${USERNAME}: WARN - check manually"
+
+                if oc get secret "${SECRET_NAME}" -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
+                    oc delete secret "${SECRET_NAME}" -n "${BUILDS_NAMESPACE}"
+                fi
+
+                oc create secret docker-registry "${SECRET_NAME}" \
+                    --docker-server="${QUAY_ROUTE}" \
+                    --docker-username="${USERNAME}" \
+                    --docker-password="${USER_PASSWORD}" \
+                    -n "${BUILDS_NAMESPACE}"
+
+                if oc get sa pipeline -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
+                    oc secrets link pipeline "${SECRET_NAME}" --for=pull,mount -n "${BUILDS_NAMESPACE}"
+                fi
+
+                echo "    ${USERNAME}: secret ${SECRET_NAME} created and linked."
+            done
         else
-            echo "    WARNING: No API token -- create ${USER} manually in Quay console."
+            echo "  WARNING: Could not generate bcrypt hash. Per-user accounts not created."
+            echo "  Use scripts/setup-workshop-users.sh for full per-user provisioning."
         fi
-
-        if oc get secret "${SECRET_NAME}" -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
-            oc delete secret "${SECRET_NAME}" -n "${BUILDS_NAMESPACE}"
-        fi
-
-        oc create secret docker-registry "${SECRET_NAME}" \
-            --docker-server="${QUAY_ROUTE}" \
-            --docker-username="${USER}" \
-            --docker-password="${PASS}" \
-            -n "${BUILDS_NAMESPACE}"
-
-        if oc get sa pipeline -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
-            oc secrets link pipeline "${SECRET_NAME}" --for=pull,mount -n "${BUILDS_NAMESPACE}"
-        fi
-
-        echo "    ${USER}: secret ${SECRET_NAME} created and linked."
-    done
+    else
+        echo "  WARNING: Quay app or DB pod not found. Per-user accounts not created."
+    fi
 else
     echo "  NUM_USERS=1 -- single-user mode, no additional users needed."
 fi
@@ -158,6 +167,6 @@ echo "Console:     https://${QUAY_ROUTE}"
 echo "User:        ${REGISTRY_USER}"
 echo "Secret:      registry-credentials (in ${BUILDS_NAMESPACE})"
 if [ "${NUM_USERS}" -gt 1 ]; then
-    echo "Extra users: workshopuser1 through workshopuser${NUM_USERS}"
-    echo "Secrets:     registry-credentials-user1 through registry-credentials-user${NUM_USERS}"
+    echo "Per-user:    ${USER_PREFIX}-1 through ${USER_PREFIX}-${NUM_USERS} (password: ${USER_PASSWORD})"
+    echo "Secrets:     registry-credentials-${USER_PREFIX}-1 through registry-credentials-${USER_PREFIX}-${NUM_USERS}"
 fi
