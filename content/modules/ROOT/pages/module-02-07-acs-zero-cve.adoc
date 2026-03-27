@@ -377,7 +377,23 @@ EOF
 **OpenShift SCC Compatibility**: The `chmod 644` and `chown 1001:0` ensure the file is readable when OpenShift's `restricted-v2` Security Context Constraint remaps the container UID to the namespace's allocated range (e.g., `1000890000`). Without this, the Python interpreter cannot read `app.py` and the container will crash with `Permission denied`.
 ====
 
-=== Step 3: Build and Push the Legacy Image
+=== Step 3: Create Registry Secret
+
+The Quay repository is private. OpenShift needs credentials both to push images during builds and to pull images at deployment time:
+
+[source,bash,role=execute]
+----
+oc create secret docker-registry quay-pull-secret \
+  --docker-server=${WORKSHOP_REGISTRY} \
+  --docker-username=${REGISTRY_USER} \
+  --docker-password=${REGISTRY_PASSWORD} \
+  -n hummingbird-acs-lab 2>/dev/null || echo "Secret already exists"
+
+oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-lab
+oc secrets link builder quay-pull-secret -n hummingbird-acs-lab
+----
+
+=== Step 4: Build and Push the Legacy Image
 
 The Showroom terminal does not include `podman`, so we use OpenShift's built-in Binary Build strategy. This uploads your local files and builds the Containerfile on-cluster using a builder pod, then pushes directly to Quay.
 
@@ -407,21 +423,6 @@ image::module-02/legacy-python-quay-tags.png[Quay Repository Tags for legacy-pyt
 Click on the security scan column to view the CVE details. The `python:3.11-buster` base image carries multiple fixable vulnerabilities:
 
 image::module-02/legacy-python-cve-scan.png[Clair Security Scan showing 10 fixable vulnerabilities in legacy-python-api]
-
-=== Step 4: Create Image Pull Secret
-
-The Quay repository is private, so OpenShift needs credentials to pull images:
-
-[source,bash,role=execute]
-----
-oc create secret docker-registry quay-pull-secret \
-  --docker-server=${WORKSHOP_REGISTRY} \
-  --docker-username=${REGISTRY_USER} \
-  --docker-password=${REGISTRY_PASSWORD} \
-  -n hummingbird-acs-lab
-
-oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-lab
-----
 
 === Step 5: Deploy to OpenShift
 
