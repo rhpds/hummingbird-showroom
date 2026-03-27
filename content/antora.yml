@@ -29,7 +29,8 @@ asciidoc:
 
     # Upstream Source Registries
     #hummingbird-registry: 'registry.access.rehdat.com/hi'
-    hummingbird-registry: 'quay.io/hummingbird-hatchling'
+    #hummingbird-registry: 'quay.io/hummingbird-hatchling'
+    hummingbird-registry: 'quay.io/hummingbird'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
     # Red Hat Trusted Libraries (Tech Preview)

@@ -320,12 +320,12 @@ Edit the Containerfile and change the `FROM` to include the appropriate tag.
 ----
 vi ~/flask/Containerfile.hi
 ----
-[source,dockerfile]
+[source,dockerfile,subs=attributes+]
 ----
 # Stage 1: Builder base image 
 FROM {hummingbird-registry}/python:3.14-builder #<.>
 ----
-<.> The format for `python` images is <version>-builder
+<.> The tagging format for `python` images is <version>-builder
 
 Let's retry the build using the new variant.
 [source,bash,role=execute]
@@ -704,11 +704,13 @@ Congratulations! You've completed Sub-Module 1.1 and built your first applicatio
 .*Key Takeaways*
 
 **Multi-Stage Build Pattern:**
+
 * **Stage 1 (Builder)**: Hardened image (~435MB) with all build tools (JDK, Maven)
 * **Stage 2 (Runtime)**: Hardened runtime (~253MB base) with only the JRE
 * **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
 
 **Best Practices Applied:**
+
 * Non-root user (UID 65532)
 * Minimal runtime image (no build tools, no package managers, no compiler)
 * Proper file ownership with `--chown`

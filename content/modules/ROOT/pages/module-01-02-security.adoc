@@ -162,7 +162,7 @@ The `--only-fixed` flag shows only vulnerabilities with available patches. This 
    └── by status:   29 fixed, 189 not-fixed, 189 ignored 
 <cut>
 ----
-Take particular note of the `Type` columen in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are inclueded in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
+Take particular note of the `Type` column in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are inclueded in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
 
 [IMPORTANT]
 ====
@@ -500,17 +500,20 @@ Congratulations! You've completed Sub-Module 1.2 and implemented a complete secu
 .*Key Takeaways*
 
 **Security Benefits:**
+
 * **Zero or near-zero CVEs** at ship time
 * **56%+ smaller** images reduce attack surface and download time
 * **Complete transparency** via SBOMs
 
 **Security Workflow:**
+
 2. **Scan** → Grype checks for CVEs (should be 0)
 3. **SBOM** → Syft generates compliance artifacts
 4. **Sign** → Cosign proves provenance
 5. **Verify** → Consumers verify signatures before deploying
 
 **Compliance Ready:**
+
 * SBOMs meet NIST and EU Cyber Resilience Act requirements
 * Signed attestations prove SBOM authenticity
 * Automated scanning catches vulnerabilities early
