@@ -28,14 +28,14 @@ This sub-module bridges the gap: you'll create a Tekton Task that generates udic
 
 This Task runs the built image briefly, captures `podman inspect` output, and feeds it to udica to produce a CIL policy file:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: udica-policy-generate
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -133,9 +133,9 @@ task.tekton.dev/udica-policy-generate created
 
 === Step 2: Verify the Task
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get task udica-policy-generate -n hummingbird-builds
+oc get task udica-policy-generate -n hummingbird-builds-{user}
 ----
 
 .*Expected output:*
@@ -151,14 +151,14 @@ udica-policy-generate     15s
 
 Wrap the Task in a Pipeline so it appears in the OpenShift Pipelines dashboard:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: selinux-policy-pipeline
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -200,9 +200,9 @@ pipeline.tekton.dev/selinux-policy-pipeline created
 
 === Step 4: Verify the Pipeline
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pipeline selinux-policy-pipeline -n hummingbird-builds
+oc get pipeline selinux-policy-pipeline -n hummingbird-builds-{user}
 ----
 
 [[run-policy-pipeline]]
@@ -216,9 +216,9 @@ Generate a policy for the Node.js application built in Sub-Module 2.3:
 ====
 The `udica-policy-generate` Task runs `podman` inside the step, which requires the `privileged` SCC. The workshop bootstrap pre-configures this automatically. If you are running outside the bootstrapped environment, grant it manually:
 
-[source,bash]
+[source,bash,subs=attributes]
 ----
-oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 ====
 
@@ -229,13 +229,13 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: generate-nodejs-policy
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   pipelineRef:
     name: selinux-policy-pipeline
   params:
     - name: IMAGE
-      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
+      value: "{quay_hostname}/{quay_user}/secure-nodejs:latest"
     - name: POLICY_NAME
       value: "hummingbird_nodejs"
     - name: PORTS
@@ -247,39 +247,46 @@ EOF
 
 === Step 6: Monitor the PipelineRun
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pipelinerun generate-nodejs-policy -w
+oc get pipelinerun generate-nodejs-policy -n hummingbird-builds-{user} -w
 ----
 
 Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
 
-You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds` namespace.
+You can also watch the PipelineRun in the OpenShift console under **Pipelines -> PipelineRuns** in the `hummingbird-builds-{user}` namespace:
+
+.OpenShift console: generate-nodejs-policy PipelineRun succeeded with udica policy generation logs
+image::module-02/openshift-pipelinerun-selinux.png[PipelineRun SELinux,width=800]
 
 === Step 7: View the Generated Policy
 
-[source,bash,role=execute]
+The Task results (CIL policy, digest, policy type) are stored in the TaskRun. Retrieve them:
+
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pipelinerun generate-nodejs-policy \
-  -o jsonpath='{.status.pipelineResults}' | python3 -m json.tool
+TASKRUN=$(oc get pipelinerun generate-nodejs-policy -n hummingbird-builds-{user} \
+  -o jsonpath='{.status.childReferences[0].name}')
+oc get taskrun $TASKRUN -n hummingbird-builds-{user} \
+  -o jsonpath='{.status.results}' | python3 -m json.tool
 ----
 
 The `POLICY_CIL` result contains the generated CIL policy. The `POLICY_TYPE` result gives you the SELinux type name (`hummingbird_nodejs.process`) to use in your Deployment spec.
 
 View the detailed logs:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc logs generate-nodejs-policy-generate-policy-pod -c step-generate-policy
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-policy
 ----
 
 [TIP]
 ====
 If the pod name above doesn't match, find it with:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l tekton.dev/pipelineRun=generate-nodejs-policy -n hummingbird-builds
+oc get pods -l tekton.dev/pipelineRun=generate-nodejs-policy -n hummingbird-builds-{user}
 ----
 ====
 
@@ -321,9 +328,9 @@ Once the CIL policy is loaded on cluster nodes (via MachineConfig or manually), 
 ====
 The `seLinuxOptions.type` field requires an SCC that allows custom SELinux types. The default `restricted-v2` SCC rejects it. The workshop bootstrap pre-configures the `privileged` SCC for the `default` service account automatically. If you are running outside the bootstrapped environment, grant it manually:
 
-[source,bash]
+[source,bash,subs=attributes]
 ----
-oc adm policy add-scc-to-user privileged -z default -n hummingbird-builds
+oc adm policy add-scc-to-user privileged -z default -n hummingbird-builds-{user}
 ----
 
 In production, create a custom SCC that allows only `seLinuxOptions` without full privileged access.
@@ -336,7 +343,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nodejs-selinux
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app: nodejs-selinux
 spec:
@@ -351,7 +358,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: {workshop-registry}/{registry-user}/secure-nodejs:latest
+          image: {quay_hostname}/{quay_user}/secure-nodejs:latest
           ports:
             - containerPort: 8080
           resources:
@@ -379,17 +386,36 @@ The `seLinuxOptions.type` field tells the container runtime to apply the custom 
 
 === Step 9: Verify the Deployment
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l app=nodejs-selinux -n hummingbird-builds
+oc get pods -l app=nodejs-selinux -n hummingbird-builds-{user}
 ----
 
-[TIP]
+.*Expected output:*
+----
+NAME                              READY   STATUS                 RESTARTS   AGE
+nodejs-selinux-6c8776cf85-xxxxx   0/1     CreateContainerError   0          30s
+nodejs-selinux-6c8776cf85-yyyyy   0/1     CreateContainerError   0          30s
+----
+
+[IMPORTANT]
 ====
-**Pods showing `CreateContainerError`?** Two common causes:
+**The `CreateContainerError` is expected in a workshop environment.**
 
-1. **SCC rejection** -- if events show `unable to validate against any security context constraint`, grant the `privileged` SCC to the `default` service account (Step 6 above).
-2. **SELinux type not loaded** -- if events show `write to /proc/self/attr/keycreate: Invalid argument`, the CIL policy hasn't been loaded on the node yet. In a workshop environment, this is expected -- the MachineConfig step below shows how production clusters handle this.
+The pods fail with:
+
+`Error: container create failed: write to /proc/self/attr/keycreate: Invalid argument`
+
+This means the SELinux type `hummingbird_nodejs.process` does not exist on the cluster nodes yet. The pipeline successfully **generated** the CIL policy, but it has not been **loaded** on the nodes. In production, a MachineConfig (described below) installs the policy on every worker node at boot time, which requires a rolling node reboot.
+
+The key takeaway: the Tekton pipeline automates policy generation; MachineConfig automates policy distribution. Together they complete the SELinux CI/CD workflow.
+
+Clean up the failing deployment:
+
+[source,bash,role=execute,subs=attributes]
+----
+oc delete deployment nodejs-selinux -n hummingbird-builds-{user}
+----
 ====
 
 [[machineconfig-distribution]]
@@ -507,7 +533,7 @@ This ensures every image version has a matching, auditable SELinux policy.
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
+Congratulations! You've completed Sub-Module 2.4.
 
 .*What You've Accomplished*
 ✅ Created a Tekton Task for automated udica policy generation +
@@ -536,35 +562,13 @@ Congratulations! You've completed Sub-Module 2.4 and Module 2 in its entirety!
 * udica SELinux policies (kernel-level access control)
 * Image signing (provenance verification)
 
-=== Workshop Complete!
+=== Next: Enforce Zero-CVE with ACS
 
-You've finished both modules of the Zero CVE Hummingbird Workshop!
+Continue to the final required exercise:
 
-**What You've Mastered:**
+**xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.5: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**
 
-**Module 1 -- Developer Environment:**
-* Multi-stage builds with Hummingbird runtimes
-* Security scanning, SBOM generation, image signing
-* Custom SELinux policies with udica (fundamentals and advanced)
-* Production-ready iteration and distribution workflows
-
-**Module 2 -- Platform Engineering:**
-* Shipwright Builds operator on OpenShift
-* Buildpacks and custom BuildStrategies
-* Multi-language auto-detection
-* Complete security pipeline (build -> scan -> SBOM -> deploy)
-* Automated SELinux policy generation with Tekton
-
-**Combined Workflow:**
-1. **Module 1**: Develop and validate locally with Podman
-2. **Module 2**: Deploy to platform with Shipwright + Tekton
-3. **Production**: Automated builds, scanning, signing, SELinux policies, and deployment
-
-=== Optional Exercise
-
-**xref:module-02-05-chunkah-pipeline.adoc[Sub-Module 2.5: chunkah in CI/CD Pipelines]**
-
-Learn how to integrate chunkah content-based layer splitting into the Tekton pipeline for automated image optimisation (~12 min).
+Prove the zero-CVE posture by deploying a legacy vulnerable image alongside a Hummingbird image, then enforce admission control policies with Red Hat Advanced Cluster Security (~25 min).
 
 === Next Steps for Production
 
@@ -605,11 +609,11 @@ Learn how to integrate chunkah content-based layer splitting into the Tekton pip
 === Troubleshooting
 
 **Issue: TaskRun fails with permission errors**
-[source,bash]
+[source,bash,subs=attributes]
 ----
 oc get taskrun generate-nodejs-policy -o yaml | grep -A5 status
 
-oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 
 **Issue: SELinux type not found on node**

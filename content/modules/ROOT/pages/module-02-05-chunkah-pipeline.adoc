@@ -27,14 +27,14 @@ This sub-module creates a Tekton Task for chunkah and inserts it into the build 
 
 === Step 1: Create the Task
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: chunkah-split-task
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -152,9 +152,9 @@ task.tekton.dev/chunkah-split-task created
 
 === Step 2: Verify the Task
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get task chunkah-split-task -n hummingbird-builds
+oc get task chunkah-split-task -n hummingbird-builds-{user}
 ----
 
 [[create-chunkah-pipeline]]
@@ -164,14 +164,14 @@ oc get task chunkah-split-task -n hummingbird-builds
 
 Wrap the Task in a Pipeline so it appears in the OpenShift Pipelines dashboard:
 
-[source,yaml,role=execute]
+[source,yaml,role=execute,subs=attributes]
 ----
 cat << 'EOF' | oc apply -f -
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: chunkah-optimization-pipeline
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -217,9 +217,9 @@ pipeline.tekton.dev/chunkah-optimization-pipeline created
 
 === Step 4: Verify the Pipeline
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pipeline chunkah-optimization-pipeline -n hummingbird-builds
+oc get pipeline chunkah-optimization-pipeline -n hummingbird-builds-{user}
 ----
 
 [[run-chunkah-pipeline]]
@@ -236,15 +236,15 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: chunkah-split-nodejs
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   pipelineRef:
     name: chunkah-optimization-pipeline
   params:
     - name: SOURCE_IMAGE
-      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest"
+      value: "{quay_hostname}/{quay_user}/secure-nodejs:latest"
     - name: OUTPUT_IMAGE
-      value: "{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked"
+      value: "{quay_hostname}/{quay_user}/secure-nodejs:latest-chunked"
     - name: MAX_LAYERS
       value: "48"
 EOF
@@ -259,7 +259,7 @@ oc get pipelinerun chunkah-split-nodejs -w
 
 Wait for STATUS to show `True` (Succeeded), then press `Ctrl+C`.
 
-You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds` namespace.
+You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds-{user}` namespace.
 
 === Step 7: View Results
 
@@ -291,9 +291,9 @@ oc logs chunkah-split-nodejs-split-layers-pod -c step-run-chunkah
 ====
 If the pod name above doesn't match, find it with:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n hummingbird-builds
+oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n hummingbird-builds-{user}
 ----
 ====
 
@@ -327,7 +327,7 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: hummingbird-build-pipeline
-  namespace: hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE_REGISTRY
@@ -389,13 +389,13 @@ Use `skopeo inspect` to compare the original and split images in the registry:
 [source,bash,role=execute,subs="attributes"]
 ----
 echo "=== Original image ==="
-skopeo inspect --tls-verify=false "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest" 2>/dev/null \
+skopeo inspect "docker://{quay_hostname}/{quay_user}/secure-nodejs:latest" --username {quay_user} --password {quay_password} 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 
 echo ""
 echo "=== After chunkah ==="
-skopeo inspect --tls-verify=false "docker://{workshop-registry}/{registry-user}/secure-nodejs:latest-chunked" 2>/dev/null \
+skopeo inspect "docker://{quay_hostname}/{quay_user}/secure-nodejs:latest-chunked" --username {quay_user} --password {quay_password} 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Layers: {len(d.get(\"Layers\",[]))}')" \
   || echo "Check Quay console for layer count"
 ----
@@ -497,17 +497,17 @@ As of chunkah v0.2.0:
 === Troubleshooting
 
 **Issue: TaskRun fails with permission errors**
-[source,bash]
+[source,bash,subs=attributes]
 ----
 oc get taskrun chunkah-split-nodejs -o yaml | grep -A5 status
 
-oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 
 **Issue: chunkah image pull fails in cluster**
-[source,bash]
+[source,bash,subs=attributes]
 ----
-oc get pods -n hummingbird-builds
+oc get pods -n hummingbird-builds-{user}
 
 podman pull quay.io/jlebon/chunkah:v0.2.0
 ----
