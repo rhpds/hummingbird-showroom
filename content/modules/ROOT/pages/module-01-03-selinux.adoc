@@ -145,9 +145,11 @@ podman run --net=host --rm -it curl:local-ca https://localhost:8443
 [[fips]]
 == Baselines for special use cases
 
-In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the FIPS 140-3 standard.
+In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the Federal Information Processing Standards (FIPS) 140-3 standard for security and interoperability.
 
-The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance.
+While not this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring adding compliance measures on top of the baseline images and how they combine with other variants. 
+
+The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance. Like the `default`, a `-builder` variant exists to support multi-stage and other build patternss.
 
 === Step 7: Check FIPS mode on host
 
@@ -670,6 +672,7 @@ Congratulations! You've completed Sub-Module 1.3 and learned the fundamentals of
 .*Key Takeaways*
 
 **udica Workflow for Hardened Images:**
+
 1. Prepare host directories and label with `semanage fcontext`
 2. Run container with default `container_t` and realistic config/mounts
 3. Capture `podman inspect` output (not interactive testing)
@@ -678,6 +681,7 @@ Congratulations! You've completed Sub-Module 1.3 and learned the fundamentals of
 6. Restart with `--security-opt label=type:<policy>.process`
 
 **CIL Template Blocks:**
+
 * `base_container.cil` -- always inherited, baseline rules
 * `net_container.cil` -- inherited when ports are exposed
 * `home_container.cil` -- inherited when /home is bind-mounted

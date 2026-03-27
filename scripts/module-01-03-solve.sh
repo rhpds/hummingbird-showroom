@@ -9,7 +9,8 @@ set -e
 # - FIPS image: test-fips.py returns exit code 0 (expected success)
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
+# HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
+HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
 
 
 
