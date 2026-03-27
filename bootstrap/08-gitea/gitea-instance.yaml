@@ -12,7 +12,7 @@ spec:
   giteaAdminEmail: gitea-admin@example.com
   giteaCreateUsers: true
   giteaGenerateUserFormat: "lab-user-%d"
-  giteaUserNumber: 1
+  giteaUserNumber: 3
   giteaUserPassword: openshift
   postgresqlVolumeSize: 4Gi
   giteaVolumeSize: 4Gi

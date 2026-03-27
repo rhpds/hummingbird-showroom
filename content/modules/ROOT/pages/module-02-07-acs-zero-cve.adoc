@@ -42,11 +42,11 @@ Phase 4: Attempt to redeploy the legacy image
 
 === Prerequisites
 
-* OpenShift {openshift-version} cluster with cluster-admin access
-* `oc` CLI authenticated to the cluster
-* ACS (RHACS) operator installed and Central accessible (see xref:appendix-b-openshift-setup.adoc#acs-setup[Appendix B: ACS Setup])
-* `roxctl` CLI (installed in Step 2 below)
-* `cosign` and `syft` available (installed in Sub-Module 2.3)
+* OpenShift {openshift-version} cluster with ACS (RHACS) operator installed and Central accessible (see xref:appendix-b-openshift-setup.adoc#acs-setup[Appendix B: ACS Setup])
+* `oc` CLI authenticated to the cluster (provided by the Showroom terminal)
+* `skopeo` and `curl` available (provided by the Showroom terminal)
+* `roxctl` CLI (installed to `~/bin` in Exercise 1 Step 3 below)
+* `syft` and `cosign` (installed to `~/bin` in Exercise 5 below)
 
 [[setup]]
 == Exercise 1: Prepare the Environment
@@ -76,7 +76,7 @@ export REGISTRY_PASSWORD="{quay_password}"
 echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
 echo "REGISTRY_USER=${REGISTRY_USER}"
 
-podman login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "https://${WORKSHOP_REGISTRY}" --tls-verify=false
+skopeo login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "${WORKSHOP_REGISTRY}" --tls-verify=false
 ----
 
 .*Expected output:*
@@ -99,7 +99,9 @@ curl -sk -u "admin:${ACS_PASSWORD}" \
   "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o /tmp/roxctl
 
 chmod +x /tmp/roxctl
-sudo mv /tmp/roxctl /usr/local/bin/roxctl
+mkdir -p $HOME/bin
+mv /tmp/roxctl $HOME/bin/roxctl
+export PATH="$HOME/bin:$PATH"
 roxctl version
 ----
 
@@ -110,7 +112,7 @@ roxctl: 4.x.x
 
 [NOTE]
 ====
-The download endpoint requires authentication. We use the ACS admin password stored in the `central-htpasswd` secret. Writing to `/usr/local/bin/` requires `sudo`.
+The download endpoint requires authentication. We use the ACS admin password stored in the `central-htpasswd` secret. The binary is placed in `~/bin` which is added to your PATH.
 ====
 
 === Step 4: Configure roxctl CLI
@@ -150,7 +152,7 @@ User:
 
 [WARNING]
 ====
-**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set.
+**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. You will also need to re-export your PATH: `export PATH="$HOME/bin:$PATH"`. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set; if `roxctl: command not found`, re-export the PATH.
 ====
 
 === Step 5: Download Helper Scripts
@@ -377,16 +379,26 @@ EOF
 
 === Step 3: Build and Push the Legacy Image
 
+The Showroom terminal does not include `podman`, so we use OpenShift's built-in Binary Build strategy. This uploads your local files and builds the Containerfile on-cluster using a builder pod, then pushes directly to Quay.
+
 [source,bash,role=execute]
 ----
-podman build -f Containerfile.legacy -t legacy-python-api:vulnerable .
+oc new-build --strategy=docker --binary=true \
+  --name=legacy-python-api \
+  --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable" \
+  -n hummingbird-acs-lab 2>/dev/null || true
 
-podman tag legacy-python-api:vulnerable \
-  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
+oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-lab
 
-podman push --tls-verify=false \
-  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable
+cp Containerfile.legacy Dockerfile
+oc start-build legacy-python-api --from-dir=. --follow -n hummingbird-acs-lab
+rm -f Dockerfile
 ----
+
+[NOTE]
+====
+`oc new-build --strategy=docker --binary` creates a BuildConfig that accepts uploaded source. The `--to-docker` flag directs the output to an external Docker registry (Quay) instead of the internal registry. The `cp Containerfile.legacy Dockerfile` step is needed because OpenShift's Docker strategy looks for a file named `Dockerfile` by default.
+====
 
 Verify the image appears in Quay with its security scan:
 
@@ -694,13 +706,16 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 
 [source,bash,role=execute,subs="attributes"]
 ----
-podman build -f Containerfile.fortress -t fortress-python-api:zero-cve .
+oc new-build --strategy=docker --binary=true \
+  --name=fortress-python-api \
+  --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve" \
+  -n hummingbird-acs-lab 2>/dev/null || true
 
-podman tag fortress-python-api:zero-cve \
-  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve
+oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-lab
 
-podman push --tls-verify=false \
-  ${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve
+cp Containerfile.fortress Dockerfile
+oc start-build fortress-python-api --from-dir=. --follow -n hummingbird-acs-lab
+rm -f Dockerfile
 ----
 
 Verify the fortress image in Quay. Notice the `zero-cve` tag with a **Passed** security scan and a dramatically smaller size (38 MB vs 339 MB):
@@ -713,17 +728,47 @@ image::module-02/fortress-zero-cve-scan.png[Clair Security Scanner showing no vu
 
 === Step 3: Compare Image Sizes
 
+Since images were built on-cluster (not locally), we query the registry for size information:
+
 [source,bash,role=execute]
 ----
-podman images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | \
-  grep -E "(legacy-python-api|fortress-python-api)"
+echo "=== Image Size Comparison ==="
+echo ""
+echo "Legacy (python:3.11-buster):"
+LEGACY_LAYERS=$(skopeo inspect --tls-verify=false \
+  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable 2>/dev/null)
+echo "$LEGACY_LAYERS" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+layers = d.get('Layers', d.get('LayersData', []))
+print(f'  Layers: {len(layers)}')
+print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+"
+
+echo ""
+echo "Fortress (Hummingbird distroless):"
+FORTRESS_LAYERS=$(skopeo inspect --tls-verify=false \
+  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve 2>/dev/null)
+echo "$FORTRESS_LAYERS" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+layers = d.get('Layers', d.get('LayersData', []))
+print(f'  Layers: {len(layers)}')
+print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+"
 ----
 
-.*Expected output (sizes will vary based on image versions):*
+.*Expected output (layer counts will vary):*
 ----
-REPOSITORY:TAG                                   SIZE
-localhost/legacy-python-api:vulnerable            ~900 MB
-localhost/fortress-python-api:zero-cve            ~100 MB
+=== Image Size Comparison ===
+
+Legacy (python:3.11-buster):
+  Layers: ~10+
+  Created: <timestamp>
+
+Fortress (Hummingbird distroless):
+  Layers: ~3-5
+  Created: <timestamp>
 ----
 
 [NOTE]
@@ -736,23 +781,38 @@ The Hummingbird image is roughly **9x smaller** because it contains only the Pyt
 
 Hummingbird images built through the Konflux software factory ship with cryptographically signed SBOMs and SLSA provenance metadata. Even when building locally, you can generate and compare SBOMs.
 
-=== Step 1: Generate SBOMs for Both Images
+=== Step 0: Install syft
+
+The `syft` CLI generates SBOMs (Software Bills of Materials) from container images. Install it to your local `~/bin`:
 
 [source,bash,role=execute]
 ----
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b $HOME/bin
+export PATH="$HOME/bin:$PATH"
+syft version
+----
+
+=== Step 1: Generate SBOMs for Both Images
+
+Since images were built on-cluster, we scan them directly from the Quay registry. The `SYFT_REGISTRY_INSECURE_SKIP_TLS_VERIFY` variable handles the self-signed certificate:
+
+[source,bash,role=execute]
+----
+export SYFT_REGISTRY_INSECURE_SKIP_TLS_VERIFY=true
+
 echo "=== Legacy image SBOM ==="
-syft legacy-python-api:vulnerable -o table | head -30
+syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o table | head -30
 echo ""
-LEGACY_COUNT=$(syft legacy-python-api:vulnerable -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+LEGACY_COUNT=$(syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
 echo "Total packages in legacy image: $LEGACY_COUNT"
 ----
 
 [source,bash,role=execute]
 ----
 echo "=== Hummingbird image SBOM ==="
-syft fortress-python-api:zero-cve -o table | head -30
+syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o table | head -30
 echo ""
-FORTRESS_COUNT=$(syft fortress-python-api:zero-cve -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+FORTRESS_COUNT=$(syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
 echo "Total packages in Hummingbird image: $FORTRESS_COUNT"
 ----
 
@@ -762,9 +822,39 @@ Legacy image:      ~430 packages (Debian Buster + Python)
 Hummingbird image: ~15-25 packages (Python runtime only)
 ----
 
-=== Step 2: Inspect Hummingbird Upstream Provenance
+=== Step 2: Install cosign and Inspect Hummingbird Upstream Provenance
 
-Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations, signatures, and SLSA provenance. Inspect the upstream image supply chain:
+Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations, signatures, and SLSA provenance. First, install the `cosign` CLI, then inspect the upstream image supply chain.
+
+Install cosign from the RHTAS cli-server (if available), otherwise from GitHub:
+
+[source,bash,role=execute]
+----
+mkdir -p $HOME/bin
+
+DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
+  -l app.kubernetes.io/name=cli-server \
+  -o jsonpath='{.items[0].spec.host}' 2>/dev/null || \
+  oc get route -n trusted-artifact-signer \
+  -l app=trusted-artifact-signer-clientserver \
+  -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
+
+if [ -n "$DOWNLOADS_URL" ]; then
+  echo "Downloading cosign from RHTAS cli-server..."
+  curl -sSL "https://${DOWNLOADS_URL}/clients/linux/cosign-amd64.gz" | gunzip > $HOME/bin/cosign
+else
+  echo "Downloading cosign from GitHub..."
+  COSIGN_VERSION=v2.4.1
+  curl -sL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
+    -o $HOME/bin/cosign
+fi
+
+chmod +x $HOME/bin/cosign
+export PATH="$HOME/bin:$PATH"
+cosign version
+----
+
+Now inspect the Hummingbird image supply chain:
 
 [source,bash,role=execute,subs="attributes"]
 ----

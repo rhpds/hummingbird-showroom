@@ -57,6 +57,60 @@ The workshop uses pre-provisioned environments from the **Red Hat Demo Platform 
 
 See the Appendix modules in the workshop guide for automation scripts and manual setup steps.
 
+== Quick Start: Self-Hosted Deployment
+
+Deploy the full workshop stack on any OpenShift 4.21+ cluster with a single command.
+
+=== Prerequisites
+
+* An OpenShift cluster with 3+ nodes (for ODF/NooBaa)
+* `cluster-admin` privileges
+* `oc` CLI logged in to the cluster
+
+=== One-Command Deploy (Infra + Users + Showroom)
+
+[source,bash]
+----
+git clone https://github.com/rhpds/zero-cve-hummingbird-showroom.git
+cd zero-cve-hummingbird-showroom
+oc login --server=https://api.your-cluster:6443 --insecure-skip-tls-verify
+
+# Deploy everything with 3 workshop users
+./bootstrap/setup-all.sh --source upstream --users 3
+----
+
+This will:
+
+1. Install the OpenShift GitOps (ArgoCD) operator
+2. Deploy the full workshop stack via ArgoCD sync waves (operators, Quay, ACS, RHTAS, Keycloak, Gitea, Renovate infra)
+3. Create 3 workshop users (`lab-user-1`, `lab-user-2`, `lab-user-3`) across all services (OpenShift, Quay, Gitea, Keycloak)
+4. Deploy a per-user Showroom (interactive workshop guide with embedded terminal)
+5. Write credentials and URLs to `workshop-users-access.txt`
+
+Each user has a **unified identity**: `lab-user-N` / `openshift` for OpenShift, Quay, Gitea, and Keycloak.
+
+=== Two-Step Deploy (Infra Only, Then Users)
+
+[source,bash]
+----
+# Step 1: Deploy infrastructure only
+./bootstrap/setup-all.sh --source upstream
+
+# Step 2: Add users and Showroom later
+NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
+----
+
+=== Adding More Users Later
+
+The user setup script is idempotent. To add more users to an existing deployment:
+
+[source,bash]
+----
+NUM_USERS=5 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
+----
+
+See link:scripts/README.md[scripts/README.md] for all environment variables.
+
 == Local Development
 
 === Prerequisites
@@ -117,6 +171,7 @@ zero-cve-hummingbird-showroom/
 ├── site.yml                             # Antora site configuration
 ├── ui-config.yml                        # Showroom UI configuration
 ├── scripts/
+│   ├── setup-workshop-users.sh          # Per-user provisioning (Quay, Keycloak, RBAC, Showroom)
 │   └── validate-bootstrap.sh            # Cluster bootstrap validation script
 ├── .github/workflows/
 │   ├── gh-pages.yml                     # GitHub Actions for Pages

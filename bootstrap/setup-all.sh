@@ -18,7 +18,8 @@
 #   Wave 10: Renovate build infrastructure (Tekton Tasks, Pipelines, RBAC)
 #
 # Usage:
-#   ./bootstrap/setup-all.sh                          # defaults: fork repo, main branch
+#   ./bootstrap/setup-all.sh                          # infra only, single user
+#   ./bootstrap/setup-all.sh --users 3                # infra + 3 workshop users + Showroom
 #   ./bootstrap/setup-all.sh --source upstream        # use upstream repo
 #   ./bootstrap/setup-all.sh --source fork            # use fork (default)
 #   ./bootstrap/setup-all.sh --branch feature-x       # use a specific branch
@@ -26,6 +27,7 @@
 # Environment variables:
 #   REPO_URL   - Override the git repository URL
 #   BRANCH     - Override the git branch (default: main)
+#   NUM_USERS  - Number of workshop users (default: 0; use --users flag instead)
 # =============================================================================
 set -euo pipefail
 
@@ -37,6 +39,7 @@ UPSTREAM_REPO="https://github.com/rhpds/zero-cve-hummingbird-showroom.git"
 SOURCE="fork"
 BRANCH="${BRANCH:-main}"
 REPO_URL="${REPO_URL:-}"
+NUM_USERS="${NUM_USERS:-0}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -62,9 +65,13 @@ while [[ $# -gt 0 ]]; do
             REPO_URL="$2"
             shift 2
             ;;
+        --users)
+            NUM_USERS="$2"
+            shift 2
+            ;;
         *)
             error "Unknown argument: $1"
-            echo "Usage: $0 [--source fork|upstream] [--branch BRANCH] [--repo URL]"
+            echo "Usage: $0 [--source fork|upstream] [--branch BRANCH] [--repo URL] [--users N]"
             exit 1
             ;;
     esac
@@ -88,6 +95,7 @@ echo "============================================================"
 echo "  Source:  ${SOURCE}"
 echo "  Repo:   ${REPO_URL}"
 echo "  Branch: ${BRANCH}"
+echo "  Users:  ${NUM_USERS}"
 echo ""
 
 # =================================================================
@@ -226,6 +234,25 @@ fi
 echo ""
 
 # =================================================================
+# STEP 6: Per-user setup (if --users was specified)
+# =================================================================
+USER_SETUP_SCRIPT="${SCRIPT_DIR}/../scripts/setup-workshop-users.sh"
+USERS_CONFIGURED="false"
+
+if [ "${NUM_USERS}" -gt 0 ] && [ -f "${USER_SETUP_SCRIPT}" ]; then
+    info "=== Step 6: Setting up ${NUM_USERS} workshop user(s) ==="
+    info "Running: NUM_USERS=${NUM_USERS} DEPLOY_SHOWROOM=true ${USER_SETUP_SCRIPT}"
+    echo ""
+    NUM_USERS="${NUM_USERS}" DEPLOY_SHOWROOM=true bash "${USER_SETUP_SCRIPT}" && \
+        USERS_CONFIGURED="true" || \
+        warn "User setup encountered errors. Check output above and re-run if needed:"
+    echo ""
+elif [ "${NUM_USERS}" -gt 0 ]; then
+    warn "User setup script not found at ${USER_SETUP_SCRIPT}"
+    warn "Run it manually: NUM_USERS=${NUM_USERS} DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh"
+fi
+
+# =================================================================
 # SUMMARY
 # =================================================================
 echo ""
@@ -272,22 +299,31 @@ echo "  RHTAS Realm: ${RHTAS_REALM}"
 echo ""
 echo "  ---- Credentials ----"
 echo ""
-echo "  Quay Registry:"
-echo "    URL:      https://${QUAY_ROUTE}"
-echo "    Username: workshopuser"
-echo "    Password: workshoppass123"
-echo "    Secret:   registry-credentials (in hummingbird-builds namespace)"
+echo "  Quay Superuser:  workshopuser / workshoppass123"
+echo "  ACS Central:     admin / ${ACS_PASSWORD}"
+echo "  ArgoCD Console:  https://${ARGOCD_ROUTE}"
 echo ""
-echo "    NOTE: If login fails, visit https://${QUAY_ROUTE} and click"
-echo "          'Create Account' to register workshopuser / workshoppass123"
-echo ""
-echo "  ACS Central:"
-echo "    URL:      https://${ACS_ROUTE}"
-echo "    Username: admin"
-echo "    Password: ${ACS_PASSWORD}"
-echo ""
-echo "  ArgoCD:"
-echo "    Console:  https://${ARGOCD_ROUTE}"
-echo ""
-echo "  Proceed to Module 2 to start the workshop labs."
+
+if [ "${USERS_CONFIGURED}" = "true" ]; then
+    echo "  ---- Workshop Users (${NUM_USERS}) ----"
+    echo ""
+    echo "  Unified identity: lab-user-N / openshift (same for OpenShift, Quay, Gitea)"
+    echo "  Access details:   cat workshop-users-access.txt"
+    echo ""
+elif [ "${NUM_USERS}" -gt 0 ]; then
+    echo "  ---- Workshop Users ----"
+    echo ""
+    warn "  User setup did not complete. Re-run:"
+    echo "    NUM_USERS=${NUM_USERS} DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh"
+    echo ""
+else
+    echo "  ---- Next Steps ----"
+    echo ""
+    echo "  To add workshop users with Showroom, run:"
+    echo "    NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh"
+    echo ""
+    echo "  Or re-run this script with the --users flag:"
+    echo "    ./bootstrap/setup-all.sh --users 3"
+    echo ""
+fi
 echo "============================================================"
