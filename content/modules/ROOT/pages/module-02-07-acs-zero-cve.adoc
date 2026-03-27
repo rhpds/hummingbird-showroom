@@ -73,6 +73,9 @@ export WORKSHOP_REGISTRY="{quay_hostname}"
 export REGISTRY_USER="{quay_user}"
 export REGISTRY_PASSWORD="{quay_password}"
 
+export REGISTRY_AUTH_FILE=$HOME/.config/containers/auth.json
+mkdir -p $(dirname $REGISTRY_AUTH_FILE)
+
 echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
 echo "REGISTRY_USER=${REGISTRY_USER}"
 
@@ -152,7 +155,7 @@ User:
 
 [WARNING]
 ====
-**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. You will also need to re-export your PATH: `export PATH="$HOME/bin:$PATH"`. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set; if `roxctl: command not found`, re-export the PATH.
+**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `REGISTRY_AUTH_FILE`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. You will also need to re-export your PATH: `export PATH="$HOME/bin:$PATH"`. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set; if `roxctl: command not found`, re-export the PATH; if `skopeo` fails with `permission denied`, re-export `REGISTRY_AUTH_FILE`.
 ====
 
 === Step 5: Download Helper Scripts
@@ -736,26 +739,32 @@ Since images were built on-cluster (not locally), we query the registry for size
 echo "=== Image Size Comparison ==="
 echo ""
 echo "Legacy (python:3.11-buster):"
-LEGACY_LAYERS=$(skopeo inspect --tls-verify=false \
-  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable 2>/dev/null)
-echo "$LEGACY_LAYERS" | python3 -c "
+skopeo inspect --tls-verify=false \
+  --creds="${REGISTRY_USER}:${REGISTRY_PASSWORD}" \
+  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable 2>/dev/null | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-layers = d.get('Layers', d.get('LayersData', []))
-print(f'  Layers: {len(layers)}')
-print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+try:
+    d = json.load(sys.stdin)
+    layers = d.get('Layers', d.get('LayersData', []))
+    print(f'  Layers: {len(layers)}')
+    print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+except (json.JSONDecodeError, KeyError):
+    print('  (inspect failed -- check registry credentials)')
 "
 
 echo ""
 echo "Fortress (Hummingbird distroless):"
-FORTRESS_LAYERS=$(skopeo inspect --tls-verify=false \
-  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve 2>/dev/null)
-echo "$FORTRESS_LAYERS" | python3 -c "
+skopeo inspect --tls-verify=false \
+  --creds="${REGISTRY_USER}:${REGISTRY_PASSWORD}" \
+  docker://${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve 2>/dev/null | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-layers = d.get('Layers', d.get('LayersData', []))
-print(f'  Layers: {len(layers)}')
-print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+try:
+    d = json.load(sys.stdin)
+    layers = d.get('Layers', d.get('LayersData', []))
+    print(f'  Layers: {len(layers)}')
+    print(f'  Created: {d.get(\"Created\", \"N/A\")[:19]}')
+except (json.JSONDecodeError, KeyError):
+    print('  (inspect failed -- check registry credentials)')
 "
 ----
 
