@@ -17,6 +17,9 @@ rules:
     resources: ["secrets", "serviceaccounts"]
     verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
     resources: ["routes"]
     verbs: ["get", "list"]
   - apiGroups: ["route.openshift.io"]
@@ -67,6 +70,12 @@ spec:
               value: "workshoppass123"
             - name: REGISTRY_EMAIL
               value: "workshop@example.com"
+            - name: NUM_USERS
+              value: "3"
+            - name: USER_PREFIX
+              value: "lab-user"
+            - name: USER_PASSWORD
+              value: "openshift"
           command:
             - /bin/bash
             - -c
@@ -217,6 +226,63 @@ spec:
                   echo "  Use: username=${REGISTRY_USER}  password=${REGISTRY_PASSWORD}"
               fi
 
+              # Create per-user Quay accounts via DB (if NUM_USERS > 0)
+              if [ "${NUM_USERS}" -gt 0 ]; then
+                  echo "[6/7] Creating ${NUM_USERS} per-user Quay accounts..."
+                  QUAY_APP_POD=$(oc get pods -n "${QUAY_NAMESPACE}" -l quay-component=quay-app \
+                      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                  QUAY_DB_POD=$(oc get pods -n "${QUAY_NAMESPACE}" -l quay-component=postgres \
+                      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+                  if [ -n "${QUAY_APP_POD}" ] && [ -n "${QUAY_DB_POD}" ]; then
+                      BCRYPT_HASH=$(oc exec -n "${QUAY_NAMESPACE}" "${QUAY_APP_POD}" -- \
+                          python3 -c "import bcrypt; print(bcrypt.hashpw(b'${USER_PASSWORD}', bcrypt.gensalt(rounds=12)).decode())" 2>/dev/null || true)
+
+                      if [ -n "${BCRYPT_HASH}" ]; then
+                          QUAY_DB_USER=$(oc get pods -n "${QUAY_NAMESPACE}" "${QUAY_DB_POD}" \
+                              -o jsonpath='{.spec.containers[0].env[?(@.name=="POSTGRESQL_USER")].value}' 2>/dev/null || echo "quay-registry-quay-database")
+                          QUAY_DB_NAME="${QUAY_DB_USER}"
+
+                          for N in $(seq 1 "${NUM_USERS}"); do
+                              USERNAME="${USER_PREFIX}-${N}"
+                              USER_EMAIL="${USERNAME}@demo.redhat.com"
+                              USER_UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-${N}")
+                              echo "  Creating Quay user: ${USERNAME}"
+                              oc exec -n "${QUAY_NAMESPACE}" "${QUAY_DB_POD}" -- \
+                                  psql -U "${QUAY_DB_USER}" -d "${QUAY_DB_NAME}" -c \
+                                  "INSERT INTO \"user\" (uuid, username, password_hash, email, verified, organization, robot, invoice_email, invalid_login_attempts, last_invalid_login, removed_tag_expiration_s, enabled, creation_date)
+                                   VALUES ('${USER_UUID}', '${USERNAME}', '${BCRYPT_HASH}', '${USER_EMAIL}', true, false, false, false, 0, '1970-01-01 00:00:00', 1209600, true, now())
+                                   ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, verified = true, organization = false, enabled = true;" \
+                                  2>/dev/null && echo "    ${USERNAME}: OK" || echo "    ${USERNAME}: WARN - check manually"
+
+                              oc delete secret "registry-credentials-${USERNAME}" -n "${BUILDS_NAMESPACE}" 2>/dev/null || true
+                              oc create secret docker-registry "registry-credentials-${USERNAME}" \
+                                  --docker-server="${QUAY_ROUTE}" \
+                                  --docker-username="${USERNAME}" \
+                                  --docker-password="${USER_PASSWORD}" \
+                                  -n "${BUILDS_NAMESPACE}" 2>/dev/null || true
+                              if oc get sa pipeline -n "${BUILDS_NAMESPACE}" > /dev/null 2>&1; then
+                                  oc secrets link pipeline "registry-credentials-${USERNAME}" --for=pull,mount -n "${BUILDS_NAMESPACE}" 2>/dev/null || true
+                              fi
+                          done
+                      else
+                          echo "  WARNING: Could not generate bcrypt hash. Per-user accounts not created."
+                      fi
+                  else
+                      echo "  WARNING: Quay app or DB pod not found. Per-user accounts not created."
+                  fi
+              fi
+
+              echo "[7/7] Verifying registry credentials..."
+              AUTH_CHECK=$(echo -n "${REGISTRY_USER}:${REGISTRY_PASSWORD}" | base64)
+              VERIFY_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+                  "https://${QUAY_ROUTE}/v2/" \
+                  -H "Authorization: Basic ${AUTH_CHECK}" 2>/dev/null || echo "000")
+              echo "  Superuser auth check: HTTP ${VERIFY_CODE}"
+
               echo "=== Quay Post-Configuration Complete ==="
               echo "  Registry: ${QUAY_ROUTE}"
-              echo "  User: ${REGISTRY_USER}"
+              echo "  Superuser: ${REGISTRY_USER}"
+              if [ "${NUM_USERS}" -gt 0 ]; then
+                  echo "  Per-user accounts: ${USER_PREFIX}-1 through ${USER_PREFIX}-${NUM_USERS}"
+              fi

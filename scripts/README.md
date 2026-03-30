@@ -1,6 +1,50 @@
+# Workshop Scripts
+
+This directory contains automation scripts for workshop deployment and management.
+
+## Workshop User Setup
+
+### `setup-workshop-users.sh`
+
+Creates per-user workshop environments with unified identity across all services (OpenShift, Quay, Gitea, Keycloak).
+
+**Quick start:**
+```bash
+NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
+```
+
+**What it does per user:**
+1. Creates Keycloak SSO user for OpenShift login
+2. Creates per-user build namespace (`hummingbird-builds-lab-user-N`)
+3. Grants admin RBAC on shared + per-user + renovate-pipelines namespaces
+4. Configures privileged SCC for pipeline/default ServiceAccounts
+5. Creates Quay user account (via DB) + registry-credentials secret
+6. Grants self-provisioner, workshop-participant ClusterRole, infra namespace view
+7. Grants ACS secret reader, fixes Gitea must-change-password
+8. Optionally deploys per-user Showroom instance with embedded terminal
+9. Writes all credentials/URLs to `workshop-users-access.txt`
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `NUM_USERS` | `1` | Number of users to create |
+| `USER_PREFIX` | `lab-user` | Username prefix (users: `<prefix>-1`, `<prefix>-2`, ...) |
+| `PASSWORD` | `openshift` | Password for all users (all services) |
+| `DEPLOY_SHOWROOM` | `false` | Deploy per-user Showroom instances |
+| `SHOWROOM_REPO` | fork URL | Git repo for Showroom content |
+| `SHOWROOM_BRANCH` | `main` | Git branch for Showroom content |
+| `SKIP_KEYCLOAK` | `false` | Skip Keycloak user creation |
+| `BUILDS_NS` | `hummingbird-builds` | Shared builds namespace |
+| `QUAY_NAMESPACE` | `quay` | Quay namespace |
+
+The script is **idempotent** -- safe to re-run to add more users or repair state.
+
+---
+
 # Registry Management Scripts
 
-This directory contains automation scripts for managing container registry references throughout the project.
+This directory also contains automation scripts for managing container registry references throughout the project.
 
 ## Overview
 
