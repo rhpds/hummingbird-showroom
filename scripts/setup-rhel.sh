@@ -65,13 +65,12 @@ rm /tmp/quarkus.sh
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
 curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/mod1-review/scripts/test-fips.py
 echo "=== Step 5: Scaffolding Quarkus project ==="
-quarkus create app com.example:sample-app \
+su -l rhel -c "quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
-    --no-code
-cd sample-app
+    --no-code"
 
 echo "=== Updating .dockerignore ==="
-cat > .dockerignore << 'EOF'
+cat > /home/rhel/sample-app/.dockerignore << 'EOF'
 target/
 .git/
 .gitignore
@@ -80,13 +79,13 @@ README.md
 EOF
 
 echo "=== Fixing file permissions ==="
-chmod -R a+rX .mvn/ src/
-chmod a+r pom.xml
-chmod a+x mvnw
+chmod -R a+rX /home/rhel/sample-app/.mvn/ /home/rhel/sample-app/src/
+chmod a+r /home/rhel/sample-app/pom.xml
+chmod a+x /home/rhel/sample-app/mvnw
 
 echo "=== Creating GreetingResource.java ==="
-mkdir -p src/main/java/com/example
-cat > src/main/java/com/example/GreetingResource.java << 'EOF'
+mkdir -p /home/rhel/sample-app/src/main/java/com/example
+cat > /home/rhel/sample-app/src/main/java/com/example/GreetingResource.java << 'EOF'
 package com.example;
 
 import jakarta.ws.rs.GET;
@@ -123,14 +122,14 @@ public class GreetingResource {
 EOF
 
 echo "=== Configuring application.properties ==="
-cat > src/main/resources/application.properties << 'EOF'
+cat > /home/rhel/sample-app/src/main/resources/application.properties << 'EOF'
 quarkus.http.host=0.0.0.0
 quarkus.http.port=8080
 EOF
 
 echo "=== Creating UBI comparison image ==="
 # Create Containerfile.ubi for comparison
-cat > ~/sample-app/Containerfile.ubi << EOF
+cat > /home/rhel/sample-app/Containerfile.ubi << EOF
 FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
 USER root
 RUN microdnf install -y unzip && microdnf clean all
@@ -148,18 +147,18 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 # Build UBI-only version for comparison
-podman build -f ~/sample-app/Containerfile.ubi -t hummingbird-demo:ubi ~/sample-app
+podman build -f /home/rhel/sample-app/Containerfile.ubi -t hummingbird-demo:ubi /home/rhel/sample-app
 echo "✅ UBI comparison image built successfully"
 
 echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
 
 echo "Creating host directories for bind mounts..."
-sudo mkdir -p /opt/myapp/config /opt/myapp/logs
-sudo chown -R $(id -u):$(id -g) /opt/myapp
+mkdir -p /opt/myapp/config /opt/myapp/logs
+chown -R $(id -u):$(id -g) /opt/myapp
 
 echo "Setting SELinux context for container file access..."
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?" || echo "Context may already exist"
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?" || echo "Context may already exist"
-sudo restorecon -Rv /opt/myapp
+semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?" || echo "Context may already exist"
+semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?" || echo "Context may already exist"
+restorecon -Rv /opt/myapp
 
 chown -R rhel:rhel /home/rhel/
