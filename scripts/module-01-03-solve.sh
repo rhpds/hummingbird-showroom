@@ -29,8 +29,16 @@ echo "=== Step 1: Certificate Authority Bundle Management ==="
 # Ensure webserver directory exists
 mkdir -p ~/webserver
 
-echo "Using pre-created Caddyfile and Containerfile..."
+echo "Using pre-created Caddyfile..."
 echo "Caddyfile and webserver files already created by setup script"
+
+echo "Creating SSL Containerfile..."
+cat > ~/webserver/Containerfile << EOF
+FROM ${HUMMINGBIRD_REGISTRY}/caddy:latest
+COPY Caddyfile /etc/caddy/Caddyfile
+
+COPY index.html /usr/share/caddy/
+EOF
 
 echo "Building and running SSL-enabled Caddy server..."
 podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
