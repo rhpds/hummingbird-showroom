@@ -154,7 +154,7 @@ echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
 
 echo "Creating host directories for bind mounts..."
 mkdir -p /opt/myapp/config /opt/myapp/logs
-chown -R $(id -u):$(id -g) /opt/myapp
+chown -R rhel:rhel /opt/myapp
 
 echo "Setting SELinux context for container file access..."
 semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?" || echo "Context may already exist"
