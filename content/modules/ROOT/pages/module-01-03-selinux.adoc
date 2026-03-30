@@ -382,41 +382,9 @@ udica --version
 
 We'll generate a custom SELinux policy for the `hummingbird-demo:v1` application built in Sub-Module 1.1, this time with **bind-mounted host directories** for configuration and logs. This is where udica provides the most value -- the default `container_t` policy doesn't know about your specific mount points.
 
-=== Step 14: Prepare Host Directories
+=== Step 14: Examine Pre-Configured Host Directories
 
-Create the directories on the host, set ownership for rootless Podman, and label them so SELinux knows containers should be allowed to access them:
-
-[source,bash,role=execute]
-----
-sudo mkdir -p /opt/myapp/config /opt/myapp/logs
-----
-
-[source,bash,role=execute]
-----
-sudo chown -R $(id -u):$(id -g) /opt/myapp
-----
-
-[source,bash,role=execute]
-----
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?"
-----
-
-[source,bash,role=execute]
-----
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?"
-----
-
-[source,bash,role=execute]
-----
-sudo restorecon -Rv /opt/myapp
-----
-
-[NOTE]
-====
-The `chown` is required because rootless Podman cannot relabel (`Z` flag) or access directories owned by root. By assigning ownership to the current user, the `:Z` volume flag in the next step will work correctly.
-====
-
-Confirm the labels were applied:
+Host directories for bind mounts have been pre-configured with proper SELinux contexts. Let's examine the setup:
 
 [source,bash,role=execute]
 ----
@@ -557,6 +525,7 @@ sudo semanage port -l | grep http_cache
 .*Expected output:*
 ----
 http_cache_port_t    tcp    8080, 8118, 8123, 10001-10010
+http_cache_port_t    udp    3130
 ----
 
 [[load-and-apply-policy]]
