@@ -322,4 +322,8 @@ EOF
 
 echo "✅ Exercise files created successfully"
 
+curl -o /home/rhel/mod1.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-01-solve.sh
+curl -o /home/rhel/mod2.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-02-solve.sh
+curl -o /home/rhel/mod3.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-03-solve.sh
+
 chown -R rhel:rhel /home/rhel/
