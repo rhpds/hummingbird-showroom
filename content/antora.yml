@@ -21,6 +21,11 @@ asciidoc:
     rhel9-version: '9.5'
     rhel10-version: '10.0'
 
+    # Security tools versions (from setup script)
+    cosign-version: 'v2.4.1'
+    syft-version: 'v1.42.2'
+    grype-version: 'v0.109.1'
+
     # Module 2 - Platform Engineering
     lab2-duration: '30 minutes'
     lab2-audience: 'Platform Engineers / DevOps (Intermediate to Advanced)'

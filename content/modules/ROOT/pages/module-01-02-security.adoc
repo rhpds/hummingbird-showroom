@@ -12,6 +12,11 @@
 * Compare hardened Images vs UBI 
 --
 
+[IMPORTANT]
+====
+This workshop environment has been optimized for learning efficiency. Required tools (cosign {cosign-version}, syft {syft-version}, grype {grype-version}), directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
+====
+
 [[introduction]]
 == Introduction
 
@@ -74,6 +79,17 @@ We've worked with several different vendors to ensure our CVE feeds are availabl
 
 Grype scans container images for known CVEs.
 Syft generates Software Bill of Materials (SBOMs) from container images.
+
+[NOTE]
+====
+Security scanning tools have been pre-installed in this environment:
+
+* cosign {cosign-version} - For image signing and verification
+* syft {syft-version} - For SBOM generation  
+* grype {grype-version} - For vulnerability scanning (database pre-updated)
+
+Let's verify they're ready:
+====
 
 [source,bash,role=execute]
 ----

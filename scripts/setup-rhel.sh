@@ -63,7 +63,7 @@ su -l rhel -c /tmp/quarkus.sh
 rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
-curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/mod1-review/scripts/test-fips.py
+curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/main/scripts/test-fips.py
 echo "=== Step 5: Scaffolding Quarkus project ==="
 su -l rhel -c "quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
