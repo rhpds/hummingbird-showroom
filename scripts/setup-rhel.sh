@@ -147,7 +147,7 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 # Build UBI-only version for comparison
-podman build -f /home/rhel/sample-app/Containerfile.ubi -t hummingbird-demo:ubi /home/rhel/sample-app
+su -l rhel -c "podman build -f /home/rhel/sample-app/Containerfile.ubi -t hummingbird-demo:ubi /home/rhel/sample-app"
 echo "✅ UBI comparison image built successfully"
 
 echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
