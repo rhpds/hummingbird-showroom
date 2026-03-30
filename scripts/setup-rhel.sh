@@ -130,7 +130,7 @@ EOF
 echo "=== Creating UBI comparison image ==="
 # Create Containerfile.ubi for comparison
 cat > /home/rhel/sample-app/Containerfile.ubi << EOF
-FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
+FROM registry.access.redhat.com/ubi9/openjdk-21:latest
 USER root
 RUN microdnf install -y unzip && microdnf clean all
 WORKDIR /build
