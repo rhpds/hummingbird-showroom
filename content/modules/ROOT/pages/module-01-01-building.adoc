@@ -189,7 +189,14 @@ Flask architecture patterns demonstrated:
 * **Development Server**: Built-in Flask server for testing and development
 * **Container Configuration**: Host binding on `0.0.0.0` for container access on port 8080
 
-The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later. The `index.html` file has already been copied from the webserver example.
+The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later. 
+
+
+Copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
+[source,bash,role=execute]
+----
+cp ~/webserver/index.html ~/flask/
+----
 
 We'll ship this application in two ways to explore some differences between the typical container build and one with a hardened image.
 

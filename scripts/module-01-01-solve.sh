@@ -62,10 +62,8 @@ podman run --rm --net=host ${HUMMINGBIRD_REGISTRY}/curl:latest http://localhost:
 podman stop webserver
 
 echo "=== Step 2: Using pre-created Flask application ==="
-echo "Flask app and index.html already created by setup script"
+cp ~/webserver/index.html ~/flask/
 
-echo "=== Step 3: Using pre-created UBI Flask Containerfile ==="
-echo "UBI Containerfile already created by setup script"
 
 echo "=== Building UBI Flask version ==="
 podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
