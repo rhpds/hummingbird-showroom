@@ -64,5 +64,102 @@ rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
 curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/zero-cve-hummingbird-showroom/refs/heads/mod1-review/scripts/test-fips.py
+echo "=== Step 5: Scaffolding Quarkus project ==="
+quarkus create app com.example:sample-app \
+    --extension='rest,rest-jackson' \
+    --no-code
+cd sample-app
+
+echo "=== Updating .dockerignore ==="
+cat > .dockerignore << 'EOF'
+target/
+.git/
+.gitignore
+README.md
+*.cmd
+EOF
+
+echo "=== Fixing file permissions ==="
+chmod -R a+rX .mvn/ src/
+chmod a+r pom.xml
+chmod a+x mvnw
+
+echo "=== Creating GreetingResource.java ==="
+mkdir -p src/main/java/com/example
+cat > src/main/java/com/example/GreetingResource.java << 'EOF'
+package com.example;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+@Path("/")
+public class GreetingResource {
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, String> hello() {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("message", "Hello from Hummingbird!");
+        response.put("runtime", "Java " + System.getProperty("java.version"));
+        response.put("platform", System.getProperty("os.name").toLowerCase());
+        response.put("timestamp", Instant.now().toString());
+        return response;
+    }
+
+    @GET
+    @Path("/health")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Map<String, String> health() {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("status", "healthy");
+        return response;
+    }
+}
+EOF
+
+echo "=== Configuring application.properties ==="
+cat > src/main/resources/application.properties << 'EOF'
+quarkus.http.host=0.0.0.0
+quarkus.http.port=8080
+EOF
+
+echo "=== Creating UBI comparison image ==="
+# Create Containerfile.ubi for comparison
+cat > ~/sample-app/Containerfile.ubi << EOF
+FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
+USER root
+RUN microdnf install -y unzip && microdnf clean all
+WORKDIR /build
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+RUN ./mvnw dependency:go-offline -B
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+WORKDIR /app
+RUN cp -r /build/target/quarkus-app/* /app/
+EXPOSE 8080
+USER 1001
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+EOF
+
+# Build UBI-only version for comparison
+podman build -f ~/sample-app/Containerfile.ubi -t hummingbird-demo:ubi ~/sample-app
+echo "✅ UBI comparison image built successfully"
+
+echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
+
+echo "Creating host directories for bind mounts..."
+sudo mkdir -p /opt/myapp/config /opt/myapp/logs
+sudo chown -R $(id -u):$(id -g) /opt/myapp
+
+echo "Setting SELinux context for container file access..."
+sudo semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?" || echo "Context may already exist"
+sudo semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?" || echo "Context may already exist"
+sudo restorecon -Rv /opt/myapp
 
 chown -R rhel:rhel /home/rhel/
