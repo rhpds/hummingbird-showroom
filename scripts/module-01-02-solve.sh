@@ -42,10 +42,6 @@ USER 1001
 ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
-# Build UBI-only version for comparison
-podman build -f ~/sample-app/Containerfile.ubi -t hummingbird-demo:ubi ~/sample-app
-echo "✅ UBI comparison image built successfully"
-
 echo "=== Viewing image comparison ==="
 podman images hummingbird-demo
 

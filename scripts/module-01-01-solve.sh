@@ -12,8 +12,6 @@ HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
 UBI_REGISTRY="registry.access.redhat.com"
 
 
-
-
 echo "=== Step 1: Create a simple index.html ==="
 mkdir -p ~/webserver
 cat  > ~/webserver/index.html << 'EOF'
@@ -229,72 +227,8 @@ podman stop flask-demo
 echo "=== Comparing Flask image sizes ==="
 podman images my-flasksite
 
-echo "=== Step 5: Scaffolding Quarkus project ==="
-quarkus create app com.example:sample-app \
-    --extension='rest,rest-jackson' \
-    --no-code
-cd sample-app
-
-echo "=== Updating .dockerignore ==="
-cat > .dockerignore << 'EOF'
-target/
-.git/
-.gitignore
-README.md
-*.cmd
-EOF
-
-echo "=== Fixing file permissions ==="
-chmod -R a+rX .mvn/ src/
-chmod a+r pom.xml
-chmod a+x mvnw
-
-echo "=== Creating GreetingResource.java ==="
-mkdir -p src/main/java/com/example
-cat > src/main/java/com/example/GreetingResource.java << 'EOF'
-package com.example;
-
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.core.MediaType;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
-
-@Path("/")
-public class GreetingResource {
-
-    @GET
-    @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, String> hello() {
-        Map<String, String> response = new LinkedHashMap<>();
-        response.put("message", "Hello from Hummingbird!");
-        response.put("runtime", "Java " + System.getProperty("java.version"));
-        response.put("platform", System.getProperty("os.name").toLowerCase());
-        response.put("timestamp", Instant.now().toString());
-        return response;
-    }
-
-    @GET
-    @Path("/health")
-    @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, String> health() {
-        Map<String, String> response = new LinkedHashMap<>();
-        response.put("status", "healthy");
-        return response;
-    }
-}
-EOF
-
-echo "=== Configuring application.properties ==="
-cat > src/main/resources/application.properties << 'EOF'
-quarkus.http.host=0.0.0.0
-quarkus.http.port=8080
-EOF
-
 echo "=== Creating multi-stage Containerfile ==="
-cat > Containerfile << EOF
+cat > ~/sample-app/Containerfile << EOF
 # Multi-stage build: builder -> runtime
 
 # ============================================
