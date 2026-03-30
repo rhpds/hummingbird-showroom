@@ -23,24 +23,8 @@ echo "=== Verifying grype and syft installation ==="
 grype version
 syft version
 
-echo "=== Creating UBI comparison image ==="
-# Create Containerfile.ubi for comparison
-cat > ~/sample-app/Containerfile.ubi << EOF
-FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
-USER root
-RUN microdnf install -y unzip && microdnf clean all
-WORKDIR /build
-COPY mvnw pom.xml ./
-COPY .mvn ./.mvn
-RUN ./mvnw dependency:go-offline -B
-COPY src ./src
-RUN ./mvnw package -DskipTests -B
-WORKDIR /app
-RUN cp -r /build/target/quarkus-app/* /app/
-EXPOSE 8080
-USER 1001
-ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-EOF
+echo "=== Using pre-created UBI comparison image ==="
+echo "UBI Containerfile already created by setup script"
 
 echo "=== Viewing image comparison ==="
 podman images hummingbird-demo

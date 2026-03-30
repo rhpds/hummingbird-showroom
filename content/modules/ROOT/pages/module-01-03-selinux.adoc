@@ -32,11 +32,17 @@ One of the common things developers need to deal with is custom SSL certificates
 
 For this lab, we'll rely on Caddy's built in TLS support. We can activate this with a custom Caddyfile, enabling the default SSL port and using the `internal` directive to turn on it's CA. We can rebuild our previous caddy-server with this new configuration and rebuild the image.
 
-=== Step 1: Create Caddyfile with TLS
+=== Step 1: Examine SSL Configuration
+
+A Caddy configuration with TLS support has been pre-created. Let's examine how SSL is configured:
 
 [source,bash,role=execute]
 ----
-cat  > ~/webserver/Caddyfile << 'EOF'
+cat ~/webserver/Caddyfile
+----
+
+.*Expected output:*
+----
 {
     http_port 8080
     https_port 8443
@@ -47,8 +53,13 @@ localhost {
     root * /usr/share/caddy
     file_server
 }
-EOF
 ----
+
+TLS configuration concepts:
+* **Port Separation**: HTTP (8080) and HTTPS (8443) services on different ports
+* **Internal CA**: Automatic self-signed certificate generation with `tls internal`
+* **File Server**: Static content delivery with SSL protection enabled
+* **Localhost Binding**: Development-friendly localhost certificate
 
 === Step 2: Build SSL-enabled Caddy image
 

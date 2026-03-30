@@ -33,13 +33,17 @@ There are three main categories of images provided in the collection of hardened
 [[services]]
 === Services and tools
 
-=== Step 1: Create a simple index.html
+=== Step 1: Examine Pre-Created Web Content
 
-Let's start by looking at a simple web service with `caddy` and creating a landing page.
+Let's start by examining a professional HTML landing page that has been pre-created to demonstrate web containerization:
 
-[source,bash,role=execute,subs=attributes+]
+[source,bash,role=execute]
 ----
-cat > ~/webserver/index.html << 'EOF'
+cat ~/webserver/index.html
+----
+
+.*Expected output:*
+----
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,8 +74,16 @@ cat > ~/webserver/index.html << 'EOF'
     </div>
 </body>
 
-EOF
+</html>
 ----
+
+Key web technologies demonstrated:
+* **Tailwind CSS**: Modern utility-first CSS framework loaded from CDN
+* **Google Fonts**: Professional typography with Inter font family
+* **Responsive Design**: Mobile-first approach with responsive breakpoints  
+* **Modern HTML5**: Semantic structure with accessibility considerations
+
+This demonstrates modern web development patterns commonly seen in containerized applications.
 
 With our `index.html` ready to serve, we just need a web server. The `caddy` image can be used for this sort of simple testing by running the default container image and passing the directory as a volume mount. 
 
@@ -149,10 +161,15 @@ The `fips` variants include specially validated OpenSSL modules for the enforcem
 ==== Create a simple Python Flask application
 We'll look at how using the UBI Python images you have today differ from the new `default` variant. To do that, we need a Python application to containerize.
 
-Our Flask application will use the development server to serve an HTML file as a static file, which means we'll need to add it to the `static` directory in our Containerfile later.
+A Flask web application has been pre-created for containerization. Let's examine its structure:
+
 [source,bash,role=execute]
 ----
-cat > ~/flask/app.py << 'EOF'
+cat ~/flask/app.py
+----
+
+.*Expected output:*
+----
 from flask import Flask
 
 app = Flask(__name__,)
@@ -164,15 +181,15 @@ def index():
 if __name__ == "__main__":
     # Listen on all interfaces (0.0.0.0) on port 8080
     app.run(host="0.0.0.0", port=8080)
-
-EOF
 ----
 
-Then, copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
-[source,bash,role=execute]
-----
-cp ~/webserver/index.html ~/flask/
-----
+Flask architecture patterns demonstrated:
+* **Route Decorators**: URL mapping with `@app.route("/")` for the root path
+* **Static File Serving**: HTML delivery via `send_static_file()` method
+* **Development Server**: Built-in Flask server for testing and development
+* **Container Configuration**: Host binding on `0.0.0.0` for container access on port 8080
+
+The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later. The `index.html` file has already been copied from the webserver example.
 
 We'll ship this application in two ways to explore some differences between the typical container build and one with a hardened image.
 
@@ -182,20 +199,28 @@ Hardened images are what's called 'distroless' images. These styles of images ar
 
 Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
 
+[NOTE]
+====
+A UBI comparison Containerfile has been pre-created. Let's examine the traditional approach:
+====
+
 [source,bash,role=execute]
 ----
-# Create a UBI single stage Containerfile
-cat > ~/flask/Containerfile.ubi << 'EOF'
+cat ~/flask/Containerfile.ubi
+----
+
+.*Expected output:*
+----
 # Stage 1: Base Image from Red Hat UBI
-FROM registry.access.redhat.com/ubi9/ubi
+FROM {ubi-registry}/ubi
 
 # Install pip to manage application dependencies
-RUN dnf -y install python3-pip && dnf clean all #<.>
+RUN dnf -y install python3-pip && dnf clean all
 
-# Create a non-root user and group for the application #<.>
-# Pick a UID/GID to avoid conflict with existing users in the base image.
+# Create a non-root user and group for the application
+# Using a different UID/GID to avoid conflict with existing users in the base image.
 RUN groupadd -r -g 1005 appgroup && \
-    useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser 
+    useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser
 
 # Set the working directory in the container
 WORKDIR /app
@@ -210,27 +235,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # Install application dependencies
-USER root #<.>
-RUN python3 -m pip install --extra-index-url http://localhost:8000 flask  #<.>
+USER root
+RUN python3 -m pip install --extra-index-url http://localhost:8000 flask
 
 # Switch to the non-root user for runtime 
-USER appuser #<.>
+USER appuser
 
 # Expose the port Flask will listen on
 EXPOSE 8080
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
-STOPSIGNAL SIGINT #<.>
+STOPSIGNAL SIGINT
 ENTRYPOINT ["python3", "./app.py"]
-
-EOF
 ----
-<.> Use `dnf` to install RHEL packaged `pip` for installing dependencies
-<.> Create a application user that isn't `root` 
-<.> Install globally as `root` to skip creating a virtual environment
-<.> Use `--index-url` to use our local artifact repository
-<.> Reset the USER with the provided ENV variable
-<.> Standard non-init container configuration
+
+UBI characteristics vs. hardened images:
+* **Full Distribution**: Complete package manager (`dnf`) and shell access
+* **User Management**: Manual user/group creation required (`groupadd`, `useradd`)
+* **Package Installation**: Traditional `dnf install` approach for dependencies
+* **Size Impact**: Larger attack surface and image size due to complete OS
+* **Flexibility**: More tools available but increased complexity
 
 [NOTE]
 ====
@@ -421,26 +445,32 @@ The first stage will use the `builder` variant of the `openjdk-21` image. This p
 Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
 Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
 
-=== Step 5: Create Multi-Stage Containerfile
+=== Step 5: Examine Multi-Stage Containerfile
 
-[source,bash,role=execute,subs=attributes+]
+A production-ready multi-stage Containerfile demonstrates advanced container patterns. Let's examine its structure:
+
+[source,bash,role=execute]
 ----
-cat > ~/sample-app/Containerfile << 'EOF'
+cat ~/sample-app/Containerfile
+----
+
+.*Expected output:*
+----
 # Multi-stage build: builder -> runtime
 
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM {hummingbird-registry}/openjdk:21-builder AS builder # <1>
+FROM {hummingbird-registry}/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
-RUN dnf install -y unzip && dnf clean all # <2>
+RUN dnf install -y unzip && dnf clean all
 
 WORKDIR /build
 
 # Copy Maven wrapper and dependency manifest first (layer cache)
-COPY mvnw pom.xml ./ # <3>
+COPY mvnw pom.xml ./
 COPY .mvn ./.mvn
 
 # Download dependencies (cached unless pom.xml changes)
@@ -453,18 +483,18 @@ RUN ./mvnw package -DskipTests -B
 # ============================================
 # Stage 2: Runtime stage 
 # ============================================
-FROM {hummingbird-registry}/openjdk:21-runtime #<1>
+FROM {hummingbird-registry}/openjdk:21-runtime
 
 WORKDIR /app
 
 # Copy the Quarkus fast-jar layout
-COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/ # <4>
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 # Run as non-root user
-USER 65532 # <5>
+USER 65532
 
 # Expose port
 EXPOSE 8080
@@ -474,16 +504,32 @@ ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
 
 # Start application
 ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-EOF
 ----
 
-.*Key Points in this Containerfile:*
+[source,bash,role=execute]
+----
+grep -E "(FROM|COPY --from)" ~/sample-app/Containerfile
+----
 
-<.> **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
-<.> **Unzip Installation**: The OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
-<.> **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
-<.> **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup, we only copy those files from the first stage into the final image.
-<.> **Security**: Non-root user (65532), proper file ownership with `--chown`
+.*Expected output:*
+----
+FROM {hummingbird-registry}/openjdk:21-builder AS builder
+FROM {hummingbird-registry}/openjdk:21-runtime
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
+----
+
+Multi-stage build architecture concepts:
+
+* **Builder Stage**: Uses `openjdk:21-builder` with full JDK + Maven for compilation
+* **Runtime Stage**: Uses `openjdk:21-runtime` with minimal JRE for deployment
+* **Layer Optimization**: Dependencies copied separately from source for efficient rebuilds
+* **Security Patterns**: Non-root user (65532), proper file ownership with `--chown`
+* **Quarkus Fast-JAR**: Optimized startup performance layout with separated `lib/`, `app/`, `quarkus/` directories
+* **Build Tools**: Includes `unzip` installation for Maven wrapper functionality
+* **Environment Configuration**: JVM tuning for container deployment
 
 **Image Naming**: Hardened images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
 
@@ -506,7 +552,7 @@ The first build downloads Maven dependencies and may take 3-5 minutes. Subsequen
 
 .*Expected output (excerpt):*
 ----
-[1/2] STEP 1/9: FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS builder
+[1/2] STEP 1/9: FROM {ubi-registry}/openjdk-21:latest AS builder
 [1/2] STEP 2/9: USER root
 [1/2] STEP 3/9: RUN microdnf install -y unzip && microdnf clean all
 [1/2] STEP 4/9: WORKDIR /build
@@ -514,7 +560,7 @@ The first build downloads Maven dependencies and may take 3-5 minutes. Subsequen
 ...
 [INFO] BUILD SUCCESS
 ...
-[2/2] STEP 1/10: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+[2/2] STEP 1/10: FROM {hummingbird-registry}/openjdk:21-runtime
 ...
 [2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 COMMIT hummingbird-demo:v1
@@ -654,7 +700,7 @@ podman run --rm hummingbird-demo:v1 java -version
 [source,bash]
 ----
 # Run builder stage interactively to debug
-podman run --rm -it registry.access.redhat.com/ubi9/openjdk-21:latest bash
+podman run --rm -it {ubi-registry}/openjdk-21:latest bash
 
 # Verify Maven wrapper is executable
 ls -la mvnw
