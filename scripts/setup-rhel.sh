@@ -1,5 +1,5 @@
 #! /bin/bash
-dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
+# dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
 
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
