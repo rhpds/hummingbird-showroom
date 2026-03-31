@@ -3,16 +3,21 @@
 .*Sub-Module Overview*
 [sidebar]
 --
-*Duration:* ~15 minutes +
+*Duration:* 20 minutes +
 *Learning Objectives:*
 
 * Basics of hardened images
 * Comparison with existing images
-* Create a sample Quarkus REST application
+* Examine a sample Quarkus REST application
 * Write multi-stage Containerfiles with builder + runtime
 * Build minimal container images using Podman
 * Test and verify built applications
 --
+
+[IMPORTANT]
+====
+This workshop environment has been optimized for learning efficiency. Required tools, directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
+====
 
 [[introduction]]
 == Introduction
@@ -28,13 +33,17 @@ There are three main categories of images provided in the collection of hardened
 [[services]]
 === Services and tools
 
-=== Step 1: Create a simple index.html
+=== Step 1: Examine Pre-Created Web Content
 
-Let's start by looking at a simple web service with `caddy` and creating a landing page.
+Let's start by examining a basic HTML landing page that has been created for use in our examples.
 
-[source,bash,role=execute,subs=attributes+]
+[source,bash,role=execute]
 ----
-cat > ~/webserver/index.html << 'EOF'
+cat ~/webserver/index.html
+----
+
+.*Expected output:*
+----
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,10 +74,12 @@ cat > ~/webserver/index.html << 'EOF'
     </div>
 </body>
 
-EOF
+</html>
 ----
 
-With our `index.html` ready to serve, we just need a web server. The `caddy` image can be used for this sort of simple testing by running the default container image and passing the directory as a volume mount. 
+This is a straightforward page, with a little CSS and font prettification, nothing complex.
+
+With our `index.html` ready to serve, we need a web server. There are several available, and `caddy` image can be used for this sort of simple testing by running the default container image and passing the `webserver` directory as a volume mount. 
 
 [source,bash,role=execute,subs=attributes+]
 ----
@@ -78,11 +89,13 @@ podman run -d --rm --name caddy-server \
   {hummingbird-registry}/caddy:latest
 ----
 
+Check to see if `caddy` is serving the file we just looked at.
 [source,bash,role=execute]
 ----
 curl http://localhost:8080
 ----
 
+For now, stop the `caddy` server.
 [source,bash,role=execute]
 ----
 podman stop caddy-server
@@ -99,8 +112,9 @@ COPY index.html /usr/share/caddy/
 EOF
 ----
 
-We can simply add the content to be served to the default Caddy location and create the final container. If we needed more complex Caddy configurations, we can also create and add a custom Caddyfile to override the defaults in the image.
+This `Containerfile` simply adds the content to be served to the default Caddy location to create the final container. If we needed more complex Caddy configurations, we can also create and add a custom Caddyfile to override the defaults in the image. We'll revisit that in a later exercise.
 
+Build and run the new image
 [source,bash,role=execute]
 ----
 podman build -t my-website -f ~/webserver/Containerfile ~/webserver
@@ -111,6 +125,7 @@ podman build -t my-website -f ~/webserver/Containerfile ~/webserver
 podman run -d --rm --name webserver -p 8080:8080 my-website
 ----
 
+Check the new webserver still serves the file we expect
 [source,bash,role=execute]
 ----
 curl http://localhost:8080
@@ -126,12 +141,15 @@ In that case we could run the same test as we did with the local package using a
 ----
 podman run --rm --net=host {hummingbird-registry}/curl:latest http://localhost:8080
 ----
+Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of possibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
 
+We should see the same results as the local binary. But these can be useful to reduce the dependency on host customization.
+
+Go head and stop the webserver.
 [source,bash,role=execute]
 ----
 podman stop webserver
 ----
-Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of possibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
 
 Containerized versions of common tools let's us provide a known good, common set of capabilities to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact same tool image instead of requiring local tools.
 We can be sure we've got the right images by verifing the signature with a tool like `cosign`. We'll cover more on that later.
@@ -144,10 +162,15 @@ The `fips` variants include specially validated OpenSSL modules for the enforcem
 ==== Create a simple Python Flask application
 We'll look at how using the UBI Python images you have today differ from the new `default` variant. To do that, we need a Python application to containerize.
 
-Our Flask application will use the development server to serve an HTML file as a static file, which means we'll need to add it to the `static` directory in our Containerfile later.
+A sample Flask application should be available on the system, let's take a look.
+
 [source,bash,role=execute]
 ----
-cat > ~/flask/app.py << 'EOF'
+cat ~/flask/app.py
+----
+
+.*Expected output:*
+----
 from flask import Flask
 
 app = Flask(__name__,)
@@ -159,11 +182,12 @@ def index():
 if __name__ == "__main__":
     # Listen on all interfaces (0.0.0.0) on port 8080
     app.run(host="0.0.0.0", port=8080)
-
-EOF
 ----
 
-Then, copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
+The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later. 
+
+
+Copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
 [source,bash,role=execute]
 ----
 cp ~/webserver/index.html ~/flask/
@@ -177,17 +201,21 @@ Hardened images are what's called 'distroless' images. These styles of images ar
 
 Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
 
+First, lets look at a typical UBI based approach.
 [source,bash,role=execute]
 ----
-# Create a UBI single stage Containerfile
-cat > ~/flask/Containerfile.ubi << 'EOF'
+cat ~/flask/Containerfile.ubi
+----
+
+.*Expected output:*
+----
 # Stage 1: Base Image from Red Hat UBI
-FROM registry.access.redhat.com/ubi9/ubi
+FROM {ubi-registry}/ubi 
 
 # Install pip to manage application dependencies
 RUN dnf -y install python3-pip && dnf clean all #<.>
 
-# Create a non-root user and group for the application
+# Create a non-root user and group for the application #<.>
 # Using a different UID/GID to avoid conflict with existing users in the base image.
 RUN groupadd -r -g 1005 appgroup && \
     useradd -r -u 1005 -g 1005 -d /app -s /sbin/nologin -c "Application User" appuser
@@ -205,28 +233,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # Install application dependencies
-USER root #<.>
-RUN python3 -m pip install --extra-index-url http://localhost:8000 flask  #<.>
+USER root
+RUN python3 -m pip install --extra-index-url http://localhost:8000 flask
 
 # Switch to the non-root user for runtime 
-USER appuser #<.>
+USER appuser
 
 # Expose the port Flask will listen on
 EXPOSE 8080
 
 # Appropriately set the stop signal for the python interpreter executed as PID 1
-STOPSIGNAL SIGINT #<.>
+STOPSIGNAL SIGINT
 ENTRYPOINT ["python3", "./app.py"]
-
-EOF
 ----
-<.> Use `dnf` to install RHEL packaged `pip` for installing dependencies
-<.> Install globally as `root` to skip creating a virtual environment
-<.> Use `--index-url` to use our local artifact repository
-<.> Reset the USER with the provided ENV variable
-<.> Standard non-init container configuration
 
-Since we're using a local PyPi mirror, we need to make sure `podman` uses thecp webserver/index.html flask/ host's networking to access mirror via `localhost`.
+UBI characteristics
+
+<.> **Package Installation**: Traditional `dnf install` approach for dependencies
+<.> **User Management**: Manual user/group creation required (`groupadd`, `useradd`)
+
+A local PyPI server is running on port 8000 to provide Flask dependencies reliably. This mimics enterprise artifact repositories and ensures consistent builds.
+Since we're using a local PyPi mirror, we need to make sure `podman` uses the host's networking to access mirror via `localhost`.
 
 [source,bash,role=execute]
 ----
@@ -240,6 +267,7 @@ Let's do a quick check on our UBI based application and see that we're getting t
 podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:ubi
 ----
 
+Checking with `curl` should show us the same `index.html` as before.
 [source,bash,role=execute]
 ----
 curl http://localhost:8080
@@ -298,6 +326,8 @@ ENTRYPOINT ["python", "./app.py"]
 EOF
 ----
 
+Distroless characteristics:
+
 <.> Change our base image to the hardened `default` image
 <.> Change the user in `COPY` to the provided default UID instead of adding `appuser`
 <.> Reset the USER with the provded ENV variable
@@ -332,6 +362,8 @@ Let's retry the build using the new variant.
 ----
 podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
 ----
+
+That Successfully built, so let's run it and see if we get our `index.html`
 [source,bash,role=execute]
 ----
 podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
@@ -348,7 +380,7 @@ This not only includes the properties, but also the reasoning behind any changes
 
 === Step 3: Examine our two images
 
-List the images just built. Note that the hardened image is just over half the size of the UBI based image. 
+There are some other differences in the packages installed and the tools avaialble. List the images just built. Note that the hardened image is just over half the size of the UBI based image. 
 
 [source,bash,role=execute]
 ----
@@ -361,7 +393,7 @@ REPOSITORY              TAG         IMAGE ID      CREATED            SIZE
 localhost/my-flasksite  hi          7355f3daefdc  About a minute ago  182 MB
 localhost/my-flasksite  ubi         472a6a9ebee8  9 minutes ago       254 MB
 ----
-The hew image is smaller, but we've included everything in the `builder` image in our application, including a shell that we won't want in prodcution.
+The new image is smaller, but we've included everything in the `builder` image in our application, including a shell that we won't want in prodcution.
 
 [source,bash,role=execute]
 ----
@@ -372,7 +404,8 @@ podman exec -it flask-demo /bin/sh -c 'ls -al /app'
 ----
 podman stop flask-demo
 ----
-Let's look at a pattern to ship only the application and avoid adding attack surfaces to our production containers.
+
+How do we remove all of the unnecessary parts? Let's look at a pattern to ship only the application and avoid adding attack surfaces to our production containers.
 
 [[multi-stage]]
 == Multi-stage builds with hardened images
@@ -384,137 +417,24 @@ Multi-stage builds allow you to separate the final application artifacts from bu
 This will combine the use of different variants for different purposes.
 
 [[sample-application]]
-== Create sample Java application
+== Sample Java Application
 
-=== Step 4: Scaffold the Project with Quarkus CLI
+A complete Quarkus REST application has been created to demonstrate multi-stage build patterns. Let's examine the generated structure:
 
-The Quarkus CLI generates the full project structure -- `pom.xml`, Maven wrapper, source directories, and configuration -- in a single command:
-
-[source,bash,role=execute]
-----
-quarkus create app com.example:sample-app \
-    --extension='rest,rest-jackson' \
-    --no-code
-----
-
-.*What `quarkus create app` generates:*
-* `pom.xml` with Quarkus BOM, `quarkus-rest` and `quarkus-rest-jackson` extensions
-* Maven wrapper (`mvnw`, `.mvn/`) for reproducible builds without a system Maven installation
-* `src/main/java/com/example/` and `src/main/resources/` directory structure
-* Default `application.properties`
-* `.gitignore` and `.dockerignore`
-
-The `--no-code` flag tells the CLI to skip generating starter endpoint code so we can write our own.
-
-[TIP]
-====
-Using the Maven wrapper (`./mvnw`) instead of a system `mvn` ensures every developer (and every container build) uses the exact same Maven version, avoiding "works on my machine" issues.
-====
-
-=== Step 5: Prepare Project for Multi-Stage Container Builds
-
-The Quarkus scaffold generates a `.dockerignore` that excludes everything except pre-built artifacts -- this is designed for single-stage builds where you compile locally first. Our multi-stage Containerfile compiles _inside_ the container, so source files must be included in the build context.
+=== Step 4: Examine Pre-Built Application
 
 [source,bash,role=execute]
 ----
-cd sample-app
-----
-Replace the generated `.dockerignore`:
-
-[source,bash,role=execute]
-----
-cat > .dockerignore << 'EOF'
-target/
-.git/
-.gitignore
-README.md
-*.cmd
-EOF
+ls -la ~/sample-app/
 ----
 
-The Quarkus scaffold also generates files with restrictive permissions (600/700) that can cause "Permission denied" errors during container builds. Fix them:
+Feel free to examine the code if you're interested. For our purposes we need to know the application provides two REST endpoints:
 
-[source,bash,role=execute]
-----
-chmod -R a+rX .mvn/ src/
-----
+* `/` - Returns JSON greeting with runtime information  
+* `/health` - Returns application health status for orchestrator probes
 
-[source,bash,role=execute]
-----
-chmod a+r pom.xml
-----
+This application listens on all interfaces (0.0.0.0) port 8080 for container deployment.
 
-[source,bash,role=execute]
-----
-chmod a+x mvnw
-----
-
-[NOTE]
-====
-The Maven wrapper's `distributionSha256Sum` in `.mvn/wrapper/maven-wrapper.properties` may contain an incorrect hash for the Maven version. If you see a "Failed to validate Maven distribution SHA-256" error during the container build, clear the hash:
-
-[source,bash]
-----
-sed -i 's/distributionSha256Sum=.*/distributionSha256Sum=/' .mvn/wrapper/maven-wrapper.properties
-----
-====
-
-=== Step 6: Create Application Resource
-
-[source,bash,role=execute]
-----
-mkdir -p src/main/java/com/example
-cat > src/main/java/com/example/GreetingResource.java << 'EOF'
-package com.example;
-
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.core.MediaType;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.Map;
-
-@Path("/")
-public class GreetingResource {
-
-    @GET
-    @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, String> hello() {
-        Map<String, String> response = new LinkedHashMap<>();
-        response.put("message", "Hello from Hummingbird!");
-        response.put("runtime", "Java " + System.getProperty("java.version"));
-        response.put("platform", System.getProperty("os.name").toLowerCase());
-        response.put("timestamp", Instant.now().toString());
-        return response;
-    }
-
-    @GET
-    @Path("/health")
-    @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, String> health() {
-        Map<String, String> response = new LinkedHashMap<>();
-        response.put("status", "healthy");
-        return response;
-    }
-}
-EOF
-----
-
-=== Step 7: Configure Application Properties
-
-[source,bash,role=execute]
-----
-cat > src/main/resources/application.properties << 'EOF'
-quarkus.http.host=0.0.0.0
-quarkus.http.port=8080
-EOF
-----
-
-[source,bash,role=execute]
-----
-cd ~
-----
 [[multi-stage-containerfile]]
 == Multi-Stage Containerfile
 
@@ -523,29 +443,35 @@ The first stage will use the `builder` variant of the `openjdk-21` image. This p
 Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
 Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
 
-=== Step 8: Create Multi-Stage Containerfile
+=== Step 5: Examine Multi-Stage Containerfile
 
-[source,bash,role=execute,subs=attributes+]
+A multi-stage Containerfile demonstrates a more dvanced container pattern. Let's examine its structure:
+
+[source,bash,role=execute]
 ----
-cat > ~/sample-app/Containerfile << 'EOF'
+cat ~/sample-app/Containerfile
+----
+
+.*Expected output:*
+----
 # Multi-stage build: builder -> runtime
 
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM {hummingbird-registry}/openjdk:21-builder AS builder # <1>
+FROM {hummingbird-registry}/openjdk:21-builder AS builder #<1>
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
-RUN dnf install -y unzip && dnf clean all # <2>
+RUN dnf install -y unzip && dnf clean all
 
 WORKDIR /build
 
-# Copy Maven wrapper and dependency manifest first (layer cache)
-COPY mvnw pom.xml ./ # <3>
+# Copy Maven wrapper and dependency manifest first (layer cache) #<2>
+COPY mvnw pom.xml ./
 COPY .mvn ./.mvn
 
-# Download dependencies (cached unless pom.xml changes)
+# Download dependencies (cached unless pom.xml changes) #<2>
 RUN ./mvnw dependency:go-offline -B
 
 # Copy source and build
@@ -560,13 +486,13 @@ FROM {hummingbird-registry}/openjdk:21-runtime #<1>
 WORKDIR /app
 
 # Copy the Quarkus fast-jar layout
-COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/ # <4>
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/ #<3>
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
 
 # Run as non-root user
-USER 65532 # <5>
+USER 65532 #<4>
 
 # Expose port
 EXPOSE 8080
@@ -576,23 +502,20 @@ ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
 
 # Start application
 ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-EOF
 ----
 
-.*Key Points in this Containerfile:*
+Multi-stage build architecture concepts:
 
-<.> **Multi-Stage**: Stage 1 (builder) has JDK 21 and the Maven wrapper; Stage 2 (runtime) has only the JRE
-<.> **Unzip Installation**: The OpenJDK 21 builder image does not include `unzip`, which the Maven wrapper requires to extract the Maven distribution
-<.> **Layer Caching**: `mvnw`, `pom.xml`, and `.mvn/` are copied before source so Maven dependencies are cached across builds
-<.> **Fast-Jar Layout**: Quarkus packages the app into `lib/`, `app/`, `quarkus/`, and `quarkus-run.jar` for optimal startup, we only copy those files from the first stage into the final image.
-<.> **Security**: Non-root user (65532), proper file ownership with `--chown`
-
-**Image Naming**: Hardened images use tags for variants -- `openjdk:21-runtime` (not `openjdk-21-runtime:latest`)
+<1> **Builder Stage**: Uses `openjdk:21-builder` with full JDK + Maven for compilation
+<1> **Runtime Stage**: Uses `openjdk:21-runtime` with minimal JRE for deployment
+<2> **Layer Optimization**: Dependencies copied separately from source for efficient rebuilds
+<3> **Quarkus Fast-JAR**: Optimized layer creation with separated `lib/`, `app/`, `quarkus/` directories
+<4> **Security Patterns**: Non-root user (65532), proper file ownership with `--chown`
 
 [[building-image]]
 == Building the Image
 
-=== Step 9: Build with Podman
+=== Step 6: Build with Podman
 
 Building a multi-stage image with `podman` is no different than any other image. The stages are automatically handled as part of the standard OCI specification.
 
@@ -603,12 +526,12 @@ podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
 
 [NOTE]
 ====
-The first build downloads Maven dependencies and may take 3-5 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
+The first build downloads Maven dependencies and may take 1-2 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
 ====
 
 .*Expected output (excerpt):*
 ----
-[1/2] STEP 1/9: FROM registry.access.redhat.com/ubi9/openjdk-21:latest AS builder
+[1/2] STEP 1/9: FROM {hummingbird-registry}/openjdk:21-builder AS builder 
 [1/2] STEP 2/9: USER root
 [1/2] STEP 3/9: RUN microdnf install -y unzip && microdnf clean all
 [1/2] STEP 4/9: WORKDIR /build
@@ -616,7 +539,7 @@ The first build downloads Maven dependencies and may take 3-5 minutes. Subsequen
 ...
 [INFO] BUILD SUCCESS
 ...
-[2/2] STEP 1/10: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+[2/2] STEP 1/10: FROM {hummingbird-registry}/openjdk:21-runtime
 ...
 [2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 COMMIT hummingbird-demo:v1
@@ -626,7 +549,7 @@ Successfully tagged localhost/hummingbird-demo:v1
 [[testing-application]]
 == Testing the Application
 
-=== Step 10: Run and Test the Container
+=== Step 7: Run and Test the Container
 
 Run the container and test it, use `-s` to quiet any output from `curl`.
 
@@ -664,7 +587,7 @@ curl -s http://localhost:8080/health | jq
 }
 ----
 
-=== Step 11: View Container Logs
+=== Step 8: View Container Logs
 
 [source,bash,role=execute]
 ----
@@ -681,7 +604,7 @@ __  ____  __  _____   ___  __ ____  ______
 Listening on: http://0.0.0.0:8080
 ----
 
-=== Step 12: Stop and Remove Container
+=== Step 9: Stop and Remove Container
 
 [source,bash,role=execute]
 ----
@@ -696,7 +619,7 @@ Congratulations! You've completed Sub-Module 1.1 and built your first applicatio
 .*What You've Accomplished*
 ✅ Used containerized tools to explore pipeline possibilities +
 ✅ Created a simple website and Flask application +
-✅ Created a sample Quarkus REST application +
+✅ Examined a sample Quarkus REST application +
 ✅ Wrote a multi-stage Containerfile with separate builder + runtime +
 ✅ Compared Hardened vs UBI image sizes +
 ✅ Tested the running applications and verified health endpoint +
@@ -715,7 +638,6 @@ Congratulations! You've completed Sub-Module 1.1 and built your first applicatio
 * Minimal runtime image (no build tools, no package managers, no compiler)
 * Proper file ownership with `--chown`
 * Dependency layer caching for faster rebuilds
-* Health endpoints for orchestrator probes
 
 === Troubleshooting
 https://redhat.atlassian.net/browse/RHEL-144380
@@ -756,7 +678,7 @@ podman run --rm hummingbird-demo:v1 java -version
 [source,bash]
 ----
 # Run builder stage interactively to debug
-podman run --rm -it registry.access.redhat.com/ubi9/openjdk-21:latest bash
+podman run --rm -it {ubi-registry}/openjdk-21:latest bash
 
 # Verify Maven wrapper is executable
 ls -la mvnw

@@ -642,7 +642,7 @@ cosign version
 
 .*Expected output:*
 ----
-cosign version v2.4.1
+cosign version {cosign-version}
 ----
 
 [TIP]

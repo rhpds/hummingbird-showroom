@@ -29,21 +29,10 @@ echo "=== Step 1: Certificate Authority Bundle Management ==="
 # Ensure webserver directory exists
 mkdir -p ~/webserver
 
-echo "Creating Caddyfile with SSL configuration..."
-cat > ~/webserver/Caddyfile << 'EOF'
-{
-    http_port 8080
-    https_port 8443
-}
+echo "Using pre-created Caddyfile..."
+echo "Caddyfile and webserver files already created by setup script"
 
-localhost {
-    tls internal
-    root * /usr/share/caddy
-    file_server
-}
-EOF
-
-echo "Creating Containerfile for SSL-enabled Caddy..."
+echo "Creating SSL Containerfile..."
 cat > ~/webserver/Containerfile << EOF
 FROM ${HUMMINGBIRD_REGISTRY}/caddy:latest
 COPY Caddyfile /etc/caddy/Caddyfile
@@ -186,17 +175,6 @@ fi
 
 echo "Verifying udica installation..."
 udica --version
-
-echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
-
-echo "Creating host directories for bind mounts..."
-sudo mkdir -p /opt/myapp/config /opt/myapp/logs
-sudo chown -R $(id -u):$(id -g) /opt/myapp
-
-echo "Setting SELinux context for container file access..."
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/config(/.*)?" || echo "Context may already exist"
-sudo semanage fcontext -a -t container_file_t "/opt/myapp/logs(/.*)?" || echo "Context may already exist"
-sudo restorecon -Rv /opt/myapp
 
 echo "Verifying SELinux labels on directories..."
 ls -lZ /opt/myapp/
