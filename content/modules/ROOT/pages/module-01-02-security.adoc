@@ -22,7 +22,7 @@ This workshop environment has been optimized for learning efficiency. Required t
 
 Security doesn't end when the build completes. In this sub-module, you'll implement a complete security workflow: scanning for vulnerabilities, generating Software Bill of Materials (SBOMs) for compliance, and signing images to prove provenance.
 
-You'll see firsthand why Red Hat's "zero-CVE at ship time" approach dramatically reduces your security burden compared to traditional base images.
+You'll see firsthand why Red Hat's "zero-CVE at ship time" approach dramatically reduces your security churn compared to traditional base images.
 
 The tools we're using in this module use the Podman API to find and inspect images, so we can enable that now for our user. 
 
@@ -37,7 +37,7 @@ Change to a new directory to hold our work for this exercise.
 cd ~/scanning
 ----
 
-You should have two images, the multi-stage build with the hardened images and pre-built UBI based image for comparison.
+We'll compare the multi-stage image you just created to a pre-built UBI version of the same Quarkus application. This UBI image was built in a single stage and will include additional OS and build tools.
 [source,bash,role=execute]
 ----
 podman images hummingbird-demo
@@ -53,17 +53,7 @@ We've worked with several different vendors to ensure our CVE feeds are availabl
 Grype scans container images for known CVEs.
 Syft generates Software Bill of Materials (SBOMs) from container images.
 
-[NOTE]
-====
-Security scanning tools have been pre-installed in this environment:
-
-* cosign {cosign-version} - For image signing and verification
-* syft {syft-version} - For SBOM generation  
-* grype {grype-version} - For vulnerability scanning (database pre-updated)
-
 Let's verify they're ready:
-====
-
 [source,bash,role=execute]
 ----
 grype version
@@ -103,7 +93,7 @@ SchemaVersion: 16.1.3
 
 === Step 1: Scan for CVEs
 
-Use Grype to scan your image for known CVEs:
+Use Grype to scan your multi-stage image for known CVEs:
 
 [source,bash,role=execute]
 ----
@@ -125,7 +115,7 @@ grype hummingbird-demo:v1
 No vulnerabilities found
 ----
 
-Notice that `grype` not only examines packages like `rpms` but also `java-archive` packages, binaries, and other files and metadata sources.
+Notice that `grype` not only examines packages like `rpms` but also `java-archive` packages, binaries, and other files and metadata sources.  You may see findings from the application dependencies here.
 [NOTE]
 ====
 hardened base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
@@ -163,7 +153,7 @@ Take particular note of the `Type` column in the output. Most of these are `java
 The difference is due to unnecessary packages in the UBI image that aren't needed at runtime but still have security vulnerabilities.
 ====
 
-Knowing what gets pulled into a container and the potential vulnerabilities is one part of the equation. How do you document what's inside once you've built that final production image? Enter the SBOM.
+Knowing what the potential vulnerabilities exist in an image is one part of the equation. How do you document what's inside once you've built that final production image? Enter the SBOM.
 
 [[sbom-generation]]
 == SBOM Generation with Syft
@@ -178,7 +168,7 @@ A Software Bill of Materials (SBOM) is a complete inventory of all packages, lib
 * **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
 * **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
 
-View a human-readable table of packages using the `-o` flag to select output type.
+You can view a human-readable table of packages using the `-o` flag to select output type.
 
 [source,bash,role=execute]
 ----
@@ -206,16 +196,11 @@ glibc                         2.42-10.hum1             rpm
 nss                           3.119.1-1.1.hum1         rpm
 ----
 
-For a quick look, a table might be fine, bur for compliance, we need a different format that we can include with the image in a registry. This machine-readable version will let various tools to verify contents, examine properities, and more. There are several formats for machine-readable SBOMs, we'll use Software Package Data Exchange (SPDX) in this exercise.
+For a quick look, a table might be fine, but for compliance, we need something we can publish with the image in a registry. A machine-readable version will let various tools to verify contents, examine properities, and more. There are several formats for machine-readable SBOMs, we'll use Software Package Data Exchange (SPDX) in this exercise.
 
 [source,bash,role=execute]
 ----
 syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
-----
-
-[source,bash,role=execute]
-----
-jq '.packages | length' hummingbird-demo.spdx
 ----
 
 .*Expected output:*
@@ -227,8 +212,16 @@ jq '.packages | length' hummingbird-demo.spdx
    ├── ✔ Executables                     [161 executables]  
    ├── ✔ File digests                    [1,238 files]  
    └── ✔ File metadata                   [1,238 locations]  
+----
 
+This is JSON so we can inspect elements in the file with `jq`
+[source,bash,role=execute]
+----
+jq '.packages | length' hummingbird-demo.spdx
+----
 
+.*Expected output:*
+----
 170
 ----
 [NOTE]
@@ -247,7 +240,7 @@ For compliance requirements, use SPDX-JSON or CycloneDX.
 
 [[image-signing]]
 == Image Signing with Cosign
-Another common way to ensure a chain of trust is by digitally signing image. One tool to manage container signing is `cosign`.
+We've looked for known vulnerabilities, detailed the contents, and are ready to publish. How do we ensure that the image that comes out of the registry matches what went in? A common way to ensure a chain of trust is by digitally signing images. One tool to manage container signing is `cosign`.
 
 Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll start a lightweight local registry and push the image there before signing.
 
@@ -262,7 +255,7 @@ Cosign signs and verifies images stored in OCI registries. Since our image lives
 
 === Step 4: Start a Local Registry and Push the Image
 
-We'll start a local, non-SSL registry for testing purposes and tag our demo application correctly to use it.
+We'll start a local, non-SSL registry for testing purposes and tag our demo application correctly to use it. Several of the arguments in the following commands are only required because we don't have a fully fledged registry in this section of the lab. Working with Quay or Artifactory or some other enterprise registry would not likely need these flags.
 [source,bash,role=execute]
 ----
 podman run -d --name registry -p 5000:5000 docker.io/library/registry:2
@@ -291,10 +284,6 @@ echo "Image digest: ${IMAGE_DIGEST}"
 
 .*Expected output:*
 ----
-Getting image source signatures
-Copying blob sha256:...
-...
-Writing manifest to image destination
 Image digest: sha256:abc123...
 ----
 
@@ -389,6 +378,8 @@ The following checks were performed on each of these signatures:
 The tlog **WARNING** is expected. We skipped the Rekor transparency log when signing (Step 7), so we must also skip tlog verification here. In production, both signing and verification should use the transparency log.
 ====
 
+We've succesfully signed our image and verified the signature, meaning we can be confident the images are the same on both ends. In a real world example, your key would come from some other source.
+
 [[sbom-attestation]]
 == Attach SBOM as Attestation
 
@@ -428,7 +419,7 @@ Using payload from: hummingbird-demo.spdx
 
 === Step 9: Verify SBOM Attestation
 
-Verify the SBOM attestation:
+Verify the SBOM attestation and check for our package count from the earlier examination of the local SBOM.
 
 [source,bash,role=execute]
 ----
@@ -452,8 +443,8 @@ The following checks were performed on each of these signatures:
 This confirms:
 
 * The attestation signature is valid
-* The SBOM contains 170 packages
 * The SBOM was signed by the holder of `cosign.key`
+* The SBOM contains the same package information as expected
 
 [[size-comparison]]
 == Image Size and Vulnerability Comparison
