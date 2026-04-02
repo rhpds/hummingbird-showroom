@@ -1,0 +1,48 @@
+# Multi-stage build: builder -> runtime
+
+# ============================================
+# Stage 1: Build stage using builder variant
+# ============================================
+FROM quay.io/hummingbird/openjdk:21-builder AS builder # <1>
+
+# Install unzip needed by the Maven wrapper to extract the Maven distribution
+USER root
+RUN dnf install -y unzip && dnf clean all
+
+WORKDIR /build
+
+# Copy Maven wrapper and dependency manifest first (layer cache) # <2>
+COPY mvnw pom.xml ./
+COPY .mvn ./.mvn
+
+# Download dependencies (cached unless pom.xml changes) # <2>
+RUN ./mvnw dependency:go-offline -B
+
+# Copy source and build
+COPY src ./src
+RUN ./mvnw package -DskipTests -B
+
+# ============================================
+# Stage 2: Runtime stage
+# ============================================
+FROM quay.io/hummingbird/openjdk:21-runtime # <1>
+
+WORKDIR /app
+
+# Copy the Quarkus fast-jar layout
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/ # <3>
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
+
+# Run as non-root user
+USER 65532 # <4>
+
+# Expose port
+EXPOSE 8080
+
+# JVM configuration
+ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0"
+
+# Start application
+ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]

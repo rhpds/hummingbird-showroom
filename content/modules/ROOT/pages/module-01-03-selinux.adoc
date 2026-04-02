@@ -42,23 +42,14 @@ cat ~/webserver/Caddyfile
 ----
 
 .*Expected output:*
+[source,caddyfile]
 ----
-{
-    http_port 8080
-    https_port 8443 #<.>
-}
-
-localhost {
-    tls internal #<.>
-    root * /usr/share/caddy
-    file_server
-}
+include::example$setup/webserver/Caddyfile[]
 ----
+<1> **New SSL Port**: Listening on HTTP (8080) and HTTPS (8443)
+<2> **Internal CA**: Automatic self-signed certificate generation with `tls internal`
 
-Custom Caddyfile configuration 
-
-<.> **New SSL Port**: Listening on HTTP (8080) and HTTPS (8443)
-<.> **Internal CA**: Automatic self-signed certificate generation with `tls internal`
+Custom Caddyfile configuration
 
 The other two lines are the same as the shipped default setting the path `caddy` will serve files from.
 
