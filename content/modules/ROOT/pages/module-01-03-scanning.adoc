@@ -1,0 +1,310 @@
+= Sub-Module 1.3: Vulnerability Scanning & SBOMs
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 8-10 minutes +
+*Learning Objectives:*
+
+* Scan container images for CVEs with Grype
+* Generate SBOMs with Syft for compliance
+* Compare Hardened Images vs UBI
+--
+
+[IMPORTANT]
+====
+This workshop environment has been optimized for learning efficiency. Required tools (cosign {cosign-version}, syft {syft-version}, grype {grype-version}), directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
+====
+
+[[introduction]]
+== Introduction
+
+Building secure images is only the first step. In this sub-module, you'll learn how to analyze and document the security posture of your container images. You'll scan the `hummingbird-demo:v1` image from xref:module-01-02-multi-stage.adoc[Sub-Module 1.2] for vulnerabilities and generate Software Bill of Materials (SBOMs) for compliance.
+
+You'll see firsthand why Red Hat's "zero-CVE at ship time" approach dramatically reduces your security churn compared to traditional base images.
+
+The tools we're using in this module use the Podman API to find and inspect images, so we can enable that now for our user.
+
+[source,bash,role=execute]
+----
+systemctl --user enable --now podman.socket
+----
+
+Change to a new directory to hold our work for this exercise.
+[source,bash,role=execute]
+----
+cd ~/scanning
+----
+
+We'll compare the multi-stage image you built in Sub-Module 1.2 to a pre-built UBI version of the same Quarkus application. This UBI image was built in a single stage and will include additional OS and build tools.
+[source,bash,role=execute]
+----
+podman images hummingbird-demo
+----
+----
+REPOSITORY                  TAG         IMAGE ID      CREATED        SIZE
+localhost/hummingbird-demo  ubi         4d7953024356  2 minutes ago  623 MB
+localhost/hummingbird-demo  v1          dc4d1b7ef08a  2 hours ago    273 MB
+----
+
+We've worked with several different vendors to ensure our CVE feeds are available and supported. In this lab, we're going to use the open source versions of Anchore's `syft` and `grype` tools as they are easily available. These are already installed on the system.
+
+Grype scans container images for known CVEs.
+Syft generates Software Bill of Materials (SBOMs) from container images.
+
+Let's verify they're ready:
+[source,bash,role=execute]
+----
+grype version
+----
+----
+Application:         grype
+Version:             0.109.1
+BuildDate:           2026-03-09T19:35:00Z
+GitCommit:           baf391d5c672e8f409953baa49ea243265866b2c
+GitDescription:      v0.109.1
+Platform:            linux/amd64
+GoVersion:           go1.25.8
+Compiler:            gc
+Syft Version:        v1.42.2
+Supported DB Schema: 6
+----
+
+[source,bash,role=execute]
+----
+syft version
+----
+----
+Application:   syft
+Version:       1.42.2
+BuildDate:     2026-03-09T18:26:53Z
+GitCommit:     75455f050ab028977a6b625165e2ad3644fcc845
+GitDescription: v1.42.2
+Platform:      linux/amd64
+GoVersion:     go1.26.1
+Compiler:      gc
+SchemaVersion: 16.1.3
+----
+
+
+[[vulnerability-scanning]]
+== Vulnerability Scanning with Grype
+
+=== Step 1: Scan for CVEs
+
+Use Grype to scan your multi-stage image for known CVEs:
+
+[source,bash,role=execute]
+----
+grype hummingbird-demo:v1
+----
+
+.*Expected output:*
+----
+ ⠸ Vulnerability DB                ━━━━━━━━━━━━━━━━━━━━  [hydrating]
+ ✔ Loaded image                                           hummingbird-demo:v1
+ ✔ Parsed image sha256:dc4d1b7ef08a1b7e2cdfa2d087005ddf7f4ea8fdba80b51a5634a42eb3eb1629
+ ✔ Cataloged contents  faa8ebd2c0ebecdee5a3576fd94ed4e1f3e9125a2dfbc092ca07a02c003f4bf2
+   ├── ✔ Packages                        [169 packages]
+   ├── ✔ File metadata                   [1,238 locations]
+   ├── ✔ Executables                     [161 executables]
+ ✔ Scanned for vulnerabilities     [0 vulnerability matches]
+   ├── by severity: 0 critical, 0 high, 0 medium, 0 low, 0 negligible
+   └── by status:   0 fixed, 0 not-fixed, 0 ignored
+No vulnerabilities found
+----
+
+Notice that `grype` not only examines packages like `rpms` but also `java-archive` packages, binaries, and other files and metadata sources.  You may see findings from the application dependencies here.
+[NOTE]
+====
+hardened base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
+====
+
+=== Step 2: Compare with Full UBI Image
+
+Now scan the UBI version:
+
+[source,bash,role=execute]
+----
+grype hummingbird-demo:ubi --only-fixed
+----
+[NOTE]
+====
+The `--only-fixed` flag shows only vulnerabilities with available patches. This is useful because it focuses on actionable issues.
+====
+
+.*Expected output (varies, but typically):*
+----
+ ✔ Scanned for vulnerabilities     [29 vulnerability matches]
+   ├── by severity: 2 critical, 25 high, 105 medium, 84 low, 1 negligible (1 unknown)
+   └── by status:   29 fixed, 189 not-fixed, 189 ignored
+<cut>
+----
+Take particular note of the `Type` column in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are inclueded in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
+
+[IMPORTANT]
+====
+**Key Insight:**
+
+* **hardened image**: 0 CVEs (or very few)
+* **UBI image**: 15-30+ CVEs (even in a recent version)
+
+The difference is due to unnecessary packages in the UBI image that aren't needed at runtime but still have security vulnerabilities.
+====
+
+Knowing what the potential vulnerabilities exist in an image is one part of the equation. How do you document what's inside once you've built that final production image? Enter the SBOM.
+
+[[sbom-generation]]
+== SBOM Generation with Syft
+
+=== Step 3: Generate SBOM
+
+**What is an SBOM?**
+
+A Software Bill of Materials (SBOM) is a complete inventory of all packages, libraries, and dependencies in your container image. SBOMs are essential for:
+
+* **Supply chain security**: Know exactly what's in your images
+* **Compliance**: Meet regulatory requirements (NIST, EU Cyber Resilience Act)
+* **Vulnerability management**: Quickly identify affected systems when new CVEs are disclosed
+
+You can view a human-readable table of packages using the `-o` flag to select output type.
+
+[source,bash,role=execute]
+----
+syft hummingbird-demo:v1 -o table
+----
+
+.*What's in the SBOM:*
+Noice that `syft` shows multiple types of packages. The SBOM includes every package in your container:
+
+* Quarkus runtime and its Java dependencies (Netty, Vert.x, Jackson, SmallRye, etc.)
+* OpenJDK 21 JRE and system RPM libraries from base image (glibc, NSS, etc.)
+
+.*Expected output (excerpt):*
+----
+NAME                          VERSION                  TYPE
+quarkus-rest                  3.32.2                   java-archive
+quarkus-rest-jackson          3.32.2                   java-archive
+jackson-databind              2.21.1                   java-archive
+jakarta.ws.rs-api             3.1.0                    java-archive
+netty-common                  4.1.130.Final            java-archive
+vertx-core                    4.5.25                   java-archive
+...
+java-21-openjdk-headless      1:21.0.10.0.7-2.1.hum1  rpm
+glibc                         2.42-10.hum1             rpm
+nss                           3.119.1-1.1.hum1         rpm
+----
+
+For a quick look, a table might be fine, but for compliance, we need something we can publish with the image in a registry. A machine-readable version will let various tools to verify contents, examine properities, and more. There are several formats for machine-readable SBOMs, we'll use Software Package Data Exchange (SPDX) in this exercise.
+
+[source,bash,role=execute]
+----
+syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
+----
+
+.*Expected output:*
+----
+ ✔ Loaded image                                                     hummingbird-demo:v1
+ ✔ Parsed image  sha256:382ffe2fc7bcb5abe59d02ef463ba41650df18636ddc3107e91518d7cec7ec8f
+ ✔ Cataloged contents   a40e8a453bfcbb75409bead5bddb6fcc794c8c34beff3ec9625036713ae22ac5
+   ├── ✔ Packages                        [169 packages]
+   ├── ✔ Executables                     [161 executables]
+   ├── ✔ File digests                    [1,238 files]
+   └── ✔ File metadata                   [1,238 locations]
+----
+
+This is JSON so we can inspect elements in the file with `jq`
+[source,bash,role=execute]
+----
+jq '.packages | length' hummingbird-demo.spdx
+----
+
+.*Expected output:*
+----
+170
+----
+[NOTE]
+====
+**SBOM Formats:**
+
+Syft supports multiple output formats:
+
+* **SPDX-JSON**: Standard format for compliance (ISO/IEC 5962:2021)
+* **CycloneDX**: Alternative SBOM standard
+* **Table**: Human-readable for quick review
+* **JSON**: Syft's native format with detailed metadata
+
+For compliance requirements, use SPDX-JSON or CycloneDX.
+====
+
+[source,bash,role=execute]
+----
+cd ~
+----
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.3 and learned how to analyze container image security.
+
+.*What You've Accomplished*
+✅ Scanned images for CVEs with Grype +
+✅ Generated SBOMs with Syft in SPDX-JSON format +
+✅ Compared vulnerability counts between Hardened and UBI images +
+✅ Understood the security benefits of minimal images +
+
+.*Key Takeaways*
+
+**Security Benefits:**
+
+* **Zero or near-zero CVEs** at ship time reduces remediation work
+* **56%+ smaller** images (273MB vs 623MB) reduce attack surface
+* **Complete transparency** via SBOMs enables compliance
+
+**Why This Matters:**
+
+* Traditional images ship with vulnerabilities that require immediate patching
+* Hardened Images deliver clean baselines, shifting security left
+* SBOMs provide transparency for supply chain security requirements
+
+**Tool Integration:**
+
+* **Grype**: Fast vulnerability scanning with multiple database sources
+* **Syft**: Multi-format SBOM generation (SPDX, CycloneDX, JSON)
+* Both tools integrate with CI/CD pipelines for automated security gates
+
+=== Next Steps
+
+In xref:module-01-04-signing.adoc[Sub-Module 1.4: Image Signing & Attestation], you'll learn how to cryptographically sign your images and attach SBOM attestations to prove provenance and integrity.
+
+=== Troubleshooting
+
+**Issue: Grype database download fails**
+[source,bash]
+----
+# Manually update database
+grype db update
+
+# Check database status
+grype db status
+----
+
+**Issue: SBOM generation incomplete**
+[source,bash]
+----
+# Try different output formats
+syft hummingbird-demo:v1 -o json=sbom-detailed.json
+
+# Verify image is accessible
+podman images | grep hummingbird-demo
+----
+
+**Issue: Podman socket not available**
+[source,bash]
+----
+# Restart podman socket
+systemctl --user restart podman.socket
+
+# Verify socket is running
+systemctl --user status podman.socket
+----

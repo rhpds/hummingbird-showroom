@@ -1,10 +1,10 @@
-= Sub-Module 1.4: Advanced SELinux Hardening
+= Sub-Module 1.7: Advanced SELinux Hardening
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~10 minutes +
-*Prerequisites:* Completion of Sub-Module 1.3 (SELinux Fundamentals with udica) +
+*Prerequisites:* Completion of Sub-Module 1.6 (SELinux Fundamentals with udica) +
 *Learning Objectives:*
 
 * Generate policies for containers with device access using `--append-rules`
@@ -17,7 +17,7 @@
 [[introduction]]
 == Introduction
 
-In Sub-Module 1.3, you generated a policy for a container with bind mounts and a port. Real-world containers often need more: device access for entropy sources, complex volume topologies, and policies that evolve as the application changes. This sub-module covers the advanced udica techniques that production Hummingbird deployments require.
+In Sub-Module 1.6, you generated a policy for a container with bind mounts and a port. Real-world containers often need more: device access for entropy sources, complex volume topologies, and policies that evolve as the application changes. This sub-module covers the advanced udica techniques that production Hummingbird deployments require.
 
 [[device-access]]
 == Device Access and --append-rules
@@ -107,14 +107,14 @@ Check what udica generated for the device access:
 cat device_hummingbird.cil
 ----
 
-The generated CIL will include the same `container_file_t` and `http_cache_port_t` rules you saw in Sub-Module 1.3, plus additional rules for device access:
+The generated CIL will include the same `container_file_t` and `http_cache_port_t` rules you saw in Sub-Module 1.6, plus additional rules for device access:
 
 ----
 (block device_hummingbird
     (blockinherit container)
     (blockinherit net_container)
 
-    ; Filesystem access (same as Sub-Module 1.3)
+    ; Filesystem access (same as Sub-Module 1.6)
     (allow process container_file_t ( dir ( open read getattr lock search ioctl )))
     (allow process container_file_t ( file ( getattr read lock open ioctl )))
     (allow process container_file_t ( file ( write create open append )))
@@ -329,7 +329,7 @@ Module 2 covers the CI/CD integration of udica with Tekton pipelines on OpenShif
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 1.4 and Module 1 in its entirety!
+Congratulations! You've completed Sub-Module 1.7 and advanced SELinux hardening techniques!
 
 .*What You've Accomplished*
 ✅ Generated policies for containers with device access (`/dev/urandom`) +
@@ -373,7 +373,7 @@ Learn how to implement these same patterns at platform scale using Shipwright Bu
 
 **Option 2: Optional Exercise**
 
-**xref:module-01-05-chunkah.adoc[Sub-Module 1.5: Content-Based Layer Splitting with chunkah]**
+**xref:module-01-08-chunkah.adoc[Sub-Module 1.8: Content-Based Layer Splitting with chunkah]**
 
 Learn how to restructure Hummingbird image layers for optimal pull deduplication using chunkah and `zstd:chunked` compression (~15 min).
 

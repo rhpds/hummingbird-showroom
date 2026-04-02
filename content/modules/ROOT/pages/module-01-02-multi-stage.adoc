@@ -1,0 +1,259 @@
+= Sub-Module 1.2: Multi-Stage Builds
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 10-12 minutes +
+*Learning Objectives:*
+
+* Examine a sample Quarkus REST application
+* Create multi-stage Containerfiles with builder + runtime
+* Build production-ready minimal container images
+* Test and verify built applications
+--
+
+[IMPORTANT]
+====
+This workshop environment has been optimized for learning efficiency. Required tools, directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
+====
+
+[[multi-stage]]
+== Multi-stage builds with hardened images
+
+In xref:module-01-01-intro.adoc[Sub-Module 1.1], you explored basic hardened images and saw how the `builder` variant includes tools we don't want in production. Now you'll learn the most important pattern for production deployments: multi-stage builds.
+
+Multi-stage builds allow you to separate the final application artifacts from build time components and to choose the smallest runtimes for production. This keeps with the overall goal of minimal images, reduced attack and risk surfaces. Multi-stage builds provide a good blend of flexibility and control.
+
+This will combine the use of different variants for different purposes.
+
+[[sample-application]]
+== Sample Java Application
+
+A complete Quarkus REST application has been created to demonstrate multi-stage build patterns. Let's examine the generated structure:
+
+=== Step 1: Examine Pre-Built Application
+
+[source,bash,role=execute]
+----
+ls -la ~/sample-app/
+----
+
+Feel free to examine the code if you're interested. For our purposes we need to know the application provides two REST endpoints:
+
+* `/` - Returns JSON greeting with runtime information
+* `/health` - Returns application health status for orchestrator probes
+
+This application listens on all interfaces (0.0.0.0) port 8080 for container deployment.
+
+[[multi-stage-containerfile]]
+== Multi-Stage Containerfile
+
+Now let's create the Containerfile that builds our application using the multi-stage pattern.
+The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment.
+Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
+Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
+
+=== Step 2: Examine Multi-Stage Containerfile
+
+A multi-stage Containerfile demonstrates a more dvanced container pattern. Let's examine its structure:
+
+[source,bash,role=execute]
+----
+cat ~/sample-app/Containerfile
+----
+
+.*Expected output:*
+[source,dockerfile,subs="attributes+"]
+----
+include::example$setup/quarkus/Containerfile[]
+----
+<1> **Builder/Runtime Stages**: Uses `openjdk:21-builder` with full JDK + Maven for compilation, then `openjdk:21-runtime` with minimal JRE for deployment
+<2> **Layer Optimization**: Dependencies copied separately from source for efficient rebuilds
+<3> **Quarkus Fast-JAR**: Optimized layer creation with separated `lib/`, `app/`, `quarkus/` directories
+<4> **Security Patterns**: Non-root user (65532), proper file ownership with `--chown`
+
+Multi-stage build architecture concepts
+
+[[building-image]]
+== Building the Image
+
+=== Step 3: Build with Podman
+
+Building a multi-stage image with `podman` is no different than any other image. The stages are automatically handled as part of the standard OCI specification.
+
+[source,bash,role=execute]
+----
+podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
+----
+
+[NOTE]
+====
+The first build downloads Maven dependencies and may take 1-2 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
+====
+
+.*Expected output (excerpt):*
+----
+[1/2] STEP 1/9: FROM {hummingbird-registry}/openjdk:21-builder AS builder
+[1/2] STEP 2/9: USER root
+[1/2] STEP 3/9: RUN microdnf install -y unzip && microdnf clean all
+[1/2] STEP 4/9: WORKDIR /build
+[1/2] STEP 5/9: COPY mvnw pom.xml ./
+...
+[INFO] BUILD SUCCESS
+...
+[2/2] STEP 1/10: FROM {hummingbird-registry}/openjdk:21-runtime
+...
+[2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
+COMMIT hummingbird-demo:v1
+Successfully tagged localhost/hummingbird-demo:v1
+----
+
+[[testing-application]]
+== Testing the Application
+
+=== Step 4: Run and Test the Container
+
+Run the container and test it, use `-s` to quiet any output from `curl`.
+
+[source,bash,role=execute]
+----
+podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
+----
+
+[source,bash,role=execute]
+----
+curl -s http://localhost:8080/ | jq
+----
+
+.*Expected output:*
+----
+{
+  "message": "Hello from Hummingbird!",
+  "runtime": "Java 21.0.10",
+  "platform": "linux",
+  "timestamp": "2026-03-06T12:34:56.789Z"
+}
+----
+
+Test the health endpoint:
+
+[source,bash,role=execute]
+----
+curl -s http://localhost:8080/health | jq
+----
+
+.*Expected output:*
+----
+{
+  "status": "healthy"
+}
+----
+
+=== Step 5: View Container Logs
+
+[source,bash,role=execute]
+----
+podman logs demo
+----
+
+.*Expected output:*
+----
+__  ____  __  _____   ___  __ ____  ______
+ --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
+ -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
+--\___\_\____/_/ |_/_/|_/_/|_|\____/___/
+...
+Listening on: http://0.0.0.0:8080
+----
+
+=== Step 6: Stop and Remove Container
+
+[source,bash,role=execute]
+----
+podman stop demo
+----
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.2 and mastered multi-stage builds with Red Hat Hardened Images.
+
+.*What You've Accomplished*
+✅ Examined a sample Quarkus REST application +
+✅ Understood multi-stage Containerfile patterns +
+✅ Built a production image with separate builder + runtime stages +
+✅ Compared builder vs runtime image sizes +
+✅ Tested the running application and verified health endpoint +
+
+.*Key Takeaways*
+
+**Multi-Stage Build Pattern:**
+
+* **Stage 1 (Builder)**: Hardened image (~435MB) with all build tools (JDK, Maven)
+* **Stage 2 (Runtime)**: Hardened runtime (~253MB base) with only the JRE
+* **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
+
+**Best Practices Applied:**
+
+* Non-root user (UID 65532)
+* Minimal runtime image (no build tools, no package managers, no compiler)
+* Proper file ownership with `--chown`
+* Dependency layer caching for faster rebuilds
+
+**Why Multi-Stage Matters:**
+
+* Separates build-time from run-time dependencies
+* Reduces final image size dramatically
+* Eliminates attack surface from build tools
+* Maintains development flexibility
+
+=== Next Steps
+
+In xref:module-01-03-scanning.adoc[Sub-Module 1.3: Vulnerability Scanning & SBOMs], you'll learn how to analyze the security posture of your images, scan for CVEs, and generate Software Bill of Materials for compliance.
+
+=== Troubleshooting
+
+**Issue: Build fails with Maven dependency download errors**
+[source,bash]
+----
+# Clear build cache and rebuild
+podman build --no-cache -t hummingbird-demo:v1 .
+
+# Check network connectivity
+curl https://repo.maven.apache.org/maven2/
+----
+
+**Issue: Image size larger than expected**
+[source,bash]
+----
+# Verify multi-stage build is working
+podman history hummingbird-demo:v1
+
+# Check if builder stage artifacts leaked into runtime
+podman run --rm hummingbird-demo:v1 ls /build 2>/dev/null && echo "LEAK" || echo "OK"
+----
+
+**Issue: Container fails to start**
+[source,bash]
+----
+# Check logs for errors
+podman logs demo
+
+# Verify the fast-jar layout is intact
+podman run --rm hummingbird-demo:v1 ls -la /app/
+
+# Test Java availability in the runtime image
+podman run --rm hummingbird-demo:v1 java -version
+----
+
+**Issue: Maven build fails inside the container**
+[source,bash]
+----
+# Run builder stage interactively to debug
+podman run --rm -it {ubi-registry}/openjdk-21:latest bash
+
+# Verify Maven wrapper is executable
+ls -la mvnw
+chmod +x mvnw
+./mvnw --version
+----

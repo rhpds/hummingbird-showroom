@@ -1,17 +1,15 @@
-= Sub-Module 1.1: Building with Hardened Images
+= Sub-Module 1.1: Introduction & Basic Images
 
 .*Sub-Module Overview*
 [sidebar]
 --
-*Duration:* 20 minutes +
+*Duration:* 10-12 minutes +
 *Learning Objectives:*
 
-* Basics of hardened images
-* Comparison with existing images
-* Examine a sample Quarkus REST application
-* Write multi-stage Containerfiles with builder + runtime
-* Build minimal container images using Podman
-* Test and verify built applications
+* Understand available types of hardened images
+* Use service images and containerized tools
+* Create simple runtime applications with Python
+* Compare distroless vs distribution base images
 --
 
 [IMPORTANT]
@@ -22,7 +20,7 @@ This workshop environment has been optimized for learning efficiency. Required t
 [[introduction]]
 == Introduction
 
-In this sub-module, you'll move from running pre-built images to creating your own Hardened Images based containers. You'll learn the multi-stage build pattern using separate builder and runtime images, achieving dramatic size reductions while maintaining functionality.
+In this sub-module, you'll get hands-on with Red Hat Hardened Images. You'll explore the three main categories of images (services, tools, and runtimes), understand the difference between distroless and traditional base images, and build your first containerized applications using these minimal, secure foundations.
 
 [[types]]
 == Available types of hardened images
@@ -50,7 +48,7 @@ include::example$setup/webserver/index.html[]
 
 This is a straightforward page, with a little CSS and font prettification, nothing complex.
 
-With our `index.html` ready to serve, we need a web server. There are several available, and `caddy` image can be used for this sort of simple testing by running the default container image and passing the `webserver` directory as a volume mount. 
+With our `index.html` ready to serve, we need a web server. There are several available, and `caddy` image can be used for this sort of simple testing by running the default container image and passing the `webserver` directory as a volume mount.
 
 [source,bash,role=execute,subs=attributes+]
 ----
@@ -127,7 +125,7 @@ We can be sure we've got the right images by verifing the signature with a tool 
 
 [[runtimes]]
 === Simple runtime examples
-While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in different variants: eg `default`, `builder`, and `fips`. The details will vary from image to image, but the `default` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant adds to the `default` both rpm and language specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles. 
+While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in different variants: eg `default`, `builder`, and `fips`. The details will vary from image to image, but the `default` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant adds to the `default` both rpm and language specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles.
 The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. We'll look at this variant in a later module.
 
 ==== Create a simple Python Flask application
@@ -146,7 +144,7 @@ cat ~/flask/app.py
 include::example$setup/flask/app.py[]
 ----
 
-The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later. 
+The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later.
 
 
 Copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
@@ -159,7 +157,7 @@ We'll ship this application in two ways to explore some differences between the 
 
 == Distroless vs distribution base images
 
-Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined. 
+Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined.
 
 Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
 
@@ -209,7 +207,7 @@ podman stop flask-demo
 
 The most obvious change is the base image, but there are a few other minor adjustments we need to make.
 
-Our UBI example creates a non-root `appuser` to run the application. The hardened image already provides a default non-root user, so we can skip that step. 
+Our UBI example creates a non-root `appuser` to run the application. The hardened image already provides a default non-root user, so we can skip that step.
 
 This means we do need to make sure we're running the commands as the correct user for each step however. We can also skip installing `pip` as that's already included in the `default` variant for `python`.
 
@@ -220,7 +218,7 @@ In practice those changes give us the following Containerfile
 [source,bash,role=execute,subs=attributes+]
 ----
 cat > ~/flask/Containerfile.hi << 'EOF'
-# Stage 1: Builder base image 
+# Stage 1: Builder base image
 FROM {hummingbird-registry}/python:3.14 #<.>
 
 # Set the working directory in the container
@@ -236,11 +234,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # Switch to root from the non-root user to install dependcies
-# By default, these install in /tmp/.local for the non-root user 
+# By default, these install in /tmp/.local for the non-root user
 USER root
-RUN pip install --index-url http://localhost:8000/simple flask 
+RUN pip install --index-url http://localhost:8000/simple flask
 
-# Switch to the default non-root user for runtime 
+# Switch to the default non-root user for runtime
 USER ${CONTAINER_DEFAULT_USER} #<.>
 
 # Expose the port Flask will listen on
@@ -268,7 +266,7 @@ podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
 STEP 7/11: RUN pip install --index-url http://localhost:8000/simple flask
 error running container: from /usr/bin/crun creating container for [/bin/sh -c pip install --index-url http://localhost:8000/simple flask]: executable file `/bin/sh` not found: No such file or directory
 ----
-What happened here? One of the changes to 'distroless' images like our new `default` is the removal of things like shells. Here `pip` needs a shell to install our application dependencies. 
+What happened here? One of the changes to 'distroless' images like our new `default` is the removal of things like shells. Here `pip` needs a shell to install our application dependencies.
 
 Without a shell, what can we do? Switch to the `builder` variant.
 
@@ -279,7 +277,7 @@ vi ~/flask/Containerfile.hi
 ----
 [source,dockerfile,subs=attributes+]
 ----
-# Stage 1: Builder base image 
+# Stage 1: Builder base image
 FROM {hummingbird-registry}/python:3.14-builder #<.>
 ----
 <.> The tagging format for `python` images is <version>-builder
@@ -301,13 +299,13 @@ podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
 curl http://localhost:8080
 ----
 
-Changing existing Containerfiles to use hardened images can be fairly straightforward. To help understand the default settings for hardened images, we https://gitlab.com/redhat/hummingbird/containers/-/blob/main/images/python-3-14/hummingbird/default/compat.md[provide tables] that compare them to upstream versions. 
+Changing existing Containerfiles to use hardened images can be fairly straightforward. To help understand the default settings for hardened images, we https://gitlab.com/redhat/hummingbird/containers/-/blob/main/images/python-3-14/hummingbird/default/compat.md[provide tables] that compare them to upstream versions.
 This not only includes the properties, but also the reasoning behind any changes.
 
 
 === Step 3: Examine our two images
 
-There are some other differences in the packages installed and the tools avaialble. List the images just built. Note that the hardened image is just over half the size of the UBI based image. 
+There are some other differences in the packages installed and the tools avaialble. List the images just built. Note that the hardened image is just over half the size of the UBI based image.
 
 [source,bash,role=execute]
 ----
@@ -332,235 +330,41 @@ podman exec -it flask-demo /bin/sh -c 'ls -al /app'
 podman stop flask-demo
 ----
 
-How do we remove all of the unnecessary parts? Let's look at a pattern to ship only the application and avoid adding attack surfaces to our production containers.
-
-[[multi-stage]]
-== Multi-stage builds with hardened images
-
-Let's create a simple Quarkus REST application that we'll use for a more realistic multi-stage build. Multi-stage builds are the most common pattern we see when using hardeneg images. 
-
-Multi-stage builds allow you to separate the final application artifacts from build time components and to choose the smallest runtimes for production. This keeps with the overall goal of minimal images, reduced attack and risk surfaces. Multi-stage builds provide a good blend of flexibility and control.
-
-This will combine the use of different variants for different purposes.
-
-[[sample-application]]
-== Sample Java Application
-
-A complete Quarkus REST application has been created to demonstrate multi-stage build patterns. Let's examine the generated structure:
-
-=== Step 4: Examine Pre-Built Application
-
-[source,bash,role=execute]
-----
-ls -la ~/sample-app/
-----
-
-Feel free to examine the code if you're interested. For our purposes we need to know the application provides two REST endpoints:
-
-* `/` - Returns JSON greeting with runtime information  
-* `/health` - Returns application health status for orchestrator probes
-
-This application listens on all interfaces (0.0.0.0) port 8080 for container deployment.
-
-[[multi-stage-containerfile]]
-== Multi-Stage Containerfile
-
-Now let's create the Containerfile that builds our application using the multi-stage pattern.
-The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment. 
-Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
-Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
-
-=== Step 5: Examine Multi-Stage Containerfile
-
-A multi-stage Containerfile demonstrates a more dvanced container pattern. Let's examine its structure:
-
-[source,bash,role=execute]
-----
-cat ~/sample-app/Containerfile
-----
-
-.*Expected output:*
-[source,dockerfile,subs="attributes+"]
-----
-include::example$setup/quarkus/Containerfile[]
-----
-<1> **Builder/Runtime Stages**: Uses `openjdk:21-builder` with full JDK + Maven for compilation, then `openjdk:21-runtime` with minimal JRE for deployment
-<2> **Layer Optimization**: Dependencies copied separately from source for efficient rebuilds
-<3> **Quarkus Fast-JAR**: Optimized layer creation with separated `lib/`, `app/`, `quarkus/` directories
-<4> **Security Patterns**: Non-root user (65532), proper file ownership with `--chown`
-
-Multi-stage build architecture concepts
-
-[[building-image]]
-== Building the Image
-
-=== Step 6: Build with Podman
-
-Building a multi-stage image with `podman` is no different than any other image. The stages are automatically handled as part of the standard OCI specification.
-
-[source,bash,role=execute]
-----
-podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
-----
-
-[NOTE]
-====
-The first build downloads Maven dependencies and may take 1-2 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
-====
-
-.*Expected output (excerpt):*
-----
-[1/2] STEP 1/9: FROM {hummingbird-registry}/openjdk:21-builder AS builder 
-[1/2] STEP 2/9: USER root
-[1/2] STEP 3/9: RUN microdnf install -y unzip && microdnf clean all
-[1/2] STEP 4/9: WORKDIR /build
-[1/2] STEP 5/9: COPY mvnw pom.xml ./
-...
-[INFO] BUILD SUCCESS
-...
-[2/2] STEP 1/10: FROM {hummingbird-registry}/openjdk:21-runtime
-...
-[2/2] STEP 10/10: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
-COMMIT hummingbird-demo:v1
-Successfully tagged localhost/hummingbird-demo:v1
-----
-
-[[testing-application]]
-== Testing the Application
-
-=== Step 7: Run and Test the Container
-
-Run the container and test it, use `-s` to quiet any output from `curl`.
-
-[source,bash,role=execute]
-----
-podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
-----
-
-[source,bash,role=execute]
-----
-curl -s http://localhost:8080/ | jq
-----
-
-.*Expected output:*
-----
-{
-  "message": "Hello from Hummingbird!",
-  "runtime": "Java 21.0.10",
-  "platform": "linux",
-  "timestamp": "2026-03-06T12:34:56.789Z"
-}
-----
-
-Test the health endpoint:
-
-[source,bash,role=execute]
-----
-curl -s http://localhost:8080/health | jq
-----
-
-.*Expected output:*
-----
-{
-  "status": "healthy"
-}
-----
-
-=== Step 8: View Container Logs
-
-[source,bash,role=execute]
-----
-podman logs demo
-----
-
-.*Expected output:*
-----
-__  ____  __  _____   ___  __ ____  ______
- --/ __ \/ / / / _ | / _ \/ //_/ / / / __/
- -/ /_/ / /_/ / __ |/ , _/ ,< / /_/ /\ \
---\___\_\____/_/ |_/_/|_/_/|_|\____/___/
-...
-Listening on: http://0.0.0.0:8080
-----
-
-=== Step 9: Stop and Remove Container
-
-[source,bash,role=execute]
-----
-podman stop demo
-----
+How do we remove all of the unnecessary parts? Multi-stage builds provide the answer, and we'll explore that pattern in the next sub-module.
 
 [[summary]]
 == Summary
 
-Congratulations! You've completed Sub-Module 1.1 and built your first applications using Red Hat Hardened Images.
+Congratulations! You've completed Sub-Module 1.1 and explored the foundations of Red Hat Hardened Images.
 
 .*What You've Accomplished*
-✅ Used containerized tools to explore pipeline possibilities +
-✅ Created a simple website and Flask application +
-✅ Examined a sample Quarkus REST application +
-✅ Wrote a multi-stage Containerfile with separate builder + runtime +
-✅ Compared Hardened vs UBI image sizes +
-✅ Tested the running applications and verified health endpoint +
+✅ Explored three types of hardened images (services, tools, runtimes) +
+✅ Used containerized Caddy web server and curl tool +
+✅ Created a Python Flask application +
+✅ Compared UBI and Hardened Image approaches +
+✅ Understood distroless image characteristics +
+✅ Learned about builder vs default variants +
 
 .*Key Takeaways*
 
-**Multi-Stage Build Pattern:**
+**Image Categories:**
 
-* **Stage 1 (Builder)**: Hardened image (~435MB) with all build tools (JDK, Maven)
-* **Stage 2 (Runtime)**: Hardened runtime (~253MB base) with only the JRE
-* **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
+* **Services**: Web servers (Caddy), caching (Memcached), load balancers (HAProxy)
+* **Tools**: Containerized versions of common utilities (curl, git, jq)
+* **Runtimes**: Language platforms (Python, Java, Node.js, Go, .NET)
 
-**Best Practices Applied:**
+**Image Variants:**
 
-* Non-root user (UID 65532)
-* Minimal runtime image (no build tools, no package managers, no compiler)
-* Proper file ownership with `--chown`
-* Dependency layer caching for faster rebuilds
+* **default**: Minimal runtime image with no package managers or shells
+* **builder**: Adds package managers and tools for building applications
+* **fips**: FIPS 140-3 validated crypto modules for compliance
 
-=== Troubleshooting
-https://redhat.atlassian.net/browse/RHEL-144380
-**Issue: Build fails with Maven dependency download errors**
-[source,bash]
-----
-# Clear build cache and rebuild
-podman build --no-cache -t hummingbird-demo:v1 .
+**Distroless Benefits:**
 
-# Check network connectivity
-curl https://repo.maven.apache.org/maven2/
-----
+* Smaller image sizes (50%+ reduction)
+* Reduced attack surface (no unnecessary tools)
+* Faster downloads and deployments
 
-**Issue: Image size larger than expected**
-[source,bash]
-----
-# Verify multi-stage build is working
-podman history hummingbird-demo:v1
+=== Next Steps
 
-# Check if builder stage artifacts leaked into runtime
-podman run --rm hummingbird-demo:v1 ls /build 2>/dev/null && echo "LEAK" || echo "OK"
-----
-
-**Issue: Container fails to start**
-[source,bash]
-----
-# Check logs for errors
-podman logs demo
-
-# Verify the fast-jar layout is intact
-podman run --rm hummingbird-demo:v1 ls -la /app/
-
-# Test Java availability in the runtime image
-podman run --rm hummingbird-demo:v1 java -version
-----
-
-**Issue: Maven build fails inside the container**
-[source,bash]
-----
-# Run builder stage interactively to debug
-podman run --rm -it {ubi-registry}/openjdk-21:latest bash
-
-# Verify Maven wrapper is executable
-ls -la mvnw
-chmod +x mvnw
-./mvnw --version
-----
+In xref:module-01-02-multi-stage.adoc[Sub-Module 1.2: Multi-Stage Builds], you'll learn how to combine builder and runtime variants to create production-ready images that are both flexible during development and minimal in deployment.

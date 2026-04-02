@@ -1,10 +1,10 @@
-= Sub-Module 1.5: Content-Based Layer Splitting with chunkah (Optional)
+= Sub-Module 1.8: Content-Based Layer Splitting with chunkah (Optional)
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~15 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Prerequisites:* Completion of Sub-Module 1.2 (Multi-Stage Builds) +
 *Status:* Optional exercise -- not required for Module 1 completion +
 *Learning Objectives:*
 
@@ -115,7 +115,7 @@ Commands:
 [[exercise-1-split-existing]]
 == Exercise 1: Split an Existing Hummingbird Image
 
-This is the simplest approach. Take the `hummingbird-demo:v1` image you built in Sub-Module 1.1 and run chunkah against it.
+This is the simplest approach. Take the `hummingbird-demo:v1` image you built in Sub-Module 1.2 and run chunkah against it.
 
 === Step 1: Check Original Layer Count
 
