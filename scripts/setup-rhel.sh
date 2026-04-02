@@ -1,17 +1,28 @@
 #! /bin/bash
 # dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
 
+# Container registries
+HUMMINGBIRD_REGISTRY="${HUMMINGBIRD_REGISTRY:-quay.io/hummingbird}"
+UBI_REGISTRY="${UBI_REGISTRY:-registry.access.redhat.com}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
+
+# GitHub repository references
+GITHUB_ORG="${GITHUB_ORG:-rhpds}"
+GITHUB_REPO="${GITHUB_REPO:-hummingbird-showroom}"
+GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
+GITHUB_BASE_URL="https://raw.githubusercontent.com/${GITHUB_ORG}/${GITHUB_REPO}/refs/heads/${GITHUB_BRANCH}"
+
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
 pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
 pip download  --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/
 
-cat > /etc/containers/systemd/pypiserver.container << 'EOF'
+cat > /etc/containers/systemd/pypiserver.container << EOF
 [Unit]
 Description=PyPi Local service
 
 [Container]
-Image=docker.io/pypiserver/pypiserver:latest
+Image=${DOCKER_REGISTRY}/pypiserver/pypiserver:latest
 ContainerName=pypiserver
 PublishPort=8000:8080
 Volume=/var/pypi-cache:/data/packages:z
@@ -49,6 +60,40 @@ curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sud
 grype version
 grype db update
 
+echo "=== Pre-pulling container images for modules 01-03 ==="
+
+# Create a script to pull images in a proper rhel user session
+# Running podman pull via 'su -l rhel -c "podman pull..."' can cause storage
+# layer corruption. Instead, create a script and execute it as rhel user.
+cat > /tmp/pull-images.sh << EOF
+#!/bin/bash
+set -e
+
+echo "Pulling Hummingbird runtime images..."
+podman pull ${HUMMINGBIRD_REGISTRY}/caddy:latest
+podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest
+podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest-builder
+
+echo "Pulling Hummingbird Python images..."
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-builder
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-fips
+
+echo "Pulling Hummingbird OpenJDK images..."
+podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-builder
+podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime
+
+echo "Pulling Docker registry image..."
+podman pull ${DOCKER_REGISTRY}/library/registry:2
+
+echo "✅ Container images pre-pulled successfully"
+EOF
+
+chmod +x /tmp/pull-images.sh
+chown rhel:rhel /tmp/pull-images.sh
+su - rhel -c "/tmp/pull-images.sh"
+rm /tmp/pull-images.sh
+
 cat > /tmp/quarkus.sh <<'EOF'
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
 curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force quarkus@quarkusio
@@ -59,11 +104,11 @@ fi
 
 EOF
 chmod +x /tmp/quarkus.sh
-su -l rhel -c /tmp/quarkus.sh
+su -l rhel -c "/tmp/quarkus.sh"
 rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
-curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/main/scripts/test-fips.py
+curl -o /home/rhel/fips/test-fips.py -L ${GITHUB_BASE_URL}/scripts/test-fips.py
 
 echo "=== Step 5: Scaffolding Quarkus project ==="
 su -l rhel -c "quarkus create app com.example:sample-app \
@@ -131,7 +176,7 @@ EOF
 echo "=== Creating UBI comparison image ==="
 # Create Containerfile.ubi for comparison
 cat > /home/rhel/sample-app/Containerfile.ubi << EOF
-FROM registry.access.redhat.com/ubi9/openjdk-21:latest
+FROM ${UBI_REGISTRY}/ubi9/openjdk-21:latest
 USER root
 RUN microdnf install -y unzip && microdnf clean all
 WORKDIR /build
@@ -229,13 +274,13 @@ localhost {
 EOF
 
 echo "Creating multi-stage Quarkus Containerfile..."
-cat > /home/rhel/sample-app/Containerfile << 'EOF'
+cat > /home/rhel/sample-app/Containerfile << EOF
 # Multi-stage build: builder -> runtime
 
 # ============================================
 # Stage 1: Build stage using builder variant
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-builder AS builder
+FROM ${HUMMINGBIRD_REGISTRY}/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -255,9 +300,9 @@ COPY src ./src
 RUN ./mvnw package -DskipTests -B
 
 # ============================================
-# Stage 2: Runtime stage 
+# Stage 2: Runtime stage
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-runtime
+FROM ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime
 
 WORKDIR /app
 
@@ -281,9 +326,9 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 echo "Creating Flask UBI Containerfile..."
-cat > /home/rhel/flask/Containerfile.ubi << 'EOF'
+cat > /home/rhel/flask/Containerfile.ubi << EOF
 # Stage 1: Base Image from Red Hat UBI
-FROM registry.access.redhat.com/ubi9/ubi
+FROM ${UBI_REGISTRY}/ubi9/ubi
 
 # Install pip to manage application dependencies
 RUN dnf -y install python3-pip && dnf clean all
@@ -323,8 +368,8 @@ EOF
 
 echo "✅ Exercise files created successfully"
 
-curl -o /home/rhel/mod1.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-01-solve.sh
-curl -o /home/rhel/mod2.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-02-solve.sh
-curl -o /home/rhel/mod3.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-03-solve.sh
+curl -o /home/rhel/mod1.sh -L ${GITHUB_BASE_URL}/scripts/module-01-01-solve.sh
+curl -o /home/rhel/mod2.sh -L ${GITHUB_BASE_URL}/scripts/module-01-02-solve.sh
+curl -o /home/rhel/mod3.sh -L ${GITHUB_BASE_URL}/scripts/module-01-03-solve.sh
 
 chown -R rhel:rhel /home/rhel/
