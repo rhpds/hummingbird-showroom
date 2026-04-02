@@ -4,11 +4,11 @@
 [sidebar]
 --
 *Duration:* ~15 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Prerequisites:* Completion of Sub-Module 1.2 (Building with Hummingbird) +
 *Status:* Optional exercise -- not required for Module 1 completion +
 *Learning Objectives:*
 
-* Apply the multi-stage build pattern from Sub-Module 1.1 to Node.js, Java (native), Python, and Go
+* Apply the multi-stage build pattern from Sub-Module 1.2 to Node.js, Java (native), Python, and Go
 * Build a Node.js Express application with the same Buildah-compatible Containerfile pattern
 * Build Quarkus applications as native executables on `ubi-micro`
 * Build Python applications with compiled C extensions using the wheel pattern
@@ -19,7 +19,7 @@
 [[introduction]]
 == Introduction
 
-In Sub-Module 1.1, you built a Quarkus JVM application using the multi-stage pattern: full UBI builder in Stage 1, minimal Hummingbird runtime in Stage 2. That pattern is **universal** -- it works for any language. Only the builder image and the copy commands change.
+In Sub-Module 1.2, you built a Quarkus JVM application using the multi-stage pattern: full UBI builder in Stage 1, minimal Hummingbird runtime in Stage 2. That pattern is **universal** -- it works for any language. Only the builder image and the copy commands change.
 
 This optional exercise walks through production-ready Containerfiles for five additional scenarios across Node.js, Java (native), Python, and Go. Each one uses the same `ARG BUILDER_REGISTRY` / `ARG RUNTIME_REGISTRY` pattern for registry flexibility, and produces a dramatically smaller final image compared to building on a full UBI base.
 
@@ -148,7 +148,7 @@ A GraalVM native executable produces the **smallest possible Java final image** 
 
 === Step 4: Copy the Sample App and Create the Containerfile
 
-This exercise reuses the Quarkus sample-app from Sub-Module 1.1 and compiles it to a native binary using the Mandrel builder image (Red Hat's GraalVM distribution for Quarkus).
+This exercise reuses the Quarkus sample-app from Sub-Module 1.2 and compiles it to a native binary using the Mandrel builder image (Red Hat's GraalVM distribution for Quarkus).
 
 [source,bash,role=execute]
 ----
@@ -679,7 +679,7 @@ The table below shows approximate final image sizes when using Hummingbird runti
 | ~246 MB
 | 60%
 
-| Quarkus JVM (OpenJDK 21) -- Sub-Module 1.1
+| Quarkus JVM (OpenJDK 21) -- Sub-Module 1.2
 | ~621 MB
 | ~272 MB
 | 56%

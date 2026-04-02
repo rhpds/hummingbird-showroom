@@ -1,10 +1,10 @@
-= Sub-Module 1.7: The Aha Moment — Demonstrating chunkah Value (Optional)
+= Sub-Module 1.20: The Aha Moment — Demonstrating chunkah Value (Optional)
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~20 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) and Sub-Module 1.5 (chunkah) +
+*Prerequisites:* Completion of Sub-Module 1.2 (Building with Hummingbird) and Sub-Module 1.8 (chunkah) +
 *Status:* Optional exercise -- not required for Module 1 completion +
 *Learning Objectives:*
 
@@ -18,7 +18,7 @@
 [[introduction]]
 == Introduction
 
-Sub-Module 1.5 taught you *how* chunkah works -- the commands, the multi-stage patterns, and the xattr controls. This module is about *why* it matters: five concrete demonstrations that make the value proposition measurable.
+Sub-Module 1.8 taught you *how* chunkah works -- the commands, the multi-stage patterns, and the xattr controls. This module is about *why* it matters: five concrete demonstrations that make the value proposition measurable.
 
 You will pull real Hummingbird images, split them, simulate security updates, diff layer digests, and calculate exactly how much network traffic you save. By the end, the value of content-based layer splitting will be self-evident from the numbers.
 
@@ -235,7 +235,7 @@ This is the fundamental trade-off. A squashed image is one opaque blob -- any ch
 [[exercise-3-app-isolation]]
 == Exercise 3: App Code Isolation with xattrs (Node.js)
 
-This shows the other half of the value proposition: isolating your application code into its own layer so that code changes never invalidate OS and dependency layers. As you learned in xref:module-01-05-chunkah.adoc#exercise-4-custom-xattr[Sub-Module 1.5 Exercise 4], the `user.component` xattr tells chunkah which files to group together.
+This shows the other half of the value proposition: isolating your application code into its own layer so that code changes never invalidate OS and dependency layers. As you learned in xref:module-01-08-chunkah.adoc#exercise-4-custom-xattr[Sub-Module 1.8 Exercise 4], the `user.component` xattr tells chunkah which files to group together.
 
 === Step 9: Create a Node.js Application
 
@@ -689,4 +689,4 @@ rm -f chunkah-debug.log
 === Next Steps
 
 * xref:module-02-05-chunkah-pipeline.adoc[Sub-Module 2.5: chunkah in CI/CD Pipelines] -- automate these workflows in Tekton/Shipwright
-* xref:module-01-05-chunkah.adoc[Sub-Module 1.5: Content-Based Layer Splitting] -- revisit the mechanics and best practices
+* xref:module-01-08-chunkah.adoc[Sub-Module 1.8: Content-Based Layer Splitting] -- revisit the mechanics and best practices

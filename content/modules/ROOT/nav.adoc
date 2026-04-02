@@ -1,9 +1,12 @@
 * xref:index.adoc[Workshop Overview]
 
 * Module 1: Developer Environment (RHEL)
-** xref:module-01-01-building.adoc[1.1: Building with Hardened Images]
-** xref:module-01-02-security.adoc[1.2: CVE Scanning & SBOMs]
-** xref:module-01-03-selinux.adoc[1.3: Security focused variants and configurations]
+** xref:module-01-01-intro.adoc[1.1: Introduction & Basic Images]
+** xref:module-01-02-multi-stage.adoc[1.2: Multi-Stage Builds]
+** xref:module-01-03-scanning.adoc[1.3: Vulnerability Scanning & SBOMs]
+** xref:module-01-04-signing.adoc[1.4: Image Signing & Attestation]
+** xref:module-01-05-custom-security.adoc[1.5: Custom Security Configurations]
+** xref:module-01-06-selinux.adoc[1.6: SELinux Hardening with udica]
 
 * Module 2: Shipwright and Buildpacks (OpenShift)
 ** xref:module-02-01-buildpacks.adoc[2.1: Building with Hummingbird]
