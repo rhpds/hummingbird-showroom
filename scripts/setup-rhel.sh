@@ -98,6 +98,7 @@ rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
 curl -o /home/rhel/fips/test-fips.py -L ${GITHUB_BASE_URL}/scripts/test-fips.py
+
 echo "=== Step 5: Scaffolding Quarkus project ==="
 su -l rhel -c "quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
