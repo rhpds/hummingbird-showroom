@@ -17,7 +17,7 @@ mkdir -p /var/pypi-cache
 pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
 pip download  --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/
 
-cat > /etc/containers/systemd/pypiserver.container << 'EOF'
+cat > /etc/containers/systemd/pypiserver.container << EOF
 [Unit]
 Description=PyPi Local service
 
@@ -93,7 +93,7 @@ fi
 
 EOF
 chmod +x /tmp/quarkus.sh
-su -l rhel -c /tmp/quarkus.sh
+su -l rhel -c "/tmp/quarkus.sh"
 rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
@@ -263,7 +263,7 @@ localhost {
 EOF
 
 echo "Creating multi-stage Quarkus Containerfile..."
-cat > /home/rhel/sample-app/Containerfile << 'EOF'
+cat > /home/rhel/sample-app/Containerfile << EOF
 # Multi-stage build: builder -> runtime
 
 # ============================================
@@ -315,7 +315,7 @@ ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
 EOF
 
 echo "Creating Flask UBI Containerfile..."
-cat > /home/rhel/flask/Containerfile.ubi << 'EOF'
+cat > /home/rhel/flask/Containerfile.ubi << EOF
 # Stage 1: Base Image from Red Hat UBI
 FROM ${UBI_REGISTRY}/ubi9/ubi
 
