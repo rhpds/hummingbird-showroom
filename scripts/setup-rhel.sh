@@ -1,6 +1,12 @@
 #! /bin/bash
 # dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
 
+# GitHub repository references
+GITHUB_ORG="${GITHUB_ORG:-rhpds}"
+GITHUB_REPO="${GITHUB_REPO:-hummingbird-showroom}"
+GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
+GITHUB_BASE_URL="https://raw.githubusercontent.com/${GITHUB_ORG}/${GITHUB_REPO}/refs/heads/${GITHUB_BRANCH}"
+
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
 pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
@@ -63,7 +69,7 @@ su -l rhel -c /tmp/quarkus.sh
 rm /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
-curl -o /home/rhel/fips/test-fips.py -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/main/scripts/test-fips.py
+curl -o /home/rhel/fips/test-fips.py -L ${GITHUB_BASE_URL}/scripts/test-fips.py
 
 echo "=== Step 5: Scaffolding Quarkus project ==="
 su -l rhel -c "quarkus create app com.example:sample-app \
@@ -323,8 +329,9 @@ EOF
 
 echo "✅ Exercise files created successfully"
 
-curl -o /home/rhel/mod1.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-01-solve.sh
-curl -o /home/rhel/mod2.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-02-solve.sh
-curl -o /home/rhel/mod3.sh -L https://raw.githubusercontent.com/rhpds/hummingbird-showroom/refs/heads/setup-rhel/scripts/module-01-03-solve.sh
+curl -o /home/rhel/validate-mod-01-01.sh -L ${GITHUB_BASE_URL}/scripts/validate-module-01-01.sh
+curl -o /home/rhel/validate-mod-01-02.sh -L ${GITHUB_BASE_URL}/scripts/validate-module-01-02.sh
+curl -o /home/rhel/validate-mod-01-03.sh -L ${GITHUB_BASE_URL}/scripts/validate-module-01-03.sh
+chmod +x /home/rhel/validate-mod-01-*.sh
 
 chown -R rhel:rhel /home/rhel/
