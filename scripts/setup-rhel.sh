@@ -62,26 +62,37 @@ grype db update
 
 echo "=== Pre-pulling container images for modules 01-03 ==="
 
-# Hummingbird images needed across modules
+# Create a script to pull images in a proper rhel user session
+# Running podman pull via 'su -l rhel -c "podman pull..."' can cause storage
+# layer corruption. Instead, create a script and execute it as rhel user.
+cat > /tmp/pull-images.sh << EOF
+#!/bin/bash
+set -e
+
 echo "Pulling Hummingbird runtime images..."
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/caddy:latest"
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest"
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest-builder"
+podman pull ${HUMMINGBIRD_REGISTRY}/caddy:latest
+podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest
+podman pull ${HUMMINGBIRD_REGISTRY}/curl:latest-builder
 
 echo "Pulling Hummingbird Python images..."
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14"
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-builder"
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-fips"
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-builder
+podman pull ${HUMMINGBIRD_REGISTRY}/python:3.14-fips
 
 echo "Pulling Hummingbird OpenJDK images..."
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-builder"
-su -l rhel -c "podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime"
+podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-builder
+podman pull ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime
 
-# Docker.io images
 echo "Pulling Docker registry image..."
-su -l rhel -c "podman pull ${DOCKER_REGISTRY}/library/registry:2"
+podman pull ${DOCKER_REGISTRY}/library/registry:2
 
 echo "✅ Container images pre-pulled successfully"
+EOF
+
+chmod +x /tmp/pull-images.sh
+chown rhel:rhel /tmp/pull-images.sh
+su - rhel -c "/tmp/pull-images.sh"
+rm /tmp/pull-images.sh
 
 cat > /tmp/quarkus.sh <<'EOF'
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
