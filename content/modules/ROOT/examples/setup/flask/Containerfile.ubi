@@ -1,8 +1,8 @@
 # Stage 1: Base Image from Red Hat UBI
 FROM registry.access.redhat.com/ubi9/ubi
 
-# Install pip to manage application dependencies
-RUN dnf -y install python3-pip && dnf clean all # <1>
+# Install pip to manage application dependencies # <1>
+RUN dnf -y install python3-pip && dnf clean all
 
 # Create a non-root user and group for the application # <2>
 # Using a different UID/GID to avoid conflict with existing users in the base image.

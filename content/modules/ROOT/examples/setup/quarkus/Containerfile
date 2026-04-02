@@ -1,9 +1,9 @@
 # Multi-stage build: builder -> runtime
 
 # ============================================
-# Stage 1: Build stage using builder variant
+# Stage 1: Build stage using builder variant # <1>
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-builder AS builder # <1>
+FROM quay.io/hummingbird/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -23,20 +23,20 @@ COPY src ./src
 RUN ./mvnw package -DskipTests -B
 
 # ============================================
-# Stage 2: Runtime stage
+# Stage 2: Runtime stage # <1>
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-runtime # <1>
+FROM quay.io/hummingbird/openjdk:21-runtime
 
 WORKDIR /app
 
-# Copy the Quarkus fast-jar layout
-COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/ # <3>
+# Copy the Quarkus fast-jar layout # <3>
+COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/lib/ ./lib/
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/*.jar ./
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/app/ ./app/
 COPY --from=builder --chown=65532:65532 /build/target/quarkus-app/quarkus/ ./quarkus/
 
-# Run as non-root user
-USER 65532 # <4>
+# Run as non-root user # <4>
+USER 65532
 
 # Expose port
 EXPOSE 8080
