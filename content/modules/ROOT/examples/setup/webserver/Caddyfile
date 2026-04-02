@@ -1,0 +1,10 @@
+{
+    http_port 8080
+    https_port 8443 # <1>
+}
+
+localhost {
+    tls internal # <2>
+    root * /usr/share/caddy
+    file_server
+}
