@@ -12,11 +12,6 @@
 * Understand provenance and trust chains
 --
 
-[IMPORTANT]
-====
-This workshop environment has been optimized for learning efficiency. Required tools (cosign {cosign-version}, syft {syft-version}, grype {grype-version}), directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
-====
-
 [[introduction]]
 == Introduction
 
@@ -29,7 +24,7 @@ In this sub-module, you'll use `cosign` to digitally sign your container images 
 
 We've looked for known vulnerabilities, detailed the contents, and are ready to publish. How do we ensure that the image that comes out of the registry matches what went in? A common way to ensure a chain of trust is by digitally signing images. One tool to manage container signing is `cosign`.
 
-Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll start a lightweight local registry and push the image there before signing.
+Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll push the image to Quay for signing.
 
 [TIP]
 ====
@@ -42,7 +37,7 @@ Cosign signs and verifies images stored in OCI registries. Since our image lives
 
 === Step 1: Log into Quay and re-tag an image
 
-Using `cosign` requires a container registry, and Red Hat Quay is available in this lab to your user.
+An organization for your lab user has already been created, you can log into Quay with `podman` using the same credentials as the UI.
 
 [source,bash,role=execute,subs=attributes+]
 ----
@@ -66,7 +61,7 @@ podman tag hummingbird-demo:v1 $QUAY_ORG/hummingbird-demo:v1
 podman push $QUAY_ORG/hummingbird-demo:v1
 ----
 
-Once the image is in the local registry, we can get the digest for use with `cosign`.
+Once the image is in the registry, we get the digest for use with `cosign`.
 [source,bash,role=execute,subs=attributes+]
 ----
 IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' $QUAY_ORG/hummingbird-demo:v1)
@@ -237,6 +232,20 @@ This confirms:
 * The SBOM was signed by the holder of `cosign.key`
 * The SBOM contains the same package information as expected
 
+You can also download the SBOM for use locally. We're using attestation instead of attachments for SBOMs to improve verification. Attachments are deprecated in `cosign` and will eventually be removed.
+
+[source,bash,role=execute]
+----
+cosign download attestation --output-file cosign.sbom \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+The SBOM is standard JSON and can be proccessed with any standard tool.
+[source,bash,role=execute]
+----
+file cosign.sbom
+jq -r '.payload' cosign.sbom | base64 -d | jq '.predicate.packages | length'
+----
 [[summary]]
 == Summary
 
