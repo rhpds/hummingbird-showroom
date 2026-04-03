@@ -44,35 +44,35 @@ Cosign signs and verifies images stored in OCI registries. Since our image lives
 
 Using `cosign` requires a container registry, and Red Hat Quay is available in this lab to your user.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 podman login {quay_hostname} --username {quay_user} --password {quay_password}
 ----
 
 We'll be using the hostname and username combination a lot for this sub-module, so create an environment variable to clean up some of the later commands. You can also refresh your memory on the Quay URL or username with `echo`.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 export QUAY_ORG="{quay_hostname}/{quay_user}"
 ----
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 podman tag hummingbird-demo:v1 $QUAY_ORG/hummingbird-demo:v1
 ----
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 podman push $QUAY_ORG/hummingbird-demo:v1
 ----
 
 Once the image is in the local registry, we can get the digest for use with `cosign`.
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' $QUAY_ORG/hummingbird-demo:v1)
 ----
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 echo "Image digest: ${IMAGE_DIGEST}"
 ----
@@ -288,7 +288,7 @@ In xref:module-01-05-custom-security.adoc[Sub-Module 1.5: Custom Security Config
 **Issue: Cosign sign/verify fails with UNAUTHORIZED error**
 
 Cosign requires images to be in an OCI registry -- it cannot sign images in local Podman storage. Ensure you are logged into Quay and the image has been pushed:
-[source,bash]
+[source,bash,role=execute,subs=attributes+]
 ----
 # Verify you're logged into Quay
 podman login {quay_hostname} --get-login
