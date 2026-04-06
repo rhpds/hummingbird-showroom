@@ -133,7 +133,7 @@ The signature is stored as an OCI artifact in the same repository as your image.
 
 === Step 4: Verify the Signature
 
-You can use `cosign` to create signatures as well as verify the exsisting signature of a container image.
+You can use `cosign` to create signatures as well as verify the existing signature of a container image.
 
 Verify the image signature you just created. In a production setting, your chain of trust would use the official public sources.
 
@@ -237,7 +237,7 @@ cosign download attestation --output-file cosign.sbom \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
 ----
 
-The SBOM is standard JSON and can be proccessed with any standard tool.
+The SBOM is standard JSON and can be processed with any standard tool.
 [source,bash,role=execute]
 ----
 file cosign.sbom

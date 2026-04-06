@@ -51,11 +51,11 @@ This application listens on all interfaces (0.0.0.0) port 8080 for container dep
 Now let's create the Containerfile that builds our application using the multi-stage pattern.
 The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment.
 Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
-Not only do all of the `maven` build artifacts stay in the first stage, but so do any addtional packages or tools we mave have needed to get a working build environment.
+Not only do all of the `maven` build artifacts stay in the first stage, but so do any additional packages or tools we may have needed to get a working build environment.
 
 === Step 2: Examine Multi-Stage Containerfile
 
-A multi-stage Containerfile demonstrates a more dvanced container pattern. Let's examine its structure:
+A multi-stage Containerfile demonstrates a more advanced container pattern. Let's examine its structure:
 
 [source,bash,role=execute]
 ----

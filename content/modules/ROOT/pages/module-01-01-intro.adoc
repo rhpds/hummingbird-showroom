@@ -97,7 +97,7 @@ curl http://localhost:8080
 
 Network service images are fairly straightforward, but what about tools? Why would we want a containerized version of `curl` available?
 
-On the current system, we have `curl` installed as an RPM. But, what if you were building on a system without `curl` and without the privileges to install new packages? This can be a common occurence in CI/CD runners, systems used to build software in a pipeline often with minimal packages installed.
+On the current system, we have `curl` installed as an RPM. But, what if you were building on a system without `curl` and without the privileges to install new packages? This can be a common occurrence in CI/CD runners, systems used to build software in a pipeline often with minimal packages installed.
 
 In that case we could run the same test as we did with the local package using a known good and specific version of `curl` via `podman`
 
@@ -115,8 +115,8 @@ Go head and stop the webserver.
 podman stop webserver
 ----
 
-Containerized versions of common tools let's us provide a known good, common set of capabilities to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact same tool image instead of requiring local tools and the assocciated maintenance.
-We can be sure we've got the right images by verifing the signature with a tool like `cosign`. We'll cover more on that later.
+Containerized versions of common tools let's us provide a known good, common set of capabilities to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact same tool image instead of requiring local tools and the associated maintenance.
+We can be sure we've got the right images by verifying the signature with a tool like `cosign`. We'll cover more on that later.
 
 [[runtimes]]
 === Simple runtime examples
@@ -154,10 +154,10 @@ We'll ship this application in two ways to explore some differences between the 
 
 Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined.
 
-Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependcies, mimicing the use of a secure enterprise index like Red Hat Trusted LIbraries.
+Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependencies, mimicking the use of a secure enterprise index like Red Hat Trusted Libraries.
 [NOTE]
 ====
-Throughout this lab, you'll see files marked with circled numbers and a numbered list following the file. These are to help draw your attention to particular parrts of the file. These are part of the source file and also visible in the terminal via `cat` or `vi`. The numbers will not be included if you copy from one of the blocks.
+Throughout this lab, you'll see files marked with circled numbers and a numbered list following the file. These are to help draw your attention to particular parts of the file. These are part of the source file and also visible in the terminal via `cat` or `vi`. The numbers will not be included if you copy from one of the blocks.
 ====
 
 First, lets look at a typical UBI based approach.
@@ -209,7 +209,7 @@ We've verified the UBI Containerfile results in a working Flask application, now
 Our UBI example creates a non-root `appuser` to run the application. The hardened image already provides a default non-root user, so we can skip that step.
 This means we do need to make sure we're running the commands as the correct user for each step however. 
 
-We'll demonstrate this by installing the application dependecies globally as `root` instead of working in a virtual environment. This workflow is fine since we're only ever installing one application in this image, but your choice should make the most sense for your applications and environment.
+We'll demonstrate this by installing the application dependencies globally as `root` instead of working in a virtual environment. This workflow is fine since we're only ever installing one application in this image, but your choice should make the most sense for your applications and environment.
 
 In practice those changes give us the following Containerfile
 
@@ -231,7 +231,7 @@ COPY --chown=65532 index.html static/
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Switch to root from the non-root user to install dependcies
+# Switch to root from the non-root user to install dependencies
 # By default, these install in /tmp/.local for the non-root user
 USER root
 RUN pip install --index-url http://localhost:8000/simple flask
@@ -253,9 +253,9 @@ Distroless characteristics:
 
 <.> Change our base image to the hardened `default` image
 <.> Change the user in `COPY` to the provided default UID instead of adding `appuser`
-<.> Reset the USER with the provded ENV variable
+<.> Reset the USER with the provided ENV variable
 
-Let's go ahead and build our app on the `dafault` variant.
+Let's go ahead and build our app on the `default` variant.
 [source,bash,role=execute]
 ----
 podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
@@ -304,7 +304,7 @@ This not only includes the properties, but also the reasoning behind any changes
 
 === Step 3: Examine our two images
 
-There are some other differences in the packages installed and the tools avaialble. List the images just built. Note that the hardened image is just over half the size of the UBI based image.
+There are some other differences in the packages installed and the tools available. List the images just built. Note that the hardened image is just over half the size of the UBI based image.
 
 [source,bash,role=execute]
 ----
@@ -317,7 +317,7 @@ REPOSITORY              TAG         IMAGE ID      CREATED            SIZE
 localhost/my-flasksite  hi          7355f3daefdc  About a minute ago  182 MB
 localhost/my-flasksite  ubi         472a6a9ebee8  9 minutes ago       254 MB
 ----
-The new image is smaller, but we've included everything in the `builder` image in our application, including a shell that we won't want in prodcution.
+The new image is smaller, but we've included everything in the `builder` image in our application, including a shell that we won't want in production.
 
 [source,bash,role=execute]
 ----
