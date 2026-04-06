@@ -11,11 +11,6 @@
 * Compare Hardened Images vs UBI
 --
 
-[IMPORTANT]
-====
-This workshop environment has been optimized for learning efficiency. Required tools (cosign {cosign-version}, syft {syft-version}, grype {grype-version}), directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
-====
-
 [[introduction]]
 == Introduction
 
@@ -117,7 +112,7 @@ No vulnerabilities found
 Notice that `grype` not only examines packages like `rpms` but also `java-archive` packages, binaries, and other files and metadata sources.  You may see findings from the application dependencies here.
 [NOTE]
 ====
-hardened base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean.
+Hardened base images typically have **zero or near-zero CVEs** at ship time, so the scan should be clean but may vary from the time of writing depending on known CVEs in any layer. For example, during lab development an issue was found and fixed in `netty` which is a runtime dependency for the application in both images and was found in both scans.
 ====
 
 === Step 2: Compare with Full UBI Image
@@ -130,7 +125,7 @@ grype hummingbird-demo:ubi --only-fixed
 ----
 [NOTE]
 ====
-The `--only-fixed` flag shows only vulnerabilities with available patches. This is useful because it focuses on actionable issues.
+The `--only-fixed` flag is one of several filters available and shows only vulnerabilities with available patches. This is useful because it focuses on immediate issues and not `wontfix` issues set by the distro.  To see the full output, run the command again without the flag.
 ====
 
 .*Expected output (varies, but typically):*
@@ -140,7 +135,7 @@ The `--only-fixed` flag shows only vulnerabilities with available patches. This 
    └── by status:   29 fixed, 189 not-fixed, 189 ignored
 <cut>
 ----
-Take particular note of the `Type` column in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are inclueded in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
+Take particular note of the `Type` column in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are included in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
 
 [IMPORTANT]
 ====
@@ -175,7 +170,7 @@ syft hummingbird-demo:v1 -o table
 ----
 
 .*What's in the SBOM:*
-Noice that `syft` shows multiple types of packages. The SBOM includes every package in your container:
+Notice that `syft` shows multiple types of packages. The SBOM includes every package in your container:
 
 * Quarkus runtime and its Java dependencies (Netty, Vert.x, Jackson, SmallRye, etc.)
 * OpenJDK 21 JRE and system RPM libraries from base image (glibc, NSS, etc.)
@@ -195,7 +190,7 @@ glibc                         2.42-10.hum1             rpm
 nss                           3.119.1-1.1.hum1         rpm
 ----
 
-For a quick look, a table might be fine, but for compliance, we need something we can publish with the image in a registry. A machine-readable version will let various tools to verify contents, examine properities, and more. There are several formats for machine-readable SBOMs, we'll use Software Package Data Exchange (SPDX) in this exercise.
+For a quick look, a table might be fine, but for compliance, we need something we can publish with the image in a registry. A machine-readable version will let various tools to verify contents, examine properties, and more. There are several formats for machine-readable SBOMs, we'll use Software Package Data Exchange (SPDX) in this exercise.
 
 [source,bash,role=execute]
 ----
