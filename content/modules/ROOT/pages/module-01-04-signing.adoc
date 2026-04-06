@@ -79,7 +79,7 @@ Image digest: sha256:abc123...
 
 [NOTE]
 ====
-We capture the image **digest** (`sha256:...`) rather than relying on the `:v1` tag. Cosign requires (and future versions will enforce) digest-based references so you always sign exactly the image you intend. The `IMAGE_DIGEST` variable is used in all subsequent cosign commands.
+Cosign 2.0 and later requires (and future versions will enforce) digest-based references so you always sign exactly the image you intend. Earlier versions would allow the use of a tag like `:v1`, but since tags on images can change this is considered insecure. The `IMAGE_DIGEST` variable is used in all subsequent cosign commands.
 ====
 
 === Step 2: Generate Signing Keys
@@ -129,10 +129,7 @@ cosign sign --tlog-upload=false \
 Pushing signature to: {quay_hostname}/{quay_user}/hummingbird-demo
 ----
 
-[NOTE]
-====
 The signature is stored as an OCI artifact in the same repository as your image. Cosign appends the signature as a separate manifest with a `.sig` tag suffix.
-====
 
 === Step 4: Verify the Signature
 
@@ -161,7 +158,7 @@ The following checks were performed on each of these signatures:
 
 [NOTE]
 ====
-The tlog **WARNING** is expected. We skipped the Rekor transparency log when signing (Step 3), so we must also skip tlog verification here. In production, both signing and verification should use the transparency log.
+The tlog **WARNING** is expected. We skipped the Rekor transparency log when signing (Step 3), so we must also skip tlog verification here. In production, both signing and verification should use the transparency log. This was also introduced as a default in `cosign` 2.0.
 ====
 
 We've succesfully signed our image and verified the signature, meaning we can be confident the images are the same on both ends. In a real world example, your key would come from some other source.

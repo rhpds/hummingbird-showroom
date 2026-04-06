@@ -13,24 +13,19 @@
 * Understand double-hardening (image + SELinux)
 --
 
-[IMPORTANT]
-====
-This workshop environment has been optimized for learning efficiency. Required tools, directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
-====
-
 [[introduction]]
 == Introduction
 
 In xref:module-01-05-custom-security.adoc[Sub-Module 1.5], you customized hardened images at the image level with custom CAs and FIPS compliance. Now you'll add a second, complementary layer of security at the **kernel level** using SELinux.
 
-This module demonstrates how to generate custom SELinux policies tailored to distroless containers, creating **double-hardening**: minimal attack surface from the image plus restrictive mandatory access control from the kernel.
+This module demonstrates how to generate custom SELinux policies tailored to distroless containers, creating **defense-in-depth**: minimal attack surface from the image plus restrictive mandatory access control from the kernel.
 
 [[selinux]]
-== Intro to SELinux
+== Intro to SELinux container policies
 
 SELinux (Security-Enhanced Linux) provides mandatory access control (MAC) that can enforce fine-grained security policies on containers. By default, all containers run under the `container_t` SELinux type, which is a one-size-fits-all policy that's often too permissive for some use cases and too restrictive for others.
 
-**udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. Combined with Red Hat Hardened Images, this provides **extra hardening**: a minimal attack surface at the image level plus restrictive SELinux policies at the kernel level.
+**udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. 
 
 [[the-problem-udica-solves]]
 == The Problem udica Solves
@@ -136,7 +131,7 @@ Run the quarkus application container with the default `container_t` policy, bin
 
 [source,bash,role=execute]
 ----
-podman run -d \
+podman run --rm -d \
   --name demo-policy-run \
   --env container=podman \
   -v /opt/myapp/config:/app/config:ro,Z \
@@ -286,12 +281,12 @@ Stop the first run and restart with the custom policy applied:
 
 [source,bash,role=execute]
 ----
-podman stop demo-policy-run && podman rm demo-policy-run
+podman stop demo-policy-run
 ----
 
 [source,bash,role=execute]
 ----
-podman run -d \
+podman run --rm -d \
   --name demo-selinux \
   --env container=podman \
   --security-opt label=type:hummingbird_demo.process \
@@ -356,7 +351,7 @@ These two layers are **independent and complementary** -- compromising one doesn
 
 [source,bash,role=execute]
 ----
-podman stop demo-selinux && podman rm demo-selinux
+podman stop demo-selinux
 ----
 
 [[summary]]
@@ -399,7 +394,7 @@ Congratulations! You've completed Sub-Module 1.6 and learned the fundamentals of
 
 You've completed the core developer environment modules for Red Hat Hardened Images! You've learned to build minimal images, scan and sign them, customize security configurations, and apply kernel-level access controls.
 
-Continue exploring advanced topics in the remaining modules, or move to Module 2 to learn platform-level hardened image deployment with Shipwright and OpenShift.
+Move to Module 2 to learn platform-level hardened image deployment with Shipwright and OpenShift.
 
 === Troubleshooting
 

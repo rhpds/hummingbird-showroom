@@ -67,12 +67,13 @@ cat ~/sample-app/Containerfile
 ----
 include::example$setup/quarkus/Containerfile[]
 ----
+Multi-stage build architecture concepts
+
 <1> **Builder/Runtime Stages**: Uses `openjdk:21-builder` with full JDK + Maven for compilation, then `openjdk:21-runtime` with minimal JRE for deployment
 <2> **Layer Optimization**: Dependencies copied separately from source for efficient rebuilds
 <3> **Quarkus Fast-JAR**: Optimized layer creation with separated `lib/`, `app/`, `quarkus/` directories
 <4> **Security Patterns**: Non-root user (65532), proper file ownership with `--chown`
 
-Multi-stage build architecture concepts
 
 [[building-image]]
 == Building the Image
@@ -85,11 +86,6 @@ Building a multi-stage image with `podman` is no different than any other image.
 ----
 podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
 ----
-
-[NOTE]
-====
-The first build downloads Maven dependencies and may take 1-2 minutes. Subsequent builds are much faster thanks to layer caching -- only layers with changed content are rebuilt.
-====
 
 .*Expected output (excerpt):*
 ----
@@ -113,7 +109,7 @@ Successfully tagged localhost/hummingbird-demo:v1
 
 === Step 4: Run and Test the Container
 
-Run the container and test it, use `-s` to quiet any output from `curl`.
+Run the container and test the API endpoints, use `-s` to quiet any non-essential output from `curl`.
 
 [source,bash,role=execute]
 ----

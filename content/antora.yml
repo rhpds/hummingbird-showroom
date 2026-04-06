@@ -10,11 +10,11 @@ asciidoc:
     # page-toclevels: -1               # <- This will remove the TOC that appear in the right sidebar at wider resolutions
     page-pagination: true
     workshop-title: "LB2865: Container Hardening: Zero to Hero with Red Hat Hardened Images"
-    workshop-duration: '90 minutes'
+    workshop-duration: '75 minutes'
 
-    weblab-duration: '20 minutes'
+    weblab-duration: '15 minutes'
     # Module 1 - Developer Environment
-    lab1-duration: '20 minutes'
+    lab1-duration: '30 minutes'
     lab1-audience: 'Developers (Intermediate to Advanced)'
     podman-version: '5.7.1'
     fedora-version: '43'

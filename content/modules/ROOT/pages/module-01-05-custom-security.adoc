@@ -11,11 +11,6 @@
 * Understand algorithm enforcement in FIPS mode
 --
 
-[IMPORTANT]
-====
-This workshop environment has been optimized for learning efficiency. Required tools, directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
-====
-
 [[introduction]]
 == Introduction
 
@@ -44,16 +39,17 @@ cat ~/webserver/Caddyfile
 ----
 include::example$setup/webserver/Caddyfile[]
 ----
+Custom Caddyfile configuration
+
 <1> **New SSL Port**: Listening on HTTP (8080) and HTTPS (8443)
 <2> **Internal CA**: Automatic self-signed certificate generation with `tls internal`
 
-Custom Caddyfile configuration
 
 The other two lines are the same as the shipped default setting the path `caddy` will serve files from.
 
 === Step 2: Build SSL-enabled Caddy image
 
-Create a new `Containerfile` to add this custom Caddyfile and build a new webserver.
+Replace the earlier `Containerfile` to add this custom Caddyfile and build a new webserver.
 [source,bash,role=execute,subs=attributes+]
 ----
 cat  > ~/webserver/Containerfile << 'EOF'
@@ -74,7 +70,7 @@ podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
 Let's only expose the HTTPS port this time.
 [source,bash,role=execute]
 ----
-podman run -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+podman run --rm -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
 ----
 
 With the new SSL enabled Caddy site running, we can test against the new port
@@ -158,7 +154,7 @@ podman run --net=host --rm -it curl:local-ca https://localhost:8443
 Stop the Caddy SSL server now that we've finished testing.
 [source,bash,role=execute]
 ----
-podman stop caddy-ssl && podman rm caddy-ssl
+podman stop caddy-ssl
 ----
 
 [[fips]]
@@ -166,7 +162,7 @@ podman stop caddy-ssl && podman rm caddy-ssl
 
 In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satifying the needs of a containerized application that must meet the Federal Information Processing Standards (FIPS) 140-3 standard for security and interoperability.
 
-While not this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring additional compliance measures on top of the baseline images and how these variants combine.
+While not this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring additional compliance measures on top of the baseline images and how these variants combine. It also shows how you can separate container enforcement from host enforcement to provide a better overall application security posture.
 
 The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance. Like the `default`, a `-builder` variant exists to support multi-stage and other build patternss.
 
@@ -185,6 +181,9 @@ We can still demonstrate how the container restricts algorithms as the image enf
 [source,bash,role=execute]
 ----
 cat /proc/sys/crypto/fips_enabled
+----
+----
+0
 ----
 
 === Step 8: Create test Python Containerfile
@@ -272,11 +271,11 @@ Running FIPS Validation Checks
 
 ✗ NOT FIPS CAPABLE
 ----
-The test program highlights a few details about the algorithms and providers available to an application in this image.
+The test program highlights the algorithms and providers available to an application built with the `default` image.
 
-<.> The specialized compliant module for OpenSSL is not present in the `default` image
-<.> The specific algorithms approved for use in FIPS environments are available
-<.> The insecure algorithms like MD5 have not been disabled
+<.> The specialized compliant module for OpenSSL is not present
+<.> The specific algorithms approved for use in FIPS environments *are available*
+<.> The insecure algorithms like MD5 *have not been disabled*
 
 Running this image in a FIPS environment would not comply with the standard.
 
@@ -306,8 +305,8 @@ Running FIPS Validation Checks
 Here the test programs shows us new details of the inner workings of the `fips` variant.
 
 <.> The main OpenSSL version is the same as in the `default` image
-<.> The compliant module is present and reporting a version different than the main OpenSSL package (which is expected)
-<.> The image has blocked the disallowed algorithms.
+<.> The compliant module *is present and reporting a version* different than the main OpenSSL package (which is expected)
+<.> The image has *blocked the disallowed algorithms*.
 
 This image could then be used as part of a FIPS environment.
 
