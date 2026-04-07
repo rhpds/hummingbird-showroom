@@ -2,6 +2,100 @@
 
 This directory contains automation scripts for workshop deployment and management.
 
+## Module Automation Scripts
+
+The workshop provides two types of automation scripts for module exercises:
+
+### Solve Scripts (`solve-module-*.sh`)
+
+**Purpose:** Complete module exercises on behalf of users
+- **Use case:** User catchup, skip ahead to later modules, demonstrate completed state
+- **Approach:** Autonomous execution - runs all required actions without user intervention
+- **Focus:** Action steps only (builds, runs, creates, installs)
+- **Prerequisites:** Automatically builds missing artifacts (e.g., images)
+- **Verification:** Minimal - focuses on completing work, not testing
+
+**Available solve scripts:**
+- `solve-module-01-01.sh` - Introduction & Basic Images
+- `solve-module-01-02.sh` - Multi-Stage Builds
+- `solve-module-01-03.sh` - Vulnerability Scanning & SBOMs
+- `solve-module-01-04.sh` - Image Signing & Attestation
+- `solve-module-01-05.sh` - Custom Security Configurations
+- `solve-module-01-06.sh` - SELinux Hardening with udica
+- `solve-module-01-07.sh` - Advanced SELinux
+- `solve-module-01-08.sh` - chunkah Layer Splitting (Optional)
+
+**Usage:**
+```bash
+# Run any solve script independently after setup
+./scripts/solve-module-01-06.sh
+```
+
+**Key features:**
+- Fully autonomous - can run standalone after `setup-rhel.sh`
+- Auto-builds prerequisites if missing (e.g., hummingbird-demo:v1)
+- Validates setup files exist (errors with "contact instructor" if missing)
+- Does NOT ask users to run other scripts
+- Streamlined output - major steps only
+
+### Validation Scripts (`validate-module-*.sh`)
+
+**Purpose:** Ensure exercises can be completed as written
+- **Use case:** CI/CD testing, module development, content verification
+- **Approach:** Comprehensive execution with extensive testing
+- **Focus:** All steps including verification, testing, and status checks
+- **Verification:** Extensive wait loops, curl tests, image inspection
+- **Output:** Detailed progress reporting and success indicators
+
+**Available validation scripts:**
+- `validate-bootstrap.sh` - Environment setup validation
+- `validate-module-01-01.sh` - Introduction & Basic Images
+- `validate-module-01-02.sh` - Multi-Stage Builds
+- `validate-module-01-03.sh` - Vulnerability Scanning & SBOMs
+
+**Usage:**
+```bash
+# Validate a module can be completed
+./scripts/validate-module-01-01.sh
+```
+
+### Comparison: Solve vs Validate
+
+| Aspect | Solve Scripts | Validate Scripts |
+|--------|---------------|------------------|
+| **Purpose** | Complete on behalf of user | Verify exercises work |
+| **Size** | ~50-160 lines | ~150-270 lines |
+| **Prerequisites** | Auto-builds if missing | Expects correct state |
+| **Wait loops** | Minimal (2-5s sleeps) | Extensive retry logic |
+| **Testing** | None | curl, inspect, status checks |
+| **Output** | Major steps only | Detailed progress |
+| **Use case** | User catchup, demos | CI/CD, testing |
+
+### Example Workflow
+
+**User skips to module 01-06:**
+```bash
+# After setup-rhel.sh, run solve script
+./scripts/solve-module-01-06.sh
+
+# Script automatically:
+# - Checks for /opt/myapp/ (errors if missing - setup issue)
+# - Builds hummingbird-demo:v1 (prerequisite from module 01-02)
+# - Generates and loads SELinux policy
+# - Completes in ~2-3 minutes
+```
+
+**CI/CD validation:**
+```bash
+# Validate all modules work correctly
+for script in scripts/validate-module-01-*.sh; do
+    echo "Validating $(basename $script)..."
+    $script || exit 1
+done
+```
+
+---
+
 ## Workshop User Setup
 
 ### `setup-workshop-users.sh`

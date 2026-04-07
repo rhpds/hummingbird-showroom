@@ -1,10 +1,10 @@
-= Sub-Module 1.8: Layering Tomcat on Hummingbird (Optional)
+= Sub-Module 1.21: Layering Tomcat on Hummingbird (Optional)
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~15 minutes +
-*Prerequisites:* Completion of Sub-Module 1.1 (Building with Hummingbird) +
+*Prerequisites:* Completion of Sub-Module 1.2 (Building with Hummingbird) +
 *Status:* Optional exercise -- not required for Module 1 completion +
 *Learning Objectives:*
 

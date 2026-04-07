@@ -1,0 +1,424 @@
+= Sub-Module 1.6: SELinux Hardening with udica
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 12-15 minutes +
+*Learning Objectives:*
+
+* Generate custom SELinux policies from `podman inspect` output
+* Prepare host directories with proper SELinux labels for bind mounts
+* Read and understand generated CIL policy rules line by line
+* Apply and verify custom policies for distroless containers
+* Understand double-hardening (image + SELinux)
+--
+
+[[introduction]]
+== Introduction
+
+In xref:module-01-05-custom-security.adoc[Sub-Module 1.5], you customized hardened images at the image level with custom CAs and FIPS compliance. Now you'll add a second, complementary layer of security at the **kernel level** using SELinux.
+
+This module demonstrates how to generate custom SELinux policies tailored to distroless containers, creating **defense-in-depth**: minimal attack surface from the image plus restrictive mandatory access control from the kernel.
+
+[[selinux]]
+== Intro to SELinux container policies
+
+SELinux (Security-Enhanced Linux) provides mandatory access control (MAC) that can enforce fine-grained security policies on containers. By default, all containers run under the `container_t` SELinux type, which is a one-size-fits-all policy that's often too permissive for some use cases and too restrictive for others.
+
+**udica** (Universal Container Policy) generates custom SELinux security profiles tailored to each container's specific needs. 
+
+[[the-problem-udica-solves]]
+== The Problem udica Solves
+
+=== Default container_t Trade-Off
+
+For all containers, there's just one general SELinux policy. The default container type `container_t` is:
+
+* **Too strict** for some use cases (e.g., bind-mounting host directories, accessing devices)
+* **Too permissive** for others (e.g., allows access to resources the container doesn't actually need)
+
+There's no policy that perfectly matches any specific container's actual needs.
+
+=== What udica Does
+
+**udica** generates custom SELinux security profiles by:
+
+1. **Inspecting** the container's JSON configuration (from `podman inspect`)
+2. **Extracting** requirements: mountpoints, exposed ports, capabilities
+3. **Combining** rules from template blocks:
+   - `base_container.cil` -- always included, mirrors baseline `container_t` rules
+   - `net_container.cil` -- added when container exposes ports; tightened to only the specific port's SELinux label
+   - `home_container.cil` -- added when `/home` is bind-mounted
+4. **Generating** a custom Common Intermediate Language (CIL) policy file
+
+[[specific-challenge]]
+== The Specific Distroless Challenge
+
+With a standard UBI container, the workflow is:
+
+1. Run container interactively
+2. Exercise functionality (click buttons, run commands)
+3. Inspect with udica
+4. Generate policy based on observed behavior
+
+**With distroless containers, you cannot run interactively -- there is no shell.**
+
+=== The Solution
+
+The policy generation relies on `podman inspect` output and audit log analysis, not on runtime observation:
+
+. Run the container with the default `container_t` policy, using realistic configuration and mounts
+. Let it start (it may work or produce AVC denials in the audit log)
+. Capture `podman inspect` output
+. Feed that to udica to generate the tailored CIL policy
+. *Optionally* augment the policy with AVC denials from the audit log using `--append-rules`
+
+[[installation]]
+== Installation
+
+=== Step 1: Confirm SELinux is Enforcing
+
+[source,bash,role=execute]
+----
+getenforce
+----
+
+.*Expected output:*
+----
+Enforcing
+----
+
+=== Step 2: Verify udica Installation
+
+[source,bash,role=execute]
+----
+udica --version
+----
+
+.*Expected output:*
+----
+0.2.8
+----
+
+[[example-bind-mount]]
+== Example: Quarkus App with Bind Mounts
+
+We'll generate a custom SELinux policy for the `hummingbird-demo:v1` application built in xref:module-01-02-multi-stage.adoc[Sub-Module 1.2], this time with **bind-mounted host directories** for configuration and logs. This is where udica provides the most value -- the default `container_t` policy doesn't know about your specific mount points.
+
+=== Step 3: Examine Pre-Configured Host Directories
+
+Host directories for bind mounts have been pre-configured with proper SELinux contexts. Let's examine the setup:
+
+[source,bash,role=execute]
+----
+ls -lZ /opt/myapp/
+----
+
+.*Expected output:*
+----
+drwxr-xr-x. <user> <user> unconfined_u:object_r:container_file_t:s0 config
+drwxr-xr-x. <user> <user> unconfined_u:object_r:container_file_t:s0 logs
+----
+
+[NOTE]
+====
+`container_file_t` is the SELinux type that containers are allowed to read/write. By labeling the host directories with this type, we tell SELinux these paths are intended for container use. udica will detect these labels and generate appropriately scoped rules.
+====
+
+=== Step 4: First Run with Default Policy
+
+Run the quarkus application container with the default `container_t` policy, bind mounts, and an exposed port:
+
+[source,bash,role=execute]
+----
+podman run --rm -d \
+  --name demo-policy-run \
+  --env container=podman \
+  -v /opt/myapp/config:/app/config:ro,Z \
+  -v /opt/myapp/logs:/app/logs:rw,Z \
+  -p 8080:8080 \
+  hummingbird-demo:v1
+----
+
+[NOTE]
+====
+* `--env container=podman` is **required** for udica to correctly identify the container engine in the inspection JSON
+* `:ro,Z` means read-only with automatic SELinux relabeling
+* `:rw,Z` means read-write with automatic SELinux relabeling
+* The `Z` flag tells Podman to relabel the content with a private label for this container
+====
+
+[source,bash,role=execute]
+----
+podman ps -a --filter name=demo-policy-run
+----
+
+We should be able to hit the same endpoints in the app as in our first module.
+[source,bash,role=execute]
+----
+curl -s http://localhost:8080/ | jq
+----
+
+.*Expected output:*
+----
+{
+  "message": "Hello from Hummingbird!",
+  "runtime": "Java 21.0.10",
+  "platform": "linux",
+  "timestamp": "2026-03-23T19:44:28.921499086Z"
+}
+----
+
+=== Step 5: Generate udica Policy
+
+Let's double check the context of our running container is `container_t`.
+
+[source,bash,role=execute]
+----
+podman inspect demo-policy-run --format '{{.ProcessLabel}}'
+----
+----
+system_u:system_r:container_t:s0:c338,c964
+----
+
+Capture the `podman inspect` output and feed it to udica:
+
+[source,bash,role=execute]
+----
+podman inspect demo-policy-run | sudo udica hummingbird_demo
+----
+
+[NOTE]
+====
+`sudo` is required because udica needs write access to the SELinux policy store under `/var/lib/selinux/`. The `podman inspect` portion runs as the current user (rootless Podman), and the output is piped to `sudo udica`.
+====
+
+.*Expected output:*
+----
+Policy hummingbird_demo created!
+
+Please load these modules using:
+# semodule -i hummingbird_demo.cil /usr/share/udica/templates/{base_container.cil,net_container.cil}
+
+Restart the container with: "--security-opt label=type:hummingbird_demo.process" parameter
+----
+
+=== Step 6: Walk Through the Generated CIL
+
+This is the most important step -- understanding exactly what udica allowed:
+
+[source,bash,role=execute]
+----
+cat hummingbird_demo.cil
+----
+
+.*Expected output (your exact permissions may vary slightly):*
+----
+(block hummingbird_demo
+    (blockinherit container)                  ; <1>
+    (blockinherit restricted_net_container)    ; <2>
+    (allow process http_cache_port_t ( tcp_socket (  name_bind )))           ; <3>
+    (allow process container_file_t ( dir ( add_name create getattr ... )))  ; <4>
+    (allow process container_file_t ( file ( append create getattr ... )))   ;
+    (allow process container_file_t ( fifo_file ( getattr read write ... ))) ; <5>
+    (allow process container_file_t ( sock_file ( append getattr ... )))     ;
+    (allow process container_file_t ( dir ( getattr ioctl lock ... )))       ; <6>
+    (allow process container_file_t ( file ( getattr ioctl lock ... )))      ;
+    ...
+)
+----
+
+.*Line-by-line explanation:*
+
+<1> **`(blockinherit container)`** -- Inherits all rules from `base_container.cil`. This gives the container the same baseline permissions as `container_t` (process management, basic filesystem access, etc.)
+<2> **`(blockinherit restricted_net_container)`** -- Inherits network access rules from `net_container.cil` (which defines both the `net_container` and `restricted_net_container` blocks). udica chooses `restricted_net_container` which provides TCP/UDP/SCTP socket access plus outbound HTTP connectivity, appropriate because the container exposes port 8080.
+<3> **`(allow process http_cache_port_t ...)`** -- Allows binding to ports with the `http_cache_port_t` SELinux label. Port 8080 shares this label with 8118, 8123, etc.
+<4> **`container_file_t` dir/file write rules** -- Allows the container to create, write, append, and manage files and directories labeled `container_file_t`. This covers the read-write `/opt/myapp/logs` mount.
+
+<5> **`container_file_t` fifo/sock write rules** -- Allows read/write access to named pipes (FIFOs) and socket files within the labeled directories.
+
+<6> **`container_file_t` dir/file read rules** -- Allows read-only access to directories and files labeled `container_file_t`. This covers the read-only `/opt/myapp/config` mount.
+
+The policy captures rules for **both** bind mounts: read-write rules for the logs directory and read-only rules for the config directory, plus the port binding rule. You can see which ports share the `http_cache_port_t` label:
+
+[source,bash,role=execute]
+----
+sudo semanage port -l | grep http_cache
+----
+
+.*Expected output:*
+----
+http_cache_port_t    tcp    8080, 8118, 8123, 10001-10010
+http_cache_port_t    udp    3130
+----
+
+[[load-and-apply-policy]]
+== Load and Apply the Policy
+
+=== Step 7: Load the SELinux Policy
+
+[source,bash,role=execute]
+----
+sudo semodule -i hummingbird_demo.cil \
+  /usr/share/udica/templates/{base_container.cil,net_container.cil}
+----
+
+Verify it loaded:
+
+[source,bash,role=execute]
+----
+sudo semodule -l | grep hummingbird_demo
+----
+
+.*Expected output:*
+----
+hummingbird_demo
+----
+
+=== Step 8: Restart with Custom Policy
+
+Stop the first run and restart with the custom policy applied:
+
+[source,bash,role=execute]
+----
+podman stop demo-policy-run
+----
+
+[source,bash,role=execute]
+----
+podman run --rm -d \
+  --name demo-selinux \
+  --env container=podman \
+  --security-opt label=type:hummingbird_demo.process \
+  -v /opt/myapp/config:/app/config:ro,Z \
+  -v /opt/myapp/logs:/app/logs:rw,Z \
+  -p 8080:8080 \
+  hummingbird-demo:v1
+----
+
+=== Step 9: Verify Custom Process Label
+
+Confirm the container is running under the custom SELinux type:
+
+[source,bash,role=execute]
+----
+podman inspect demo-selinux --format '{{.ProcessLabel}}'
+----
+
+.*Expected output:*
+----
+system_u:system_r:hummingbird_demo.process:s0:c123,c456
+----
+
+[NOTE]
+====
+The `hummingbird_demo.process` type confirms the custom policy is active. The `c123,c456` portion is the Multi-Category Security (MCS) label that provides isolation between containers.
+====
+
+=== Step 10: Test Functionality
+
+Verify the application still works under the custom policy:
+
+[source,bash,role=execute]
+----
+curl -s http://localhost:8080/ | jq
+----
+
+[source,bash,role=execute]
+----
+curl -s http://localhost:8080/health | jq
+----
+
+Both endpoints should respond correctly. The container now runs with **only** the permissions it actually needs -- no more, no less.
+
+[[double-hardening]]
+== Why This Matters
+
+The default `container_t` policy sits between two bad outcomes:
+
+* **Too permissive** to provide real isolation
+* **Too strict** to let legitimate container operations through without tuning
+
+udica provides fine-grained control, placing the policy between `spc_t` (Super Privileged Container -- allows everything) and `container_t` (Standard Containers -- one-size-fits-all).
+
+1. **Image Level**: Hardened Image's no-shell, no-tools design means a genuinely minimal syscall and filesystem access profile -- smaller than any UBI image
+2. **SELinux Level**: Custom policy allowing **only** the specific filesystem paths, ports, and capabilities the container actually uses
+
+These two layers are **independent and complementary** -- compromising one doesn't defeat the other. A udica-generated policy for a Hardened Image container will be **tighter** than one for a comparable UBI container, because there are fewer legitimate access patterns to allow.
+
+[[cleanup]]
+== Cleanup
+
+[source,bash,role=execute]
+----
+podman stop demo-selinux
+----
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.6 and learned the fundamentals of SELinux hardening with udica.
+
+.*What You've Accomplished*
+✅ Understood the distroless-specific challenge (no shell for interactive testing) +
+✅ Prepared host directories with proper SELinux labels (`container_file_t`) +
+✅ Generated custom SELinux policy with bind-mount and port rules +
+✅ Read and understood every line of the generated CIL policy +
+✅ Loaded and applied the custom policy with `semodule` +
+✅ Verified the container runs under a custom SELinux type +
+
+.*Key Takeaways*
+
+**udica Workflow for Hardened Images:**
+
+1. Prepare host directories and label with `semanage fcontext`
+2. Run container with default `container_t` and realistic config/mounts
+3. Capture `podman inspect` output (not interactive testing)
+4. Generate policy with `udica`
+5. Load policy with `semodule`
+6. Restart with `--security-opt label=type:<policy>.process`
+
+**CIL Template Blocks:**
+
+* `base_container.cil` -- always inherited, baseline rules
+* `net_container.cil` -- inherited when ports are exposed
+* `home_container.cil` -- inherited when /home is bind-mounted
+
+**Double-Hardening Benefits:**
+
+* **Image layer**: Minimal attack surface (no shells, no tools, no package managers)
+* **SELinux layer**: Kernel-enforced access control for paths, ports, capabilities
+* **Defense in depth**: Compromising one layer doesn't defeat the other
+
+=== Next Steps
+
+You've completed the core developer environment modules for Red Hat Hardened Images! You've learned to build minimal images, scan and sign them, customize security configurations, and apply kernel-level access controls.
+
+Move to Module 2 to learn platform-level hardened image deployment with Shipwright and OpenShift.
+
+=== Troubleshooting
+
+**Issue: SELinux denials blocking container**
+[source,bash]
+----
+ausearch -m AVC -ts recent | grep denied
+
+sudo setenforce 0
+
+podman inspect container | udica --append-rules /var/log/audit/audit.log policy_v2
+----
+
+**Issue: Policy won't load**
+[source,bash]
+----
+sudo semodule -r hummingbird_demo
+sudo semodule -i hummingbird_demo.cil /usr/share/udica/templates/*.cil
+----
+
+**Issue: Container still using container_t**
+[source,bash]
+----
+podman inspect container | grep -i selinux
+
+sudo semodule -l | grep your_policy
+----

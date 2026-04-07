@@ -1,0 +1,385 @@
+= Sub-Module 1.5: Custom Security Configurations
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 10-12 minutes +
+*Learning Objectives:*
+
+* Install custom CA bundles in images
+* Use FIPS variants for compliance
+* Understand algorithm enforcement in FIPS mode
+--
+
+[[introduction]]
+== Introduction
+
+Beginning with a baseline that reduces the toil associated with identifying, researching, and, when possible, manually remediating CVEs while tracking exceptions is a good start to reducing friction on the path to production.
+
+However this isn't the only security concern common to containerized application delivery. Nor is it the only control available when using Hardened Images.  In this module we'll look at a few examples of how to customize hardened images for specific security requirements like custom certificates and regulatory compliance.
+
+[[certs]]
+== Adding certificate authority bundles to images
+
+One of the common things developers need to deal with is custom SSL certificates. Organizations will often have internal certificates or authorities (CAs) that need to be used to provide appropriate chains of trust for signing.
+
+For this lab, we'll rely on Caddy's built in TLS support. We can activate this with a custom Caddyfile, enabling the default SSL port and using the `internal` directive to turn on it's CA. We can rebuild our previous caddy-server with this new configuration and rebuild the image.
+
+=== Step 1: Examine SSL Configuration
+
+A Caddy configuration with TLS support is available in the `webserver` directory. Let's examine how SSL is configured:
+
+[source,bash,role=execute]
+----
+cat ~/webserver/Caddyfile
+----
+
+.*Expected output:*
+[source,caddyfile]
+----
+include::example$setup/webserver/Caddyfile[]
+----
+Custom Caddyfile configuration
+
+<1> **New SSL Port**: Listening on HTTP (8080) and HTTPS (8443)
+<2> **Internal CA**: Automatic self-signed certificate generation with `tls internal`
+
+
+The other two lines are the same as the shipped default setting the path `caddy` will serve files from.
+
+=== Step 2: Build SSL-enabled Caddy image
+
+Replace the earlier `Containerfile` to add this custom Caddyfile and build a new webserver.
+[source,bash,role=execute,subs=attributes+]
+----
+cat  > ~/webserver/Containerfile << 'EOF'
+FROM {hummingbird-registry}/caddy:latest
+COPY Caddyfile /etc/caddy/Caddyfile
+
+COPY index.html /usr/share/caddy/
+EOF
+----
+
+[source,bash,role=execute]
+----
+podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
+----
+
+=== Step 3: Run and test SSL Caddy server
+
+Let's only expose the HTTPS port this time.
+[source,bash,role=execute]
+----
+podman run --rm -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
+----
+
+With the new SSL enabled Caddy site running, we can test against the new port
+[source,bash,role=execute,subs=attributes+]
+----
+podman run --net=host --rm -it  {hummingbird-registry}/curl https://localhost:8443
+----
+
+As expected, we get an error since `curl` can't verify the issuer of the SSL certificate presented by Caddy.
+----
+curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the webpage mentioned above.
+----
+
+=== Step 4: Extract CA certificate and key
+
+We can get the certificate and key for the internal CA from the running container and create a PEM file from them. This is similar to what you'd need for your internal organization's CA.
+[source,bash,role=execute]
+----
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
+----
+
+[source,bash,role=execute]
+----
+podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
+----
+
+[source,bash,role=execute]
+----
+cat root.key root.crt > ca.pem
+----
+
+=== Step 5: Build custom curl with CA bundle
+
+Using our internal CA as part of the trusted chain, we'd need to embed it in the image for our applications or tools. We'll use the `builder` variant of the `curl` image to create a custom internal `curl` we could use to validate custom certificates in a pipeline.
+
+This multi-stage pattern is the same we used for the `quarkus` application. This keeps all of the work of creating the new trust store in our builder and only adds the files we need to our final `curl` tool image.
+
+[source,bash,role=execute,subs=attributes+]
+----
+cat > ~/Containerfile.pem << 'EOF'
+FROM {hummingbird-registry}/curl:latest-builder as builder
+
+# Copy the certificate to the image
+COPY ca.pem /tmp/ #<.>
+
+# Temporarily switch to root to add the CA certificate to the trust store
+USER root
+RUN trust anchor /tmp/ca.pem <.>
+USER ${CONTAINER_DEFAULT_USER}
+
+
+# Runtime stage:
+# Copy the trust store from the builder image to the runtime image
+FROM {hummingbird-registry}/curl:latest
+COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted <.>
+EOF
+----
+<.> Copy the custom CA pem to the `build` stage
+<.> Include the custom CA in our trusted root
+<.> Only copy the PKI files into the final image
+
+Now build our new tool with the internal CA trusted.
+[source,bash,role=execute]
+----
+podman build -t curl:local-ca -f ~/Containerfile.pem ~
+----
+
+=== Step 6: Test curl with custom CA
+
+With the certificate in place, we should get our original `index.html` served via SSL.
+[source,bash,role=execute]
+----
+podman run --net=host --rm -it curl:local-ca https://localhost:8443
+----
+
+Stop the Caddy SSL server now that we've finished testing.
+[source,bash,role=execute]
+----
+podman stop caddy-ssl
+----
+
+[[fips]]
+== Baselines for special use cases
+
+In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satisfying the needs of a containerized application that must meet the Federal Information Processing Standards (FIPS) 140-3 standard for security and interoperability.
+
+While not this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring additional compliance measures on top of the baseline images and how these variants combine. It also shows how you can separate container enforcement from host enforcement to provide a better overall application security posture.
+
+The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance. Like the `default`, a `-builder` variant exists to support multi-stage and other build patterns.
+
+=== Step 7: Check FIPS mode on host
+
+In this lab, the host and cluster are *not* in FIPS mode, however the container restrictions will be enforced regardless. A `0` in the `fips_enabled` parameter means the kernel boot parameter was not set.
+
+For **full FIPS 140-3 compliance** (required for FedRAMP, DoD, and other regulatory frameworks):
+
+* Container must use `-fips` variant (provides validated crypto modules)
+* Host/cluster must enable FIPS mode (kernel boot parameter `fips=1`)
+* Hardware may need FIPS-validated TPM (for some compliance levels)
+
+We can still demonstrate how the container restricts algorithms as the image enforcement operates separately. Production deployments requiring certification would need both container AND host in FIPS mode.
+
+[source,bash,role=execute]
+----
+cat /proc/sys/crypto/fips_enabled
+----
+----
+0
+----
+
+=== Step 8: Create test Python Containerfile
+
+We've built a python application to demonstrate the differences an application would see based on the use of a `default` or `fips` variant. The only difference between our two containers is the source image.
+
+[NOTE]
+====
+The `test-fips.py` file is provided in your lab environment at `~/fips/test-fips.py` if you'd like to explore how these tests are run.
+====
+
+[source,bash,role=execute,subs=attributes+]
+----
+# Create standard Python Containerfile
+cat > ~/fips/Containerfile << 'EOF'
+FROM {hummingbird-registry}/python:3.14
+
+COPY test-fips.py .
+
+# Switch back to the default user to install and run the application
+USER ${CONTAINER_DEFAULT_USER}
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./test-fips.py"]
+EOF
+----
+
+=== Step 9: Create FIPS Python Containerfile
+
+[source,bash,role=execute,subs=attributes+]
+----
+# Create FIPS-enabled Python Containerfile
+cat > ~/fips/Containerfile.fips << 'EOF'
+FROM  {hummingbird-registry}/python:3.14-fips
+
+COPY test-fips.py .
+
+# Switch back to the default user to install and run the application
+USER ${CONTAINER_DEFAULT_USER}
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./test-fips.py"]
+EOF
+----
+
+=== Step 10: Build and compare both images
+
+We can build these and tag them so we can tell them apart
+
+[source,bash,role=execute]
+----
+podman build -t fips:no -f ~/fips/Containerfile ~/fips
+----
+
+[source,bash,role=execute]
+----
+podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
+----
+
+=== Step 11: Run and compare FIPS enforcement
+
+Running our application, we can see that MD5 and other methods considered less secure are disallowed in our `fips` based container.
+
+[source,bash,role=execute]
+----
+podman run --rm fips:no
+----
+----
+============================================================
+FIPS Validated Crypto Library Test
+============================================================
+Python version: 3.14.3
+OpenSSL version: OpenSSL 3.5.5 27 Jan 2026
+FIPS provider: not active # <.>
+
+============================================================
+Running FIPS Validation Checks
+============================================================
+✓ PASS - FIPS-Approved Algorithms # <.>
+  All FIPS-approved algorithms available (SHA-256, HMAC-SHA256, MD5 (usedforsecurity=False), AES-256-GCM cipher)
+✗ FAIL - Disallowed Algorithms Blocked # <.>
+  Failures: MD5 via hashlib.new() was allowed; MD5 via hashlib.md5() was allowed; HMAC-MD5 was allowed; CHACHA20-POLY1305 cipher was allowed
+
+✗ NOT FIPS CAPABLE
+----
+The test program highlights the algorithms and providers available to an application built with the `default` image.
+
+<.> The specialized compliant module for OpenSSL is not present
+<.> The specific algorithms approved for use in FIPS environments *are available*
+<.> The insecure algorithms like MD5 *have not been disabled*
+
+Running this image in a FIPS environment would not comply with the standard.
+
+
+[source,bash,role=execute]
+----
+podman run --rm fips:yes
+----
+----
+============================================================
+FIPS Validated Crypto Library Test
+============================================================
+Python version: 3.14.3
+OpenSSL version: OpenSSL 3.5.5 27 Jan 2026 # <.>
+FIPS provider: active (provider 3.0.7-395c1a240fbfffd8) # <.>
+
+============================================================
+Running FIPS Validation Checks
+============================================================
+✓ PASS - FIPS-Approved Algorithms
+  All FIPS-approved algorithms available (SHA-256, HMAC-SHA256, MD5 (usedforsecurity=False), AES-256-GCM cipher)
+✓ PASS - Disallowed Algorithms Blocked # <.>
+  All disallowed algorithms properly blocked (4 algorithms)
+
+✓ FIPS CAPABLE
+----
+Here the test programs shows us new details of the inner workings of the `fips` variant.
+
+<.> The main OpenSSL version is the same as in the `default` image
+<.> The compliant module *is present and reporting a version* different than the main OpenSSL package (which is expected)
+<.> The image has *blocked the disallowed algorithms*.
+
+This image could then be used as part of a FIPS environment.
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.5 and learned how to customize hardened images for specific security requirements.
+
+.*What You've Accomplished*
+✅ Added custom CA bundles to images for internal certificate trust +
+✅ Built custom curl tool with embedded certificates +
+✅ Explored FIPS variants for regulatory compliance +
+✅ Compared algorithm enforcement between default and FIPS images +
+✅ Understood multi-level compliance requirements (container + host) +
+
+.*Key Takeaways*
+
+**Custom Certificate Authority:**
+
+* Multi-stage builds isolate CA bundle creation from runtime
+* `trust anchor` command integrates CAs into system trust store
+* Pattern applies to any internal or custom certificates
+
+**FIPS 140-3 Compliance:**
+
+* **Image-level**: `-fips` variant enforces approved algorithms
+* **Host-level**: Kernel must boot with `fips=1` parameter
+* **Hardware-level**: Some compliance levels require FIPS-validated TPM
+
+**Algorithm Enforcement:**
+
+* FIPS provider blocks insecure algorithms (MD5, ChaCha20-Poly1305)
+* Approved algorithms (SHA-256, AES-256-GCM, HMAC-SHA256) remain available
+* Container enforcement works independently of host FIPS mode
+
+**Variant Combinations:**
+
+* `-fips` and `-fips-builder` variants available for all runtime images
+* Same multi-stage build patterns apply
+* Compliance controls stack with minimal image benefits
+
+=== Next Steps
+
+In xref:module-01-06-selinux.adoc[Sub-Module 1.6: SELinux Hardening with udica], you'll learn how to generate custom SELinux policies for distroless containers, adding kernel-level mandatory access control to complement the image-level security you've built.
+
+=== Troubleshooting
+
+**Issue: Certificate verification still fails**
+[source,bash]
+----
+# Verify the CA bundle was copied correctly
+podman run --rm curl:local-ca ls -la /etc/pki/ca-trust/extracted/
+
+# Check if the trust anchor command ran
+podman history curl:local-ca | grep "trust anchor"
+----
+
+**Issue: FIPS image allows disallowed algorithms**
+[source,bash]
+----
+# Verify you're using the -fips variant
+podman inspect fips:yes | grep -i fips
+
+# Rebuild with explicit FIPS variant
+podman build --build-arg VARIANT=fips -t fips:yes -f ~/fips/Containerfile.fips ~/fips
+----
+
+**Issue: Caddy SSL server won't start**
+[source,bash]
+----
+# Check Caddy logs
+podman logs caddy-ssl
+
+# Verify Caddyfile syntax
+podman run --rm -v ~/webserver:/etc/caddy:ro {hummingbird-registry}/caddy caddy validate --config /etc/caddy/Caddyfile
+----

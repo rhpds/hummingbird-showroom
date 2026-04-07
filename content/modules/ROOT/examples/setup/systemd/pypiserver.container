@@ -1,0 +1,14 @@
+[Unit]
+Description=PyPi Local service
+
+[Container]
+Image=docker.io/pypiserver/pypiserver:latest
+ContainerName=pypiserver
+PublishPort=8000:8080
+Volume=/var/pypi-cache:/data/packages:z
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

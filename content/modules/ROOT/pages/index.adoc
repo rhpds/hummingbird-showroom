@@ -31,10 +31,10 @@ Traditional container base images, even minimal variants like UBI Minimal, inclu
 
 == What You'll Learn
 
-=== Module 1: Information Gathering for Hardened Images
+=== Introduction: Information Gathering for Hardened Images
 This module will introduce the new web application.
 
-=== Module 2: Container Development Environment with Hummingbird
+=== Module 1: Container Development Environment with Hummingbird
 
 In this hands-on module, you'll build and secure container images using a pre-configured developer environment:
 
@@ -44,7 +44,7 @@ In this hands-on module, you'll build and secure container images using a pre-co
 * **Security Workflow**: Scan for CVEs, generate SBOMs, sign and verify images
 * **SELinux Hardening**: Generate custom SELinux policies with udica
 
-=== Module 3: Building Hardened Images with Shipwright on OpenShift
+=== Module 2: Building Hardened Images with Shipwright on OpenShift
 
 This module focuses on platform-level image building and deployment:
 
@@ -76,14 +76,14 @@ See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automatio
 ====
 ////
 
-=== Lab Environment Access
+== Lab Environment Access
 ////
 [NOTE]
 ====
 If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
 ====
 ////
-==== Your RHEL Virtual Machine (Module 1)
+=== Your RHEL Virtual Machine (Module 1)
 
 You will execute the first module in a Red Hat Enterprise Linux Virtual Machine running on Red Hat OpenShift Container Platform.
 
@@ -91,14 +91,14 @@ You will execute the first module in a Red Hat Enterprise Linux Virtual Machine 
 +
 [source,sh,subs=attributes,role=execute]
 ----
-oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+oc login -u {user} -p {password} {openshift_api_url} --insecure-skip-tls-verify
 ----
 
 . Switch to your OpenShift project:
 +
 [source,sh,subs=attributes,role=execute]
 ----
-oc project rhel-{user}
+oc project {user}-rhel
 ----
 
 . Connect to your RHEL Virtual Machine:
@@ -108,36 +108,58 @@ oc project rhel-{user}
 virtctl ssh rhel@vm/rhel
 ----
 . Log into the VM using the `rhel` user's password (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
++
+.*Password*:
+[source,role=execute,subs=attributes]
+----
+{password}
+----
 
-* *Password*: `{password}`
+=== OpenShift Console (Module 2)
 
-==== OpenShift Console (Module 2)
-
-Your OpenShift console is available on the right or if you prefer a separate window at: {openshift_console_url}[window=blank].
+Your OpenShift console is available in a tab on the right or if you prefer a separate window at: {openshift_console_url}[window=blank].
 
 *Credentials:*
 
-* *Username:* `{user}`
-* *Password:* `{password}`
+.*Username*:
+[source,role=execute,subs=attributes]
+----
+{user}
+----
 
-==== Registry Credentials
+.*Password*:
+[source,role=execute,subs=attributes]
+----
+{password}
+----
 
-For pushing images to registries:
+=== Quay Registry Credentials
 
-* *Red Hat Quay* is available in a tag on your right or if you prefer a separate window at {quay_console_url}[window=blank].
-* Your credentials for Red Hat Quay:
-** *Registry User:* `{quay_user}`
-** *Registry Password:* `{quay_password}`
+For pushing images to registries *Red Hat Quay* is available in a tab on your right or if you prefer a separate window at {quay_url}[window=blank].
 
+.*Username*:
+[source,role=execute,subs=attributes]
+----
+{quay_user}
+----
+
+.*Password*:
+[source,role=execute,subs=attributes]
+----
+{quay_password}
+----
+
+////
 ==== GUID Information
 
 Your unique lab environment identifier: `{guid}`
+////
 
 == Key Technologies Covered
 
 *Container Tools:*
 
-* Podman {podman-version} (rootless container runtime)
+* Podman (rootless container runtime)
 * Buildah (container image building)
 * Skopeo (image inspection and distribution)
 
@@ -184,9 +206,7 @@ Your unique lab environment identifier: `{guid}`
 
 If you encounter issues during the workshop:
 
-1. Review the verification sections in each module
-2. Check the troubleshooting tips in lab steps
-3. Consult the additional resources listed above
-4. Reach out to workshop facilitators (if in instructor-led session)
+1. Check available troubleshooting tips in lab steps
+2. Reach out to workshop facilitators (if in instructor-led session)
 
 Let's get started building secure, minimal container images with Red Hat Hardened Images!

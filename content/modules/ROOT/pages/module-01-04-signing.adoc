@@ -1,0 +1,333 @@
+= Sub-Module 1.4: Image Signing & Attestation
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 10-12 minutes +
+*Learning Objectives:*
+
+* Sign container images with cosign
+* Verify image signatures
+* Attach SBOM attestations
+* Understand provenance and trust chains
+--
+
+[[introduction]]
+== Introduction
+
+In xref:module-01-03-scanning.adoc[Sub-Module 1.3], you scanned your image for vulnerabilities and generated an SBOM. But how do you prove to consumers that the image and SBOM they download are authentic and unmodified? This is where cryptographic signing comes in.
+
+In this sub-module, you'll use `cosign` to digitally sign your container images and attach signed SBOM attestations, creating a verifiable chain of trust from build to deployment.
+
+[[image-signing]]
+== Image Signing with Cosign
+
+We've looked for known vulnerabilities, detailed the contents, and are ready to publish. How do we ensure that the image that comes out of the registry matches what went in? A common way to ensure a chain of trust is by digitally signing images. One tool to manage container signing is `cosign`.
+
+Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll push the image to Quay for signing.
+
+[TIP]
+====
+**Cosign in Production:**
+
+* **Development**: Generate key pairs locally (as we'll do in this workshop)
+* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
+* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
+====
+
+=== Step 1: Log into Quay and re-tag an image
+
+An organization for your lab user has already been created, you can log into Quay with `podman` using the same credentials as the UI.
+
+[source,bash,role=execute,subs=attributes+]
+----
+podman login {quay_hostname} --username {quay_user} --password {quay_password}
+----
+
+We'll be using the hostname and username combination a lot for this sub-module, so create an environment variable to clean up some of the later commands. You can also refresh your memory on the Quay URL or username with `echo`.
+
+[source,bash,role=execute,subs=attributes+]
+----
+export QUAY_ORG="{quay_hostname}/{quay_user}"
+----
+
+[source,bash,role=execute,subs=attributes+]
+----
+podman tag hummingbird-demo:v1 $QUAY_ORG/hummingbird-demo:v1
+----
+
+[source,bash,role=execute,subs=attributes+]
+----
+podman push $QUAY_ORG/hummingbird-demo:v1
+----
+
+Once the image is in the registry, we get the digest for use with `cosign`.
+[source,bash,role=execute,subs=attributes+]
+----
+IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' $QUAY_ORG/hummingbird-demo:v1)
+----
+
+[source,bash,role=execute,subs=attributes+]
+----
+echo "Image digest: ${IMAGE_DIGEST}"
+----
+
+.*Expected output:*
+----
+Image digest: sha256:abc123...
+----
+
+[NOTE]
+====
+Cosign 2.0 and later requires (and future versions will enforce) digest-based references so you always sign exactly the image you intend. Earlier versions would allow the use of a tag like `:v1`, but since tags on images can change this is considered insecure. The `IMAGE_DIGEST` variable is used in all subsequent cosign commands.
+====
+
+=== Step 2: Generate Signing Keys
+
+Generate a key pair for testing (in production, use keyless signing or KMS), for the purposes of this lab we'll set an empty password via the environment variable.
+
+[source,bash,role=execute]
+----
+export COSIGN_PASSWORD=""
+----
+
+[source,bash,role=execute]
+----
+cosign generate-key-pair
+----
+
+.*Expected output:*
+----
+Private key written to cosign.key
+Public key written to cosign.pub
+----
+
+[IMPORTANT]
+====
+**Production Signing Methods:**
+
+* **Keyless Signing**: Uses OIDC identity (GitHub, GitLab, Google, etc.) instead of keys
+* **KMS-Backed Keys**: AWS KMS, Azure Key Vault, Google Cloud KMS, HashiCorp Vault
+* **Hardware Security Modules (HSM)**: For highly regulated environments
+
+For this workshop, we use local keys for simplicity. Never commit `cosign.key` to git!
+====
+
+=== Step 3: Sign the Image
+
+Sign your image with cosign using the digest captured in Step 1. The `--tlog-upload=false` flag skips the Rekor transparency log which publishes to the Sigstore public instance. Since these are lab images, we want to skip adding noise to the public good instance of Sigstore.
+
+[source,bash,role=execute]
+----
+cosign sign --tlog-upload=false \
+  --yes --key cosign.key \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+Pushing signature to: {quay_hostname}/{quay_user}/hummingbird-demo
+----
+
+The signature is stored as an OCI artifact in the same repository as your image. Cosign appends the signature as a separate manifest with a `.sig` tag suffix.
+
+=== Step 4: Verify the Signature
+
+You can use `cosign` to create signatures as well as verify the existing signature of a container image.
+
+Verify the image signature you just created. In a production setting, your chain of trust would use the official public sources.
+
+[source,bash,role=execute]
+----
+cosign verify --insecure-ignore-tlog=true \
+  --key cosign.pub \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.
+
+Verification for {quay_hostname}/{quay_user}/hummingbird-demo@sha256:abc123... --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - The signatures were verified against the specified public key
+
+[{"critical":{"identity":{"docker-reference":"{quay_hostname}/{quay_user}/hummingbird-demo"},...
+----
+
+[NOTE]
+====
+The tlog **WARNING** is expected. We skipped the Rekor transparency log when signing (Step 3), so we must also skip tlog verification here. In production, both signing and verification should use the transparency log. This was also introduced as a default in `cosign` 2.0.
+====
+
+We've succesfully signed our image and verified the signature, meaning we can be confident the images are the same on both ends. In a real world example, your key would come from some other source.
+
+[[sbom-attestation]]
+== Attach SBOM as Attestation
+
+=== Step 5: Attach SBOM Attestation
+
+We can combine the ideas of signing with the content list of the image to create an 'attestation'. This allows the user to verify that the contents of an image pulled match what you created and pushed to the registry.
+
+[NOTE]
+====
+**What is an Attestation?**
+
+An attestation is metadata about an image (like an SBOM, scan results, or build provenance) that is:
+
+1. Signed with the same key/identity as the image
+2. Stored alongside the image in the registry
+3. Verifiable by consumers before running the image
+
+This proves the SBOM came from the same trusted source as the image.
+====
+
+Attach the SBOM we created with `syft` in Sub-Module 1.3 as a signed attestation using `cosign`.
+
+[source,bash,role=execute]
+----
+cosign attest --tlog-upload=false \
+  --yes --key cosign.key \
+  --predicate ~/scanning/hummingbird-demo.spdx --type spdxjson \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+.*Expected output:*
+----
+Using payload from: ~/scanning/hummingbird-demo.spdx
+----
+
+
+=== Step 6: Verify SBOM Attestation
+
+Verify the SBOM attestation and check for our package count from the earlier examination of the local SBOM. `cosign` will print the raw JSON, we can use `jq` to find and print our value.
+
+[source,bash,role=execute]
+----
+cosign verify-attestation --insecure-ignore-tlog=true \
+  --key cosign.pub \
+  --type spdxjson \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} \
+  | jq -r '.payload' | base64 -d | jq '.predicate.packages | length'
+----
+
+.*Expected output:*
+----
+WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.
+
+Verification for {quay_hostname}/{quay_user}/hummingbird-demo@sha256:abc123... --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - The signatures were verified against the specified public key
+166
+----
+
+This confirms:
+
+* The attestation signature is valid
+* The SBOM was signed by the holder of `cosign.key`
+* The SBOM contains the same package information as expected
+
+You can also download the SBOM for use locally. We're using attestation instead of attachments for SBOMs to improve verification. Attachments are deprecated in `cosign` and will eventually be removed.
+
+[source,bash,role=execute]
+----
+cosign download attestation --output-file cosign.sbom \
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+----
+
+The SBOM is standard JSON and can be processed with any standard tool.
+[source,bash,role=execute]
+----
+file cosign.sbom
+jq -r '.payload' cosign.sbom | base64 -d | jq '.predicate.packages | length'
+----
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.4 and established a complete chain of trust for your container images.
+
+.*What You've Accomplished*
+✅ Signed container images with cosign +
+✅ Verified image signatures cryptographically +
+✅ Attached SBOM as signed attestation +
+✅ Verified SBOM attestations +
+✅ Understood trust and provenance workflows +
+
+.*Key Takeaways*
+
+**Trust Chain Established:**
+
+* **Image Signature**: Proves the image hasn't been tampered with
+* **SBOM Attestation**: Proves the SBOM belongs to this specific image
+* **Verification**: Anyone with the public key can verify authenticity
+
+**Security Workflow:**
+
+1. **Build** → Multi-stage image with minimal attack surface
+2. **Scan** → Grype checks for CVEs (should be 0)
+3. **SBOM** → Syft generates compliance artifacts
+4. **Sign** → Cosign proves provenance
+5. **Attest** → SBOM attached as signed metadata
+6. **Verify** → Consumers verify signatures before deploying
+
+**Production Best Practices:**
+
+* Use keyless signing with OIDC identity (GitHub, GitLab, Google)
+* Store keys in KMS (AWS KMS, Azure Key Vault, GCP KMS, Vault)
+* Enable Rekor transparency log for audit trails
+* Integrate verification into admission controllers (Kyverno, OPA)
+
+**Compliance Ready:**
+
+* Signed SBOMs meet NIST and EU Cyber Resilience Act requirements
+* Attestations prove SBOM authenticity and provenance
+* Verification gates prevent unauthorized images from running
+
+=== Next Steps
+
+In xref:module-01-05-custom-security.adoc[Sub-Module 1.5: Custom Security Configurations], you'll learn how to customize hardened images for specific security requirements, including custom CA certificates and FIPS compliance.
+
+=== Troubleshooting
+
+**Issue: Cosign sign/verify fails with UNAUTHORIZED error**
+
+Cosign requires images to be in an OCI registry -- it cannot sign images in local Podman storage. Ensure you are logged into Quay and the image has been pushed:
+[source,bash,role=execute,subs=attributes+]
+----
+# Verify you're logged into Quay
+podman login {quay_hostname} --get-login
+
+# If not logged in, authenticate
+podman login {quay_hostname} --username {quay_user} --password {quay_password}
+
+# Verify the image exists in Quay
+podman images | grep hummingbird-demo
+
+# Re-tag and push if needed
+podman tag hummingbird-demo:v1 $QUAY_ORG/hummingbird-demo:v1
+podman push $QUAY_ORG/hummingbird-demo:v1
+----
+
+**Issue: Cosign verification fails**
+[source,bash]
+----
+# Ensure you're using the correct public key and digest
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
+
+# If IMAGE_DIGEST is not set, recapture it
+IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' $QUAY_ORG/hummingbird-demo:v1)
+echo "Image digest: ${IMAGE_DIGEST}"
+----
+
+**Issue: SBOM file not found for attestation**
+[source,bash]
+----
+# Verify SBOM was generated in Sub-Module 1.3
+ls -la ~/scanning/hummingbird-demo.spdx
+
+# If missing, regenerate it
+cd ~/scanning
+syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
+----

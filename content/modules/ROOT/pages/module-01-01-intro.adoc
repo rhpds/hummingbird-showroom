@@ -1,0 +1,369 @@
+= Sub-Module 1.1: Introduction & Basic Images
+
+.*Sub-Module Overview*
+[sidebar]
+--
+*Duration:* 10-12 minutes +
+*Learning Objectives:*
+
+* Understand available types of hardened images
+* Use service images and containerized tools
+* Create simple runtime applications with Python
+* Compare distroless vs distribution base images
+--
+
+[[introduction]]
+== Introduction
+
+In this sub-module, you'll get hands-on with Red Hat Hardened Images. You'll explore the three main categories of images (services, tools, and runtimes), understand the difference between distroless and traditional base images, and build your first containerized applications using these minimal, secure foundations.
+
+[[types]]
+== Available types of hardened images
+
+There are three main categories of images provided in the collection of hardened images: runtimes, services, and tools. Each of these are built in the same fashion but provide different capabilities.  Runtimes include various languages like `java`, `python`, and `dotnet` and also have `-builder` variants to allow for complex application tasks. Services include network based applications like `caddy`, `memcached`, and `haproxy` for deploying minimal versions of common services. Tools include things like `git`, `curl`, and `jq` for running a known containerized version in an isolated manner like within a CI pipeline.
+
+
+[[services]]
+=== Services and tools
+
+=== Step 1: Examine Pre-Created Web Content
+
+Let's start by examining a basic HTML landing page that has been created for use in our examples.
+
+[source,bash,role=execute]
+----
+cat ~/webserver/index.html
+----
+
+.*Expected output:*
+[source,html]
+----
+include::example$setup/webserver/index.html[]
+----
+
+This is a straightforward page, with a little CSS and font prettification, nothing complex.
+
+With our `index.html` ready to serve, we need a web server. There are several available, and `caddy` image can be used for this sort of simple testing by running the default container image and passing the `webserver` directory as a volume mount.
+
+[source,bash,role=execute,subs=attributes+]
+----
+podman run -d --rm --name caddy-server \
+  -p 8080:8080 \
+  -v ~/webserver:/usr/share/caddy:ro,Z \
+  {hummingbird-registry}/caddy:latest
+----
+
+Check to see if `caddy` is serving the file we just looked at.
+[source,bash,role=execute]
+----
+curl http://localhost:8080
+----
+
+For now, stop the `caddy` server.
+[source,bash,role=execute]
+----
+podman stop caddy-server
+----
+
+This will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile for your final webserver.
+
+[source,bash,role=execute,subs=attributes+]
+----
+cat > ~/webserver/Containerfile << 'EOF'
+FROM {hummingbird-registry}/caddy:latest
+
+COPY index.html /usr/share/caddy/
+EOF
+----
+
+This `Containerfile` simply adds the content to be served to the default Caddy location to create the final container. If we needed more complex Caddy configurations, we can also create and add a custom Caddyfile to override the defaults in the image. We'll revisit that in a later exercise.
+
+Build and run the new image
+[source,bash,role=execute]
+----
+podman build -t my-website -f ~/webserver/Containerfile ~/webserver
+----
+
+[source,bash,role=execute]
+----
+podman run -d --rm --name webserver -p 8080:8080 my-website
+----
+
+Check the new webserver still serves the file we expect
+[source,bash,role=execute]
+----
+curl http://localhost:8080
+----
+
+Network service images are fairly straightforward, but what about tools? Why would we want a containerized version of `curl` available?
+
+On the current system, we have `curl` installed as an RPM. But, what if you were building on a system without `curl` and without the privileges to install new packages? This can be a common occurrence in CI/CD runners, systems used to build software in a pipeline often with minimal packages installed.
+
+In that case we could run the same test as we did with the local package using a known good and specific version of `curl` via `podman`
+
+[source,bash,role=execute,subs=attributes+]
+----
+podman run --rm --net=host {hummingbird-registry}/curl:latest http://localhost:8080
+----
+Note the use of `--net=host` here to let an user container connect to the exposed port on the host. There's a wide range of possibilities here, like testing an API call with a POST request, downloading a file for local inspection, etc.
+
+We should see the same results as the local binary. But these can be useful to reduce the dependency on host customization.
+
+Go head and stop the webserver.
+[source,bash,role=execute]
+----
+podman stop webserver
+----
+
+Containerized versions of common tools let's us provide a known good, common set of capabilities to any host while ensuring the same security profiles to the tools as any other hardened image. This makes keeping fleets of systems, like build or test farms, in sync since they can all use the exact same tool image instead of requiring local tools and the associated maintenance.
+We can be sure we've got the right images by verifying the signature with a tool like `cosign`. We'll cover more on that later.
+
+[[runtimes]]
+=== Simple runtime examples
+While services and tools can be useful, the most commonly used types of hardened images are runtimes. These provide the platform for various different languages and are typically available in different variants: eg `default`, `builder`, and `fips`. The details will vary from image to image, but the `default` variant is purpose built as a deployment target with only critical dependencies and security metadata. The `builder` variant adds to the `default` both rpm and language specific package managers to allow for installation of additional dependencies, debug and troubleshooting, and for multi-stage-containerfiles.
+The `fips` variants include specially validated OpenSSL modules for the enforcement of specific crypto algorithms required for certain regulatory regimes. We'll look at this variant in a later module.
+
+==== Create a simple Python Flask application
+We'll look at how using the UBI Python images you have today differ from the new `default` variant. To do that, we need a Python application to containerize.
+
+A sample Flask application should be available on the system, let's take a look.
+
+[source,bash,role=execute]
+----
+cat ~/flask/app.py
+----
+
+.*Expected output:*
+[source,python]
+----
+include::example$setup/flask/app.py[]
+----
+
+The application uses the development server to serve an HTML file as a static file, which means it will be added to the `static` directory in our Containerfile later.
+
+
+Copy the `index.html` from the Caddy example. No need to reinvent the wheel here.
+[source,bash,role=execute]
+----
+cp ~/webserver/index.html ~/flask/
+----
+
+We'll ship this application in two ways to explore some differences between the typical container build and one with a hardened image.
+
+== Distroless vs distribution base images
+
+Hardened images are what's called 'distroless' images. These styles of images are targeted builds that skip certain shells and tools typically found in standard base images. Since package managers are usually part of that missing toolset, that's how the term 'distroless' was coined.
+
+Let's build a comparison image using UBI to see the difference. Then we can see what changes we need to make to move this to a hardened `python` image. In both cases, we'll use a local mirror for python dependencies, mimicking the use of a secure enterprise index like Red Hat Trusted Libraries.
+[NOTE]
+====
+Throughout this lab, you'll see files marked with circled numbers and a numbered list following the file. These are to help draw your attention to particular parts of the file. These are part of the source file and also visible in the terminal via `cat` or `vi`. The numbers will not be included if you copy from one of the blocks.
+====
+
+First, lets look at a typical UBI based approach.
+[source,bash,role=execute]
+----
+cat ~/flask/Containerfile.ubi
+----
+
+.*Expected output:*
+[source,dockerfile,subs="attributes+"]
+----
+include::example$setup/flask/Containerfile.ubi[]
+----
+UBI characteristics
+
+<1> **Package Installation**: Traditional `dnf install` approach for dependencies
+<2> **User Management**: Manual user/group creation required (`groupadd`, `useradd`)
+
+A local PyPI server is running on port 8000 to provide Flask dependencies reliably. This mimics enterprise artifact repositories and ensures consistent builds.
+Since we're using a local PyPi mirror, we need to make sure `podman` uses the host's networking to access mirror via `localhost`.
+
+[source,bash,role=execute]
+----
+podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
+----
+
+Let's do a quick check on our UBI based application and see that we're getting the results we expect.
+
+[source,bash,role=execute]
+----
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:ubi
+----
+
+Checking with `curl` should show us the same `index.html` as before.
+[source,bash,role=execute]
+----
+curl http://localhost:8080
+----
+
+[source,bash,role=execute]
+----
+podman stop flask-demo
+----
+
+=== Step 2: Examine the changes
+
+We've verified the UBI Containerfile results in a working Flask application, now we can start modifying it to use the hardened `python` image. The most obvious change is the base image, but there are a few other minor adjustments we need to make.
+
+Our UBI example creates a non-root `appuser` to run the application. The hardened image already provides a default non-root user, so we can skip that step.
+This means we do need to make sure we're running the commands as the correct user for each step however. 
+
+We'll demonstrate this by installing the application dependencies globally as `root` instead of working in a virtual environment. This workflow is fine since we're only ever installing one application in this image, but your choice should make the most sense for your applications and environment.
+
+In practice those changes give us the following Containerfile
+
+[source,bash,role=execute,subs=attributes+]
+----
+cat > ~/flask/Containerfile.hi << 'EOF'
+# Stage 1: Builder base image
+FROM {hummingbird-registry}/python:3.14 #<.>
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the application files to the target directory
+# COPY always executes as root
+COPY --chown=65532 app.py . #<.>
+COPY --chown=65532 index.html static/
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Switch to root from the non-root user to install dependencies
+# By default, these install in /tmp/.local for the non-root user
+USER root
+RUN pip install --index-url http://localhost:8000/simple flask
+
+# Switch to the default non-root user for runtime
+USER ${CONTAINER_DEFAULT_USER} #<.>
+
+# Expose the port Flask will listen on
+EXPOSE 8080
+
+# Appropriately set the stop signal for the python interpreter executed as PID 1
+STOPSIGNAL SIGINT
+ENTRYPOINT ["python", "./app.py"]
+
+EOF
+----
+
+Distroless characteristics:
+
+<.> Change our base image to the hardened `default` image
+<.> Change the user in `COPY` to the provided default UID instead of adding `appuser`
+<.> Reset the USER with the provided ENV variable
+
+Let's go ahead and build our app on the `default` variant.
+[source,bash,role=execute]
+----
+podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
+----
+----
+STEP 7/11: RUN pip install --index-url http://localhost:8000/simple flask
+error running container: from /usr/bin/crun creating container for [/bin/sh -c pip install --index-url http://localhost:8000/simple flask]: executable file `/bin/sh` not found: No such file or directory
+----
+What happened here? One of the changes to 'distroless' images like our new `default` is the removal of things like shells. 
+The `RUN` step executes provided commands (here `pip install`) by passing them to a shell where the previous `COPY` instructions do not. 
+
+Without a shell, what can we do? Switch to the `builder` variant.
+
+Edit the Containerfile and change the `FROM` to include the appropriate tag.
+[source,bash,role=execute,subs=attributes+]
+----
+vi ~/flask/Containerfile.hi
+----
+[source,dockerfile,subs=attributes+]
+----
+# Stage 1: Builder base image
+FROM {hummingbird-registry}/python:3.14-builder #<.>
+----
+<.> The tagging format for `python` images is <version>-builder
+
+Let's retry the build using the new variant.
+[source,bash,role=execute]
+----
+podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
+----
+
+That successfully built, so let's run it and see if we get our `index.html`
+[source,bash,role=execute]
+----
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
+----
+
+[source,bash,role=execute]
+----
+curl http://localhost:8080
+----
+
+Changing existing Containerfiles to use hardened images can be fairly straightforward, as in this case. To help understand the default settings for hardened images, we https://gitlab.com/redhat/hummingbird/containers/-/blob/main/images/python-3-14/hummingbird/default/compat.md[provide tables] that compare them to upstream versions.
+This not only includes the properties, but also the reasoning behind any changes.
+
+
+=== Step 3: Examine our two images
+
+There are some other differences in the packages installed and the tools available. List the images just built. Note that the hardened image is just over half the size of the UBI based image.
+
+[source,bash,role=execute]
+----
+podman images my-flasksite
+----
+
+.*Expected output:*
+----
+REPOSITORY              TAG         IMAGE ID      CREATED            SIZE
+localhost/my-flasksite  hi          7355f3daefdc  About a minute ago  182 MB
+localhost/my-flasksite  ubi         472a6a9ebee8  9 minutes ago       254 MB
+----
+The new image is smaller, but we've included everything in the `builder` image in our application, including a shell that we won't want in production.
+
+[source,bash,role=execute]
+----
+podman exec -it flask-demo /bin/sh -c 'ls -al /app'
+----
+
+[source,bash,role=execute]
+----
+podman stop flask-demo
+----
+
+How do we remove all of the unnecessary parts? Multi-stage builds provide the answer, and we'll explore that pattern in the next sub-module.
+
+[[summary]]
+== Summary
+
+Congratulations! You've completed Sub-Module 1.1 and explored the foundations of Red Hat Hardened Images.
+
+.*What You've Accomplished*
+✅ Explored three types of hardened images (services, tools, runtimes) +
+✅ Used containerized Caddy web server and curl tool +
+✅ Created a Python Flask application +
+✅ Compared UBI and Hardened Image approaches +
+✅ Understood distroless image characteristics +
+✅ Learned about builder vs default variants +
+
+.*Key Takeaways*
+
+**Image Categories:**
+
+* **Services**: Web servers (Caddy), caching (Memcached), load balancers (HAProxy)
+* **Tools**: Containerized versions of common utilities (curl, git, jq)
+* **Runtimes**: Language platforms (Python, Java, Node.js, Go, .NET)
+
+**Image Variants:**
+
+* **default**: Minimal runtime image with no package managers or shells
+* **builder**: Adds package managers and tools for building applications
+* **fips**: FIPS 140-3 validated crypto modules for compliance
+
+**Distroless Benefits:**
+
+* Smaller image sizes (50%+ reduction)
+* Reduced attack surface (no unnecessary tools)
+* Faster downloads and deployments
+
+=== Next Steps
+
+In xref:module-01-02-multi-stage.adoc[Sub-Module 1.2: Multi-Stage Builds], you'll learn how to combine builder and runtime variants to create production-ready images that are both flexible during development and minimal in deployment.
