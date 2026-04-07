@@ -15,7 +15,7 @@
 * {shipwright-operator} operator installed
 * OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
 * Red Hat Quay operator installed (on-cluster registry with Clair, ODF-backed storage)
-* Red Hat Advanced Cluster Security (ACS) operator installed (for Sub-Module 2.7)
+* Red Hat Advanced Cluster Security (ACS) operator installed (for Sub-Module 2.2)
 * Red Hat Trusted Artifact Signer (RHTAS) operator installed (for Sub-Module 2.6)
 * Keycloak `trusted-artifact-signer` realm configured for RHTAS OIDC
 * RHTAS CLI tools (`cosign`, `rekor-cli`, `ec`) installed
@@ -619,10 +619,10 @@ quay-registry-clair-app-...                   1/1     Running   0          ...
 
 [NOTE]
 ====
-This section is only required if you plan to complete **xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**. You can skip it for all other Module 2 labs.
+This section is only required if you plan to complete **xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**. You can skip it for all other Module 2 labs.
 ====
 
-Red Hat Advanced Cluster Security for Kubernetes (RHACS) provides vulnerability scanning, policy enforcement, and admission control. Sub-Module 2.7 uses ACS to enforce a zero-CVE posture on the cluster.
+Red Hat Advanced Cluster Security for Kubernetes (RHACS) provides vulnerability scanning, policy enforcement, and admission control. Sub-Module 2.2 uses ACS to enforce a zero-CVE posture on the cluster.
 
 [NOTE]
 ====
@@ -823,7 +823,7 @@ stackrox-validating-webhook  1          ...
 If the webhook does not appear, check that `listenOnCreates` is set to `true` in the SecuredCluster spec and that the admission controller pod is running.
 ====
 
-Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.7: The Immutable Fortress].
+Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: The Immutable Fortress].
 
 [[rhtas-setup]]
 === Red Hat Trusted Artifact Signer (RHTAS) Setup
