@@ -11,9 +11,6 @@
 * Module 2: Shipwright and Buildpacks (OpenShift)
 ** xref:module-02-01-buildpacks.adoc[2.1: Building with Hummingbird]
 ** xref:module-02-07-acs-zero-cve.adoc[2.2: Zero-CVE with ACS Enforcement]
-** xref:module-02-02-custom-strategies.adoc[2.3: Custom Multi-Language Strategies (Optional)]
-** xref:module-02-03-security-pipeline.adoc[2.4: Security Pipeline & Production (Optional)]
-** xref:module-02-04-tekton-udica.adoc[2.5: SELinux Policy CI/CD with Tekton (Optional)]
 
 * Appendix: Environment Setup
 ** xref:appendix-a-rhel-setup.adoc[Appendix A: RHEL Developer Environment]
