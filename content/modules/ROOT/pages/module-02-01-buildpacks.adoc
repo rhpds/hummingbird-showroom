@@ -503,11 +503,20 @@ Congratulations! You've built and deployed your first Hummingbird application on
 
 === Next Sub-Module
 
-Ready for advanced strategies? Proceed to:
+Ready to enforce zero-CVE at the cluster level? Proceed to:
 
-**xref:module-02-02-custom-strategies.adoc[Sub-Module 2.2: Custom Multi-Language Strategies]**
+**xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: Zero-CVE with ACS Enforcement]**
 
-Create a ClusterBuildStrategy with language auto-detection, conditional Hummingbird runtime selection, and integration with internal registries.
+Deploy a legacy image, scan it with ACS to expose CVEs, then rewrite it using a Hummingbird distroless build and enforce a zero-CVE admission policy.
+
+[TIP]
+====
+Looking for additional depth? The following optional sub-modules extend the workshop with advanced topics:
+
+* xref:module-02-02-custom-strategies.adoc[Sub-Module 2.3: Custom Multi-Language Strategies (Optional)]
+* xref:module-02-03-security-pipeline.adoc[Sub-Module 2.4: Security Pipeline & Production (Optional)]
+* xref:module-02-04-tekton-udica.adoc[Sub-Module 2.5: SELinux Policy CI/CD with Tekton (Optional)]
+====
 
 === Additional Resources
 

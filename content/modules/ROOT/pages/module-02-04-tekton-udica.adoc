@@ -5,6 +5,7 @@
 --
 *Duration:* ~8 minutes +
 *Prerequisites:* Completion of Sub-Module 2.3 (Security Pipeline) and familiarity with Module 1 SELinux concepts +
+*Status:* Optional exercise -- not required for Module 2 completion +
 *Learning Objectives:*
 
 * Create a Tekton Task that generates udica SELinux policies from container images
@@ -566,7 +567,7 @@ Congratulations! You've completed Sub-Module 2.4.
 
 Continue to the final required exercise:
 
-**xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.5: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**
+**xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: The Immutable Fortress -- Zero-CVE with ACS Enforcement]**
 
 Prove the zero-CVE posture by deploying a legacy vulnerable image alongside a Hummingbird image, then enforce admission control policies with Red Hat Advanced Cluster Security (~25 min).
 

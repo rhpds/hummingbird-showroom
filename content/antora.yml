@@ -10,7 +10,7 @@ asciidoc:
     # page-toclevels: -1               # <- This will remove the TOC that appear in the right sidebar at wider resolutions
     page-pagination: true
     workshop-title: "LB2865: Container Hardening: Zero to Hero with Red Hat Hardened Images"
-    workshop-duration: '75 minutes'
+    workshop-duration: '90 minutes'
 
     weblab-duration: '15 minutes'
     # Module 1 - Developer Environment
@@ -27,7 +27,7 @@ asciidoc:
     grype-version: 'v0.109.1'
 
     # Module 2 - Platform Engineering
-    lab2-duration: '30 minutes'
+    lab2-duration: '40 minutes'
     lab2-audience: 'Platform Engineers / DevOps (Intermediate to Advanced)'
     openshift-version: '4.21'
     shipwright-operator: 'Builds for Red Hat OpenShift'
