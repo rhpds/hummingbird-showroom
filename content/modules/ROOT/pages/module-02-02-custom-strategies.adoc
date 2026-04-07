@@ -5,6 +5,7 @@
 --
 *Duration:* ~12 minutes +
 *Prerequisites:* Completion of Sub-Module 2.1 (Building with Hummingbird) +
+*Status:* Optional exercise -- not required for Module 2 completion +
 *Learning Objectives:*
 
 * Create ClusterBuildStrategy with language auto-detection

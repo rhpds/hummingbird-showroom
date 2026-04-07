@@ -5,6 +5,7 @@
 --
 *Duration:* ~13 minutes +
 *Prerequisites:* Completion of Sub-Module 2.2 (Custom Multi-Language Strategies) +
+*Status:* Optional exercise -- not required for Module 2 completion +
 *Learning Objectives:*
 
 * Integrate SBOM generation into BuildStrategy

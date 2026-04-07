@@ -1,10 +1,10 @@
-= Sub-Module 2.5: The Immutable Fortress -- Zero-CVE with ACS Enforcement
+= Sub-Module 2.2: The Immutable Fortress -- Zero-CVE with ACS Enforcement
 
 .*Sub-Module Overview*
 [sidebar]
 --
 *Duration:* ~25 minutes +
-*Prerequisites:* Completion of Sub-Module 2.4 (SELinux Policy CI/CD); ACS installed per xref:appendix-b-openshift-setup.adoc[Appendix B] +
+*Prerequisites:* Completion of Sub-Module 2.1 (Building with Hummingbird); ACS installed per xref:appendix-b-openshift-setup.adoc[Appendix B] +
 *Target Audience:* Application Developers, DevSecOps Engineers, CI/CD Architects +
 *Learning Objectives:*
 
@@ -1462,7 +1462,7 @@ done
 [[summary]]
 == Summary
 
-Congratulations! You have completed Sub-Module 2.7 -- The Immutable Fortress.
+Congratulations! You have completed Sub-Module 2.2 -- The Immutable Fortress.
 
 .*What You Accomplished*
 {empty} +
