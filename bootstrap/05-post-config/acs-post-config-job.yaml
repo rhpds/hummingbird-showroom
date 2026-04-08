@@ -149,8 +149,63 @@ spec:
                   echo "  Init bundle applied."
               fi
 
+              # Register workshop Quay registry as an image integration
+              echo "[4/5] Registering workshop Quay registry integration..."
+
+              QUAY_ROUTE=$(oc get route -n quay -l quay-operator/quayregistry=quay-registry \
+                  -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+
+              if [ -z "$QUAY_ROUTE" ]; then
+                  echo "  WARNING: Quay route not found — skipping image integration registration."
+              else
+                  echo "  Quay route: ${QUAY_ROUTE}"
+
+                  # Auto-detect lab users from hummingbird-builds-lab-user-* namespaces
+                  LAB_USERS=$(oc get ns --no-headers 2>/dev/null | \
+                      awk '{print $1}' | grep '^hummingbird-builds-lab-user-' | \
+                      sed 's/hummingbird-builds-//' | sort)
+
+                  if [ -z "$LAB_USERS" ]; then
+                      LAB_USERS="lab-user-1"
+                      echo "  WARNING: No lab user namespaces found — defaulting to lab-user-1."
+                  fi
+
+                  # Fetch current integrations once for idempotency checks
+                  curl -sk -u "admin:${ACS_PASSWORD}" \
+                      "https://${ACS_ROUTE}/v1/imageintegrations" \
+                      -o /tmp/acs-integrations.json 2>/dev/null || echo '{}' > /tmp/acs-integrations.json
+
+                  for LAB_USER in $LAB_USERS; do
+                      INTEGRATION_NAME="Workshop Quay - ${LAB_USER}"
+
+                      # Check if integration already exists using grep (no python needed)
+                      if grep -q "\"${INTEGRATION_NAME}\"" /tmp/acs-integrations.json 2>/dev/null; then
+                          echo "  Integration '${INTEGRATION_NAME}' already exists. Skipping."
+                          continue
+                      fi
+
+                      curl -sk -u "admin:${ACS_PASSWORD}" \
+                          "https://${ACS_ROUTE}/v1/imageintegrations" \
+                          -X POST \
+                          -H 'Content-Type: application/json' \
+                          -o /tmp/acs-integration-result.json \
+                          -d "{\"name\":\"${INTEGRATION_NAME}\",\"type\":\"quay\",\"categories\":[\"REGISTRY\"],\"quay\":{\"endpoint\":\"${QUAY_ROUTE}\",\"insecure\":true,\"registryRobotCredentials\":{\"username\":\"${LAB_USER}\",\"password\":\"openshift\"}},\"skipTestIntegration\":false}" \
+                          2>/dev/null || true
+
+                      # Extract id with grep (avoids embedded python indentation issues in YAML)
+                      INTEGRATION_ID=$(grep -o '"id":"[^"]*"' /tmp/acs-integration-result.json 2>/dev/null | head -1 | cut -d'"' -f4 || true)
+
+                      if [ -n "$INTEGRATION_ID" ]; then
+                          echo "  Registered '${INTEGRATION_NAME}' (id=${INTEGRATION_ID})"
+                      else
+                          echo "  WARNING: Failed to register '${INTEGRATION_NAME}'"
+                          cat /tmp/acs-integration-result.json 2>/dev/null | head -c 200 || true
+                      fi
+                  done
+              fi
+
               # Verify
-              echo "[4/4] Verifying ACS installation..."
+              echo "[5/5] Verifying ACS installation..."
               oc get pods -n "${ACS_NAMESPACE}" --no-headers 2>/dev/null || true
 
               echo "=== ACS Post-Configuration Complete ==="
