@@ -54,7 +54,7 @@ spec:
             - name: NOOBAA_NAMESPACE
               value: "openshift-storage"
             - name: TARGET_MEMORY
-              value: "1Gi"
+              value: "2Gi"
           command:
             - /bin/bash
             - -c
