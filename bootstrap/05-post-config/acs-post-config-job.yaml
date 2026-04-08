@@ -27,7 +27,7 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["platform.stackrox.io"]
     resources: ["securedclusters"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -110,44 +110,89 @@ spec:
               echo "  ACS Central URL: https://${ACS_ROUTE}"
 
               # Generate and apply init bundle
-              echo "[3/4] Generating cluster init bundle..."
+              echo "[3/5] Generating cluster init bundle..."
               if oc get secret sensor-tls -n "${ACS_NAMESPACE}" > /dev/null 2>&1; then
-                  echo "  Init bundle secrets already exist. Skipping."
+                  echo "  Init bundle secrets already exist. Skipping bundle generation."
               else
                   BUNDLE_NAME="workshop-cluster-$(date +%s)"
 
-                  # Wait for Central API to be responsive
-                  for i in $(seq 1 30); do
+                  # Wait for Central API to be fully responsive (up to 15 min)
+                  API_READY=false
+                  for i in $(seq 1 90); do
                       HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
                           -u "admin:${ACS_PASSWORD}" \
                           "https://${ACS_ROUTE}/v1/metadata" 2>/dev/null || echo "000")
                       if [ "$HTTP_CODE" = "200" ]; then
                           echo "  Central API is ready."
+                          API_READY=true
                           break
                       fi
-                      echo "  Central API not ready (HTTP ${HTTP_CODE}), waiting... (${i}/30)"
+                      echo "  Central API not ready (HTTP ${HTTP_CODE}), waiting... (${i}/90)"
                       sleep 10
                   done
 
-                  curl -sk -u "admin:${ACS_PASSWORD}" \
+                  if [ "$API_READY" != "true" ]; then
+                      echo "ERROR: Central API not ready after 15 minutes. Exiting."
+                      exit 1
+                  fi
+
+                  # Generate init bundle
+                  HTTP_BUNDLE=$(curl -sk -o /tmp/init-bundle.json -w "%{http_code}" \
+                      -u "admin:${ACS_PASSWORD}" \
                       "https://${ACS_ROUTE}/v1/cluster-init/init-bundles" \
                       -X POST -H 'Content-Type: application/json' \
-                      -d "{\"name\": \"${BUNDLE_NAME}\"}" \
-                      -o /tmp/init-bundle.json
+                      -d "{\"name\": \"${BUNDLE_NAME}\"}" 2>/dev/null || echo "000")
+
+                  if [ "$HTTP_BUNDLE" != "200" ]; then
+                      echo "ERROR: Init bundle creation failed (HTTP ${HTTP_BUNDLE}):"
+                      cat /tmp/init-bundle.json | head -c 200
+                      exit 1
+                  fi
+
+                  # Validate bundle has kubectlBundle field before applying
+                  if ! grep -q '"kubectlBundle"' /tmp/init-bundle.json 2>/dev/null; then
+                      echo "ERROR: Init bundle response missing kubectlBundle field."
+                      cat /tmp/init-bundle.json | head -c 300
+                      exit 1
+                  fi
 
                   python3 -c "
               import json, base64
               with open('/tmp/init-bundle.json') as f:
                   data = json.load(f)
-                  bundle = data.get('kubectlBundle', '')
-                  decoded = base64.b64decode(bundle).decode('utf-8')
-                  with open('/tmp/init-bundle-secrets.yaml', 'w') as out:
-                      out.write(decoded)
+              bundle = data.get('kubectlBundle', '')
+              decoded = base64.b64decode(bundle).decode('utf-8')
+              with open('/tmp/init-bundle-secrets.yaml', 'w') as out:
+                  out.write(decoded)
               "
                   oc apply -f /tmp/init-bundle-secrets.yaml -n "${ACS_NAMESPACE}"
                   rm -f /tmp/init-bundle.json /tmp/init-bundle-secrets.yaml
-                  echo "  Init bundle applied."
+
+                  # Verify secrets were actually created
+                  if oc get secret sensor-tls -n "${ACS_NAMESPACE}" > /dev/null 2>&1; then
+                      echo "  Init bundle applied and verified (sensor-tls present)."
+                  else
+                      echo "ERROR: sensor-tls secret not found after apply — init bundle may have failed."
+                      exit 1
+                  fi
               fi
+
+              # Force SecuredCluster to reconcile now that init-bundle secrets exist
+              echo "  Triggering SecuredCluster reconcile..."
+              oc annotate securedcluster -n "${ACS_NAMESPACE}" --all \
+                  reconcile-trigger="$(date +%s)" --overwrite 2>/dev/null || true
+
+              # Wait up to 2 min for sensor to come up
+              echo "  Waiting for sensor pod to start..."
+              for i in $(seq 1 12); do
+                  SENSOR=$(oc get pods -n "${ACS_NAMESPACE}" -l app=sensor --no-headers 2>/dev/null | grep -c Running || echo 0)
+                  if [ "${SENSOR}" -ge 1 ]; then
+                      echo "  Sensor is running."
+                      break
+                  fi
+                  echo "  Waiting for sensor... (${i}/12)"
+                  sleep 10
+              done
 
               # Register workshop Quay registry as an image integration
               echo "[4/5] Registering workshop Quay registry integration..."
