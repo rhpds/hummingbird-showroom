@@ -211,6 +211,38 @@ sample-quarkus-app-run-1     True        Succeeded   5m          5s
 
 Press `Ctrl+C` once you see `Succeeded`.
 
+[WARNING]
+====
+*If the BuildRun shows `False` / `Failed`*, delete it and re-trigger the build:
+
+[source,bash,role=execute,subs=attributes]
+----
+# Check what went wrong
+oc describe buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
+
+# Delete the failed BuildRun
+oc delete buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
+
+# Re-create it (same manifest as Step 5)
+oc create -f - <<EOF
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  name: sample-quarkus-app-run-1
+  namespace: hummingbird-builds-{user}
+spec:
+  build:
+    name: sample-quarkus-app
+EOF
+----
+
+Common failure reasons and fixes:
+
+* **Registry push error** -- registry credentials missing or expired. Check the Troubleshooting section at the end of this module.
+* **BLOB_UPLOAD_INVALID** -- NooBaa storage is recovering. Run `oc get noobaa -n openshift-storage` and wait for `Ready` before retrying.
+* **Pending indefinitely** -- Tekton pipelines operator not ready. Run `oc get pods -n openshift-pipelines` to verify.
+====
+
 [TIP]
 ====
 Typical build times for the Quarkus application:
