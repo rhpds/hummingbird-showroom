@@ -29,7 +29,7 @@ Switch to your hummingbird project on the OpenShift Cluster:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc project {user}-hummingbird-builds
+oc project hummingbird-builds-{user}
 ----
 
 [[registry-secret]]
@@ -39,8 +39,8 @@ The on-cluster Quay registry and `registry-credentials` secret should already be
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get secret registry-credentials -n {user}-hummingbird-builds
-oc describe sa pipeline -n {user}-hummingbird-builds | grep registry-credentials
+oc get secret registry-credentials -n hummingbird-builds-{user}
+oc describe sa pipeline -n hummingbird-builds-{user} | grep registry-credentials
 ----
 
 .*Expected output:*
@@ -124,7 +124,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: sample-quarkus-app
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   source:
     type: Git
@@ -180,7 +180,7 @@ apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   name: sample-quarkus-app-run-1
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   build:
     name: sample-quarkus-app
@@ -198,7 +198,7 @@ Watch the build execution:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun sample-quarkus-app-run-1 -n {user}-hummingbird-builds -w
+oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user} -w
 ----
 
 .*Expected output:*
@@ -230,9 +230,9 @@ Check detailed build logs:
 
 [source,bash,role=execute,subs=attributes]
 ----
-BUILDRUN_POD=$(oc get buildrun sample-quarkus-app-run-1 -n {user}-hummingbird-builds -o jsonpath='{.status.taskRunName}')-pod
+BUILDRUN_POD=$(oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.taskRunName}')-pod
 
-oc logs $BUILDRUN_POD -n {user}-hummingbird-builds --all-containers
+oc logs $BUILDRUN_POD -n hummingbird-builds-{user} --all-containers
 ----
 
 .*Expected log excerpts:*
@@ -273,7 +273,7 @@ Confirm the image was pushed successfully:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun sample-quarkus-app-run-1 -n {user}-hummingbird-builds -o jsonpath='{.status.output.digest}'
+oc get buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.output.digest}'
 echo ""
 ----
 
@@ -354,7 +354,7 @@ Deploy your Hummingbird-built application. First, link the registry credentials 
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc secrets link default registry-credentials --for=pull -n {user}-hummingbird-builds
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds-{user}
 ----
 
 Now create the deployment, service, and route:
@@ -363,11 +363,11 @@ Now create the deployment, service, and route:
 ----
 oc create deployment sample-quarkus \
   --image={quay_hostname}/{quay_user}/sample-quarkus:latest \
-  -n {user}-hummingbird-builds
+  -n hummingbird-builds-{user}
 
-oc expose deployment sample-quarkus --port=8080 -n {user}-hummingbird-builds
+oc expose deployment sample-quarkus --port=8080 -n hummingbird-builds-{user}
 
-oc expose service sample-quarkus -n {user}-hummingbird-builds
+oc expose service sample-quarkus -n hummingbird-builds-{user}
 ----
 
 [NOTE]
@@ -379,7 +379,7 @@ The `oc secrets link default registry-credentials --for=pull` step is required b
 
 [source,bash,role=execute,subs=attributes]
 ----
-ROUTE=$(oc get route sample-quarkus -n {user}-hummingbird-builds -o jsonpath='{.spec.host}')
+ROUTE=$(oc get route sample-quarkus -n hummingbird-builds-{user} -o jsonpath='{.spec.host}')
 echo "Application URL: http://$ROUTE/hello"
 curl -s http://$ROUTE/hello | python3 -m json.tool
 ----
@@ -419,8 +419,8 @@ If you get a timeout, the application may still be starting. Check pod status:
 
 [source,bash,subs=attributes]
 ----
-oc get pods -l app=sample-quarkus -n {user}-hummingbird-builds
-oc logs -l app=sample-quarkus -n {user}-hummingbird-builds
+oc get pods -l app=sample-quarkus -n hummingbird-builds-{user}
+oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
 ----
 ====
 
@@ -534,25 +534,25 @@ Looking for additional depth? The following optional sub-modules extend the work
 **Issue: BuildRun fails with registry push error**
 [source,bash,subs=attributes]
 ----
-oc get secret registry-credentials -n {user}-hummingbird-builds
-oc describe sa pipeline -n {user}-hummingbird-builds | grep registry-credentials
+oc get secret registry-credentials -n hummingbird-builds-{user}
+oc describe sa pipeline -n hummingbird-builds-{user} | grep registry-credentials
 
 # Recreate secret if needed (use your on-cluster Quay route)
-oc delete secret registry-credentials -n {user}-hummingbird-builds
+oc delete secret registry-credentials -n hummingbird-builds-{user}
 oc create secret docker-registry registry-credentials \
   --docker-server="{quay_hostname}" \
   --docker-username={quay_user} \
   --docker-password={quay_password} \
-  -n {user}-hummingbird-builds
-oc secrets link pipeline registry-credentials -n {user}-hummingbird-builds
+  -n hummingbird-builds-{user}
+oc secrets link pipeline registry-credentials -n hummingbird-builds-{user}
 ----
 
 **Issue: BuildRun stuck in Pending**
 [source,bash,subs=attributes]
 ----
 oc get pods -n openshift-pipelines
-oc get events -n {user}-hummingbird-builds --sort-by=.metadata.creationTimestamp
-oc describe buildrun sample-quarkus-app-run-1 -n {user}-hummingbird-builds
+oc get events -n hummingbird-builds-{user} --sort-by=.metadata.creationTimestamp
+oc describe buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
 ----
 
 **Issue: BuildRun fails with BLOB_UPLOAD_INVALID**
@@ -566,7 +566,7 @@ oc get noobaa -n openshift-storage -o jsonpath='{.items[0].status.phase}'
 
 # If backing store shows Rejected/ALL_NODES_OFFLINE, wait for recovery
 # Once NooBaa returns to Ready/OPTIMAL, delete the failed BuildRun and retry
-oc delete buildrun sample-quarkus-app-run-1 -n {user}-hummingbird-builds
+oc delete buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
 # Then re-create the BuildRun (Step 5)
 ----
 
@@ -589,14 +589,14 @@ The on-cluster Quay registry creates repositories as **private** by default. The
 
 [source,bash,subs=attributes]
 ----
-oc secrets link default registry-credentials --for=pull -n {user}-hummingbird-builds
-oc delete pod -l app=sample-quarkus -n {user}-hummingbird-builds
+oc secrets link default registry-credentials --for=pull -n hummingbird-builds-{user}
+oc delete pod -l app=sample-quarkus -n hummingbird-builds-{user}
 ----
 
 **Issue: Application not responding**
 [source,bash,subs=attributes]
 ----
-oc get pods -l app=sample-quarkus -n {user}-hummingbird-builds
-oc logs -l app=sample-quarkus -n {user}-hummingbird-builds
-oc get route sample-quarkus -n {user}-hummingbird-builds
+oc get pods -l app=sample-quarkus -n hummingbird-builds-{user}
+oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
+oc get route sample-quarkus -n hummingbird-builds-{user}
 ----
