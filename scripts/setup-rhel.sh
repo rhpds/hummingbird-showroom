@@ -34,7 +34,7 @@ systemctl daemon-reload
 systemctl start pypiserver
 
 # Install cosign from GitHub releases
-COSIGN_VERSION=v2.4.1
+COSIGN_VERSION=v2.6.3
 curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
 sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
 rm cosign-linux-amd64
@@ -43,14 +43,14 @@ rm cosign-linux-amd64
 cosign version
 
 # Install syft
-SYFT_VERSION=v1.42.2
+SYFT_VERSION=v1.42.4
 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
 
 # Verify installation
 syft version
 
 # Install grype
-GRYPE_VERSION=v0.109.1
+GRYPE_VERSION=v0.111.0
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
 
 # Verify installation
