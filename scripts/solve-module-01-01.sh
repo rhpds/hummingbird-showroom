@@ -4,7 +4,7 @@ set -e
 # Module 01-01: Introduction & Basic Images
 # Solve script - completes module steps on behalf of user
 #
-# Creates: my-website, my-flasksite:ubi, my-flasksite:hi, hummingbird-demo:v1
+# Creates: my-website, my-flasksite:ubi, my-flasksite:hi
 
 # Container registries
 HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
@@ -127,14 +127,5 @@ podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
 sleep 2
 podman stop flask-demo
 
-echo "=== Building multi-stage Quarkus application ==="
-podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
-
-echo "=== Running Quarkus application ==="
-podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
-
-sleep 5
-podman stop demo
-
 echo "=== Module 01-01 completed ==="
-echo "Created images: my-website, my-flasksite:ubi, my-flasksite:hi, hummingbird-demo:v1"
+echo "Created images: my-website, my-flasksite:ubi, my-flasksite:hi"

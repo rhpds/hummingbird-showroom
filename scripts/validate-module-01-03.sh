@@ -163,14 +163,16 @@ if [ -z "$PACKAGE_COUNT" ]; then
 fi
 
 # Expected range: 150-200 packages (Quarkus + OpenJDK + system libraries)
-if [ "$PACKAGE_COUNT" -lt 100 ] || [ "$PACKAGE_COUNT" -gt 250 ]; then
+# Module 01-03 shows ~169-170 packages as typical output
+if [ "$PACKAGE_COUNT" -lt 150 ] || [ "$PACKAGE_COUNT" -gt 200 ]; then
     echo "❌ ERROR: Unexpected package count: $PACKAGE_COUNT"
-    echo "   Expected: 100-250 packages"
+    echo "   Expected: 150-200 packages"
+    echo "   Module shows ~169-170 as typical"
     echo "   This may indicate SBOM generation is incomplete"
     exit 3
 fi
 
-echo "✅ Package count: $PACKAGE_COUNT (within expected range 100-250)"
+echo "✅ Package count: $PACKAGE_COUNT (within expected range 150-200)"
 
 # Verify SBOM contains expected metadata
 SBOM_NAME=$(jq -r '.name' hummingbird-demo.spdx 2>/dev/null)

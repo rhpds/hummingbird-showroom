@@ -138,47 +138,20 @@ podman stop flask-demo
 echo "=== Comparing Flask image sizes ==="
 podman images my-flasksite
 
-echo "=== Using pre-created multi-stage Containerfile ==="
-echo "Multi-stage Containerfile already created by setup script"
-
-echo "=== Building with Podman ==="
-podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
-
-
-
-echo "=== Running and testing the container ==="
-# Run in background
-podman run -d --rm --name demo -p 8080:8080 hummingbird-demo:v1
-
-# Wait for Quarkus to start
-sleep 5
-
-# Test the endpoint
-curl http://localhost:8080/
-echo "✅ Quarkus application endpoint responding successfully"
-
-echo "=== Testing health endpoint ==="
-curl http://localhost:8080/health
-echo "✅ Health endpoint responding successfully"
-
-echo "=== Viewing container logs ==="
-podman logs demo
-
 echo "=== Cleanup ==="
 
 echo "Stopping and removing containers..."
-podman stop demo || echo "Container may already be stopped"
-podman rm demo || echo "Container may already be removed"
-
-# Clean up any other containers that may have been created
 podman stop webserver 2>/dev/null || echo "Webserver container already stopped"
 podman rm webserver 2>/dev/null || echo "Webserver container already removed"
 podman stop caddy-server 2>/dev/null || echo "Caddy server container already stopped"
 podman rm caddy-server 2>/dev/null || echo "Caddy server container already removed"
+podman stop flask-demo 2>/dev/null || echo "Flask container already stopped"
+podman rm flask-demo 2>/dev/null || echo "Flask container already removed"
 
 echo "=== Summary ==="
 echo "✅ Container image building and testing completed"
-echo "✅ Flask application deployed successfully"
-echo "✅ Quarkus application built and validated"
+echo "✅ Caddy webserver tested with direct run and Containerfile"
+echo "✅ Flask application built with both UBI and Hardened images"
+echo "✅ Image size comparison shows Hardened image benefits"
 echo ""
 echo "=== Module 01-01 completed successfully! ==="

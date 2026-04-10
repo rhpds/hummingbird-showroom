@@ -111,12 +111,12 @@ echo "✅ Image digest: ${IMAGE_DIGEST}"
 # Generate cosign key pair
 echo "Generating cosign key pair..."
 export COSIGN_PASSWORD=""
-cosign generate-key-pair --output-key-prefix cosign-test 2>&1 || {
+cosign generate-key-pair --output-key-prefix cosign 2>&1 || {
     echo "❌ ERROR: Failed to generate cosign key pair"
     exit 2
 }
 
-if [ ! -f cosign-test.key ] || [ ! -f cosign-test.pub ]; then
+if [ ! -f cosign.key ] || [ ! -f cosign.pub ]; then
     echo "❌ ERROR: Cosign keys not created"
     exit 2
 fi
@@ -125,7 +125,7 @@ echo "✅ Cosign key pair generated"
 
 # Sign the image
 echo "Signing image with cosign..."
-cosign sign --yes --key cosign-test.key \
+cosign sign --yes --key cosign.key \
   --tlog-upload=false \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1 || {
     echo "❌ ERROR: Failed to sign image"
@@ -136,7 +136,7 @@ echo "✅ Image signed successfully"
 
 # Attach SBOM attestation
 echo "Attaching SBOM attestation..."
-cosign attest --yes --key cosign-test.key \
+cosign attest --yes --key cosign.key \
   --predicate hummingbird-demo.spdx --type spdxjson \
   --tlog-upload=false \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1 || {
@@ -153,7 +153,7 @@ echo "Verifying outcomes..."
 
 # Verify the signature
 echo "Verifying image signature..."
-VERIFY_OUTPUT=$(cosign verify --key cosign-test.pub \
+VERIFY_OUTPUT=$(cosign verify --key cosign.pub \
   --insecure-ignore-tlog=true \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1) || {
     echo "❌ ERROR: Signature verification failed"
@@ -171,7 +171,7 @@ echo "✅ Signature verification passed"
 
 # Verify the SBOM attestation
 echo "Verifying SBOM attestation..."
-ATTEST_OUTPUT=$(cosign verify-attestation --key cosign-test.pub \
+ATTEST_OUTPUT=$(cosign verify-attestation --key cosign.pub \
   --type spdxjson \
   --insecure-ignore-tlog=true \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1) || {

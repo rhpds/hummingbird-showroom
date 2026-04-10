@@ -1,6 +1,6 @@
 #! /bin/bash
 # dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
-dnf instally -y nano emacs-nw
+dnf install -y nano emacs-nw
 
 # GitHub repository references
 GITHUB_ORG="${GITHUB_ORG:-rhpds}"

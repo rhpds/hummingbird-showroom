@@ -113,23 +113,29 @@ HEALTH=$(curl -f -s http://localhost:8080/health 2>&1) || {
     exit 3
 }
 
-if [[ ! "$HEALTH" =~ "UP" ]]; then
-    echo "❌ ERROR: Health endpoint shows unhealthy status"
-    echo "   Response: $HEALTH"
+# Verify health response is valid JSON with status=healthy
+if ! echo "$HEALTH" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+    echo "❌ ERROR: Health endpoint shows unhealthy status or invalid JSON"
+    echo "   Expected: {\"status\": \"healthy\"}"
+    echo "   Received: $HEALTH"
     podman stop demo
     exit 3
 fi
 
-echo "✅ Health endpoint reporting UP"
+echo "✅ Health endpoint reporting {\"status\": \"healthy\"}"
 
 # Verify image size is reasonable (should be much smaller than UBI version)
 IMAGE_SIZE=$(podman images hummingbird-demo:v1 --format "{{.Size}}" | head -1)
 echo "Image size: $IMAGE_SIZE"
 
-# Extract numeric size (assumes format like "273 MB")
+# Extract numeric size (assumes format like "273 MB" or "1.5 GB")
 SIZE_MB=$(echo "$IMAGE_SIZE" | sed 's/[^0-9.]//g')
 
-if (( $(echo "$SIZE_MB > 400" | bc -l) )); then
+# Convert to integer for comparison (truncate decimal)
+SIZE_INT=${SIZE_MB%%.*}
+
+# Check if size is numeric and reasonable
+if [ -n "$SIZE_INT" ] && [ "$SIZE_INT" -gt 400 ] 2>/dev/null; then
     echo "⚠️  WARNING: Image size seems large ($IMAGE_SIZE)"
     echo "   Expected: < 400 MB for multi-stage build"
     echo "   This may indicate the build didn't use multi-stage properly"
@@ -152,6 +158,6 @@ echo ""
 echo "✅ Module 01-02 validation PASSED"
 echo "   - Multi-stage build successful"
 echo "   - Application runs and responds correctly"
-echo "   - Health endpoint reports UP"
+echo "   - Health endpoint reports healthy"
 echo "   - Image size optimized"
 exit 0

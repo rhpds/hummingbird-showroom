@@ -83,10 +83,34 @@ COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 EOF
 
 echo "Building curl image with custom CA trust store..."
-podman build -t curl:local-ca -f ~/Containerfile.pem ~
+podman build -t curl:local-ca -f ~/Containerfile.pem ~ || {
+    echo "❌ ERROR: Failed to build curl image with custom CA"
+    podman stop caddy-ssl 2>/dev/null || true
+    exit 2
+}
 
+echo "✅ curl:local-ca image built successfully"
+
+# Test SSL connection with custom CA (should succeed)
 echo "Testing SSL connection with custom CA (should succeed)..."
-podman run --net=host --rm -it curl:local-ca https://localhost:8443
+SSL_RESPONSE=$(podman run --net=host --rm curl:local-ca https://localhost:8443 2>&1) || {
+    echo "❌ ERROR: curl with custom CA failed"
+    echo "   This should have succeeded with the custom CA trust store"
+    echo "   Response: $SSL_RESPONSE"
+    podman logs caddy-ssl
+    podman stop caddy-ssl
+    exit 3
+}
+
+# Verify we got HTML content back (index.html)
+if [[ ! "$SSL_RESPONSE" =~ "html" ]]; then
+    echo "❌ ERROR: Unexpected response from HTTPS endpoint"
+    echo "   Expected HTML content, got: $SSL_RESPONSE"
+    podman stop caddy-ssl
+    exit 3
+fi
+
+echo "✅ SSL connection successful with custom CA - received HTML content"
 
 echo "Stopping SSL Caddy server..."
 podman stop caddy-ssl
@@ -126,18 +150,43 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 
 echo "Building and testing standard Python image..."
-podman build -t fips:no -f ~/fips/Containerfile ~/fips
-echo "Running FIPS test with standard image (expecting FIPS failure):"
-if podman run --rm fips:no; then
-    echo "WARNING: FIPS test passed on non-FIPS image (unexpected)"
+podman build -t fips:no -f ~/fips/Containerfile ~/fips || {
+    echo "❌ ERROR: Failed to build non-FIPS Python image"
+    exit 2
+}
+
+echo "✅ Non-FIPS image built successfully"
+
+echo "Running FIPS test with standard image (expecting NOT FIPS CAPABLE):"
+FIPS_NO_OUTPUT=$(podman run --rm fips:no 2>&1) || true
+
+# Check for expected markers in output (don't rely on exit codes)
+if echo "$FIPS_NO_OUTPUT" | grep -q "FIPS provider: not active"; then
+    echo "✅ Correct: FIPS provider is not active in standard image"
 else
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -eq 2 ]; then
-        echo "✓ Expected result: FIPS test correctly failed on non-FIPS image"
-    else
-        echo "WARNING: Unexpected exit code $EXIT_CODE from FIPS test (skipping)"
-    fi
+    echo "❌ ERROR: Expected 'FIPS provider: not active' in output"
+    echo "   Got: $FIPS_NO_OUTPUT"
+    exit 3
 fi
+
+if echo "$FIPS_NO_OUTPUT" | grep -q "NOT FIPS CAPABLE"; then
+    echo "✅ Correct: Standard image shows 'NOT FIPS CAPABLE'"
+else
+    echo "❌ ERROR: Expected 'NOT FIPS CAPABLE' in output"
+    echo "   Got: $FIPS_NO_OUTPUT"
+    exit 3
+fi
+
+# Non-FIPS should show FAIL for algorithm blocking (algorithms are NOT blocked)
+if echo "$FIPS_NO_OUTPUT" | grep -q "FAIL - Disallowed Algorithms Blocked"; then
+    echo "✅ Correct: Standard image shows 'FAIL - Disallowed Algorithms Blocked'"
+else
+    echo "❌ ERROR: Expected 'FAIL - Disallowed Algorithms Blocked' in output"
+    echo "   Got: $FIPS_NO_OUTPUT"
+    exit 3
+fi
+
+echo "✅ Non-FIPS image validation passed"
 
 echo "Creating FIPS-enabled Python Containerfile..."
 cat > ~/fips/Containerfile.fips << EOF
@@ -154,19 +203,44 @@ ENTRYPOINT ["python", "./test-fips.py"]
 EOF
 
 echo "Building and testing FIPS-enabled Python image..."
-podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
-echo "Running FIPS test with FIPS-enabled image (expecting FIPS success):"
-if podman run --rm fips:yes; then
-    echo "✓ Expected result: FIPS test passed on FIPS-enabled image"
+podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips || {
+    echo "❌ ERROR: Failed to build FIPS Python image"
+    exit 2
+}
+
+echo "✅ FIPS image built successfully"
+
+echo "Running FIPS test with FIPS-enabled image (expecting FIPS CAPABLE):"
+FIPS_YES_OUTPUT=$(podman run --rm fips:yes 2>&1) || true
+
+# Check for expected markers in output
+if echo "$FIPS_YES_OUTPUT" | grep -q "FIPS provider: active"; then
+    echo "✅ Correct: FIPS provider is active in FIPS image"
 else
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -eq 2 ]; then
-        echo "WARNING: FIPS test failed on FIPS-enabled image (unexpected)"
-        echo "This may indicate the FIPS image is not properly configured"
-    else
-        echo "WARNING: Unexpected exit code $EXIT_CODE from FIPS test (skipping)"
-    fi
+    echo "❌ ERROR: Expected 'FIPS provider: active' in output"
+    echo "   Got: $FIPS_YES_OUTPUT"
+    exit 3
 fi
+
+if echo "$FIPS_YES_OUTPUT" | grep -q "FIPS CAPABLE"; then
+    echo "✅ Correct: FIPS image shows 'FIPS CAPABLE'"
+else
+    echo "❌ ERROR: Expected 'FIPS CAPABLE' in output"
+    echo "   Got: $FIPS_YES_OUTPUT"
+    exit 3
+fi
+
+# FIPS should show PASS for algorithm blocking (algorithms ARE blocked)
+if echo "$FIPS_YES_OUTPUT" | grep -q "PASS - Disallowed Algorithms Blocked"; then
+    echo "✅ Correct: FIPS image shows 'PASS - Disallowed Algorithms Blocked'"
+else
+    echo "❌ ERROR: Expected 'PASS - Disallowed Algorithms Blocked' in output"
+    echo "   This indicates FIPS enforcement is not working"
+    echo "   Got: $FIPS_YES_OUTPUT"
+    exit 3
+fi
+
+echo "✅ FIPS image validation passed"
 
 echo "=== Cleanup ==="
 
