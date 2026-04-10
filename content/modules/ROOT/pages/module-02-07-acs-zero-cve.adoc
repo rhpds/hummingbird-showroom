@@ -400,12 +400,35 @@ oc secrets link builder quay-pull-secret -n hummingbird-acs-lab
 
 The Showroom terminal does not include `podman`, so we use OpenShift's built-in Binary Build strategy. This uploads your local files and builds the Containerfile on-cluster using a builder pod, then pushes directly to Quay.
 
+[WARNING]
+====
+*Before running the commands below*, confirm your registry variables are still set from Step 2:
+
+[source,bash,role=execute,subs=attributes]
+----
+echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
+echo "REGISTRY_USER=${REGISTRY_USER}"
+----
+
+If either line prints blank or `{quay_hostname}` / `{quay_user}` literally, your shell session has reset. Re-run *Step 2* completely before continuing — otherwise the build will push to an invalid image reference and the deployment will fail with `InvalidImageName`.
+====
+
 [source,bash,role=execute]
 ----
+# Guard: fail loudly if registry variables are not set
+if [ -z "${WORKSHOP_REGISTRY}" ] || [ -z "${REGISTRY_USER}" ]; then
+  echo "ERROR: WORKSHOP_REGISTRY or REGISTRY_USER is not set."
+  echo "       Re-run Step 2 to restore your registry environment variables."
+  exit 1
+fi
+
+# Remove any pre-existing BuildConfig (which may have a stale/wrong image reference)
+oc delete bc/legacy-python-api -n hummingbird-acs-lab 2>/dev/null || true
+
 oc new-build --strategy=docker --binary=true \
   --name=legacy-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable" \
-  -n hummingbird-acs-lab &>/dev/null || true
+  -n hummingbird-acs-lab
 
 oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-lab 2>/dev/null || true
 

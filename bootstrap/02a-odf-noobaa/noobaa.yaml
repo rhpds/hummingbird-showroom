@@ -7,12 +7,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
+  dbType: postgres
   dbResources:
     requests:
-      cpu: "0.1"
+      cpu: "100m"
       memory: 1Gi
-  dbType: postgres
   coreResources:
     requests:
-      cpu: "0.1"
+      cpu: "100m"
       memory: 1Gi
+    limits:
+      cpu: "500m"
+      memory: 4Gi

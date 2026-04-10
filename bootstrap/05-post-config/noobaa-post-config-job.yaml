@@ -16,6 +16,9 @@ rules:
   - apiGroups: ["noobaa.io"]
     resources: ["noobaas", "backingstores"]
     verbs: ["get", "list", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -39,7 +42,7 @@ metadata:
   namespace: openshift-storage
   annotations:
     argocd.argoproj.io/sync-wave: "5"
-    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 10
@@ -54,7 +57,9 @@ spec:
             - name: NOOBAA_NAMESPACE
               value: "openshift-storage"
             - name: TARGET_MEMORY
-              value: "1Gi"
+              value: "2Gi"
+            - name: ENDPOINT_MEMORY_LIMIT
+              value: "6Gi"
           command:
             - /bin/bash
             - -c
@@ -136,6 +141,34 @@ spec:
                   echo "  The operator may need time to reconcile the change."
               fi
 
-              echo "=== NooBaa Backing Store Post-Configuration Complete ==="
-              echo "  Backing Store: ${BACKING_STORE}"
-              echo "  Memory Limit: ${TARGET_MEMORY}"
+              # Patch noobaa-endpoint deployment memory limit
+              # The NooBaa CRD does not expose endpoint resources, so we patch
+              # the operator-managed deployment directly. Without this the endpoint
+              # pod has a hard 2Gi limit and is OOMKilled during concurrent blob
+              # uploads, causing EOF errors on Quay image pushes.
+              echo "[5/5] Patching noobaa-endpoint deployment memory limit to ${ENDPOINT_MEMORY_LIMIT}..."
+              for i in $(seq 1 30); do
+                  if oc get deployment noobaa-endpoint -n "${NOOBAA_NAMESPACE}" > /dev/null 2>&1; then
+                      break
+                  fi
+                  echo "  Waiting for noobaa-endpoint deployment... (${i}/30)"
+                  sleep 10
+              done
+
+              CURRENT_ENDPOINT_LIMIT=$(oc get deployment noobaa-endpoint -n "${NOOBAA_NAMESPACE}" \
+                  -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}' 2>/dev/null || echo "")
+              echo "  Current endpoint memory limit: ${CURRENT_ENDPOINT_LIMIT:-not set}"
+
+              if [ "${CURRENT_ENDPOINT_LIMIT}" = "${ENDPOINT_MEMORY_LIMIT}" ]; then
+                  echo "  Endpoint already at ${ENDPOINT_MEMORY_LIMIT}. No change needed."
+              else
+                  oc patch deployment noobaa-endpoint -n "${NOOBAA_NAMESPACE}" --type='json' -p="[
+                    {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/limits/memory\",\"value\":\"${ENDPOINT_MEMORY_LIMIT}\"}
+                  ]" && echo "  noobaa-endpoint deployment patched to ${ENDPOINT_MEMORY_LIMIT}." || \
+                  echo "  WARNING: Could not patch noobaa-endpoint deployment. Blob push EOF errors may occur under load."
+              fi
+
+              echo "=== NooBaa Post-Configuration Complete ==="
+              echo "  Backing Store:          ${BACKING_STORE}"
+              echo "  Backing Store Memory:   ${TARGET_MEMORY}"
+              echo "  Endpoint Memory Limit:  ${ENDPOINT_MEMORY_LIMIT}"
