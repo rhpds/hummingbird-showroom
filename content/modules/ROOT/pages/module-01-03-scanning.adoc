@@ -18,17 +18,39 @@ Building secure images is only the first step. In this sub-module, you'll learn 
 
 You'll see firsthand why Red Hat's "zero-CVE at ship time" approach dramatically reduces your security churn compared to traditional base images.
 
+Change to a new directory to hold our work for this exercise.
+[source,bash,role=execute]
+----
+cd ~/scanning
+----
+[[pull-sbom]]
+== Red Hat provided SBOMs
+
+Transparency is a key pillar in a secure software supply chain.
+Each image provided includes a Software Bill of Materials (SBOM) that details the contents. 
+You saw the web version, but that's not particularly useful for use with security tools.Using `cosign` you can download the SBOM from the registry directly.
+Let's get the SBOM for the `openjdk` image we used to build the Quarkus app.
+
+[source,bash,role=execute]
+----
+cosign download sbom {hummingbird-registry}/openjdk:21-runtime
+----
+[NOTE]
+====
+You will see a warning about using attestations instead of JSON. We'll go over this concept and the `cosign` tool in more depth during a later exercise. We just want to see that the SBOM is available.
+====
+
+The JSON will have information about checksums, packages, publishers and more. Our SBOMs are usefult to understand the contents of the base, but you'll likely want to publish SBOMs that include your application and any of it's dependencies as well.
+
+Before we generate an SBOM, let's explore the CVE space with a scanner.
+
+[[vulnerability-scanning]]
+== Vulnerability Scanning with Grype
 The tools we're using in this module use the Podman API to find and inspect images, so we can enable that now for our user.
 
 [source,bash,role=execute]
 ----
 systemctl --user enable --now podman.socket
-----
-
-Change to a new directory to hold our work for this exercise.
-[source,bash,role=execute]
-----
-cd ~/scanning
 ----
 
 We'll compare the multi-stage image you built in Sub-Module 1.2 to a pre-built UBI version of the same Quarkus application. This UBI image was built in a single stage and will include additional OS and build tools.
@@ -80,10 +102,6 @@ GoVersion:     go1.26.1
 Compiler:      gc
 SchemaVersion: 16.1.3
 ----
-
-
-[[vulnerability-scanning]]
-== Vulnerability Scanning with Grype
 
 === Step 1: Scan for CVEs
 

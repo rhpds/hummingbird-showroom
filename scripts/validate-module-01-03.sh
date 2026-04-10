@@ -1,272 +1,217 @@
 #!/bin/bash
 set -e
 
-# Module 01-03: Common security changes (SELinux)
-# Auto-generated script from executable bash blocks
-#
-# Note: FIPS testing section expects different exit codes:
-# - Non-FIPS image: test-fips.py returns exit code 2 (expected failure)
-# - FIPS image: test-fips.py returns exit code 0 (expected success)
+# Module 01-03: Vulnerability Scanning & SBOMs
+# Validation script - fails fast if prerequisites missing or steps fail
 
 # Container registries
-# HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
 HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
 
+echo "=== Validating Module 01-03: Vulnerability Scanning & SBOMs ==="
 
+#
+# 1. PREREQUISITE CHECKS (fail fast if environment is broken)
+#
+echo "Checking prerequisites..."
 
-echo "=== Checking prerequisites ==="
-# Verify that hummingbird-demo:v1 exists (created in module 01-01)
+# Check that prerequisite image exists
 if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hummingbird-demo:v1$"; then
-    echo "ERROR: hummingbird-demo:v1 image not found"
-    echo "Please run module-01-01-solve.sh first to build the required image"
+    echo "❌ ERROR: hummingbird-demo:v1 not found"
+    echo "   Module 01-03 requires the output from Module 01-02"
+    echo "   Run: validate-module-01-02.sh or solve-module-01-02.sh"
     exit 1
 fi
 
-echo "Prerequisites met: hummingbird-demo:v1 found"
+# Check that required tools are installed
+if ! command -v grype &> /dev/null; then
+    echo "❌ ERROR: grype not found in PATH"
+    echo "   Expected to be installed by setup-rhel.sh"
+    exit 1
+fi
 
-echo "=== Step 1: Certificate Authority Bundle Management ==="
+if ! command -v syft &> /dev/null; then
+    echo "❌ ERROR: syft not found in PATH"
+    echo "   Expected to be installed by setup-rhel.sh"
+    exit 1
+fi
 
-# Ensure webserver directory exists
-mkdir -p ~/webserver
+if ! command -v cosign &> /dev/null; then
+    echo "❌ ERROR: cosign not found in PATH"
+    echo "   Expected to be installed by setup-rhel.sh"
+    exit 1
+fi
 
-echo "Using pre-created Caddyfile..."
-echo "Caddyfile and webserver files already created by setup script"
+if ! command -v jq &> /dev/null; then
+    echo "❌ ERROR: jq not found in PATH"
+    echo "   Expected to be installed during system setup"
+    exit 1
+fi
 
-echo "Creating SSL Containerfile..."
-cat > ~/webserver/Containerfile << EOF
-FROM ${HUMMINGBIRD_REGISTRY}/caddy:latest
-COPY Caddyfile /etc/caddy/Caddyfile
+# Check that scanning directory can be created
+if [ ! -d ~/scanning ]; then
+    mkdir -p ~/scanning || {
+        echo "❌ ERROR: Cannot create ~/scanning directory"
+        exit 1
+    }
+fi
 
-COPY index.html /usr/share/caddy/
-EOF
+echo "✅ Prerequisites verified"
 
-echo "Building and running SSL-enabled Caddy server..."
-podman build -t caddy:ssl -f ~/webserver/Containerfile ~/webserver
-podman run --replace -d --name caddy-ssl -p 8443:8443 -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
-echo "✅ SSL-enabled Caddy server started"
+#
+# 2. EXECUTE MODULE STEPS (exactly as student would)
+#
+echo "Executing module steps..."
 
-# Give container time to start and generate certificates
-sleep 5
+# Change to scanning directory
+cd ~/scanning
 
-echo "Testing SSL connection (this will fail due to self-signed cert)..."
-podman run --net=host --rm -it ${HUMMINGBIRD_REGISTRY}/curl:latest https://localhost:8443 || echo "Expected failure due to self-signed certificate"
+# Enable podman socket
+echo "Enabling podman socket..."
+systemctl --user enable --now podman.socket || {
+    echo "❌ ERROR: Failed to enable podman socket"
+    echo "   This is required for grype and syft to access podman"
+    exit 2
+}
 
-echo "Extracting certificate authority files..."
-podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.key .
-podman cp caddy-ssl:/data/caddy/pki/authorities/local/root.crt .
-cat root.key root.crt > ca.pem
-echo "✅ Certificate authority files extracted"
+echo "✅ Podman socket enabled"
 
-echo "Creating Containerfile for curl with custom CA..."
-cat > ~/Containerfile.pem << EOF
-FROM ${HUMMINGBIRD_REGISTRY}/curl:latest-builder as builder
+# Download Red Hat SBOM (verify registry access and cosign works)
+echo "Downloading Red Hat SBOM for openjdk:21-runtime..."
+cosign download sbom ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime > rh-openjdk-sbom.json 2>&1 || {
+    echo "❌ ERROR: Failed to download Red Hat SBOM"
+    echo "   This may indicate:"
+    echo "   - Registry connectivity issues"
+    echo "   - cosign not working properly"
+    echo "   - SBOM not available for this image"
+    exit 2
+}
 
-# Copy the certificate to the image
-COPY ca.pem /tmp/
+echo "✅ Red Hat SBOM downloaded"
 
-# Temporarily switch to root to add the CA certificate to the trust store
-USER root
-RUN trust anchor /tmp/ca.pem
-USER \${CONTAINER_DEFAULT_USER}
-
-# Runtime stage:
-# Copy the trust store from the builder image to the runtime image
-FROM ${HUMMINGBIRD_REGISTRY}/curl:latest
-COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
-EOF
-
-echo "Building curl image with custom CA trust store..."
-podman build -t curl:local-ca -f ~/Containerfile.pem ~
-
-echo "Testing SSL connection with custom CA (should succeed)..."
-podman run --net=host --rm -it curl:local-ca https://localhost:8443
-
-echo "Stopping SSL Caddy server..."
-podman stop caddy-ssl
-
-echo "=== Step 2: FIPS Variants Testing ==="
-
-echo "=== Step 7: Check FIPS mode on host ==="
-echo "Checking if host is in FIPS mode..."
-cat /proc/sys/crypto/fips_enabled
-echo "A value of 0 means the host is NOT in FIPS mode"
-echo "Note: Container FIPS enforcement operates independently of host FIPS mode"
-echo ""
-
-# Create FIPS testing directory and copy test file
-mkdir -p ~/fips
-if [ ! -f ~/fips/test-fips.py ]; then
-    if [ -f "$(dirname "$0")/test-fips.py" ]; then
-        echo "Copying test-fips.py to ~/fips/ directory..."
-        cp "$(dirname "$0")/test-fips.py" ~/fips/ || echo "WARNING: Could not copy test-fips.py, assuming it exists"
-    else
-        echo "WARNING: test-fips.py not found, assuming it exists in ~/fips/"
+# Scan with grype
+echo "Running CVE scan with grype..."
+grype hummingbird-demo:v1 > grype-scan.log 2>&1 || {
+    GRYPE_EXIT=$?
+    # Grype returns non-zero if vulnerabilities are found, which is okay
+    # Only fail if it's a real error (exit code > 1)
+    if [ $GRYPE_EXIT -gt 1 ]; then
+        echo "❌ ERROR: Grype scan failed with exit code $GRYPE_EXIT"
+        cat grype-scan.log
+        exit 2
     fi
+}
+
+echo "✅ Grype scan completed"
+
+# Check scan output
+if ! grep -q "Scanned for vulnerabilities" grype-scan.log; then
+    echo "❌ ERROR: Grype scan output is incomplete"
+    cat grype-scan.log
+    exit 2
 fi
 
-echo "Creating standard Python Containerfile..."
-cat > ~/fips/Containerfile << EOF
-FROM ${HUMMINGBIRD_REGISTRY}/python:3.14
+# Display scan summary
+echo "Scan summary:"
+grep -A 2 "Scanned for vulnerabilities" grype-scan.log || true
 
-COPY test-fips.py .
+# Generate SBOM with syft (table format for verification)
+echo "Generating SBOM (table format for verification)..."
+syft hummingbird-demo:v1 -o table > sbom-table.txt 2>&1 || {
+    echo "❌ ERROR: SBOM table generation failed"
+    cat sbom-table.txt
+    exit 2
+}
 
-# Switch back to the default user to install and run the application
-USER \${CONTAINER_DEFAULT_USER}
+echo "✅ SBOM table generated"
 
-# Appropriately set the stop signal for the python interpreter executed as PID 1
-STOPSIGNAL SIGINT
-ENTRYPOINT ["python", "./test-fips.py"]
-EOF
+# Generate SBOM in SPDX-JSON format (for compliance)
+echo "Generating SBOM (SPDX-JSON format)..."
+syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx 2>&1 || {
+    echo "❌ ERROR: SBOM generation failed"
+    exit 2
+}
 
-echo "Building and testing standard Python image..."
-podman build -t fips:no -f ~/fips/Containerfile ~/fips
-echo "Running FIPS test with standard image (expecting FIPS failure):"
-if podman run --rm fips:no; then
-    echo "WARNING: FIPS test passed on non-FIPS image (unexpected)"
-else
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -eq 2 ]; then
-        echo "✓ Expected result: FIPS test correctly failed on non-FIPS image"
-    else
-        echo "WARNING: Unexpected exit code $EXIT_CODE from FIPS test (skipping)"
-    fi
+echo "✅ SBOM generated in SPDX-JSON format"
+
+#
+# 3. ASSERT OUTCOMES (verify expected results)
+#
+echo "Verifying outcomes..."
+
+# Verify SBOM file exists
+if [ ! -f hummingbird-demo.spdx ]; then
+    echo "❌ ERROR: SBOM file not created"
+    exit 3
 fi
 
-echo "Creating FIPS-enabled Python Containerfile..."
-cat > ~/fips/Containerfile.fips << EOF
-FROM ${HUMMINGBIRD_REGISTRY}/python:3.14-fips
+echo "✅ SBOM file exists"
 
-COPY test-fips.py .
-
-# Switch back to the default user to install and run the application
-USER \${CONTAINER_DEFAULT_USER}
-
-# Appropriately set the stop signal for the python interpreter executed as PID 1
-STOPSIGNAL SIGINT
-ENTRYPOINT ["python", "./test-fips.py"]
-EOF
-
-echo "Building and testing FIPS-enabled Python image..."
-podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
-echo "Running FIPS test with FIPS-enabled image (expecting FIPS success):"
-if podman run --rm fips:yes; then
-    echo "✓ Expected result: FIPS test passed on FIPS-enabled image"
-else
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -eq 2 ]; then
-        echo "WARNING: FIPS test failed on FIPS-enabled image (unexpected)"
-        echo "This may indicate the FIPS image is not properly configured"
-    else
-        echo "WARNING: Unexpected exit code $EXIT_CODE from FIPS test (skipping)"
-    fi
+# Verify SBOM is valid JSON
+if ! jq empty hummingbird-demo.spdx 2>/dev/null; then
+    echo "❌ ERROR: SBOM is not valid JSON"
+    exit 3
 fi
 
-echo "=== Step 3: SELinux and udica Setup ==="
+echo "✅ SBOM is valid JSON"
 
-echo "Checking SELinux enforcement status..."
-SELINUX_STATUS=$(getenforce)
-echo "SELinux status: $SELINUX_STATUS"
+# Verify SBOM contains expected package count
+PACKAGE_COUNT=$(jq '.packages | length' hummingbird-demo.spdx 2>/dev/null)
 
-if [ "$SELINUX_STATUS" != "Enforcing" ]; then
-    echo "WARNING: SELinux is not in enforcing mode. Enabling enforcing mode..."
-    sudo setenforce 1
-    sudo sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+if [ -z "$PACKAGE_COUNT" ]; then
+    echo "❌ ERROR: Cannot extract package count from SBOM"
+    exit 3
 fi
 
-echo "Verifying udica installation..."
-udica --version
+# Expected range: 150-200 packages (Quarkus + OpenJDK + system libraries)
+if [ "$PACKAGE_COUNT" -lt 100 ] || [ "$PACKAGE_COUNT" -gt 250 ]; then
+    echo "❌ ERROR: Unexpected package count: $PACKAGE_COUNT"
+    echo "   Expected: 100-250 packages"
+    echo "   This may indicate SBOM generation is incomplete"
+    exit 3
+fi
 
-echo "Verifying SELinux labels on directories..."
-ls -lZ /opt/myapp/
+echo "✅ Package count: $PACKAGE_COUNT (within expected range 100-250)"
 
-echo "=== Step 5: Running Container with Default Policy ==="
+# Verify SBOM contains expected metadata
+SBOM_NAME=$(jq -r '.name' hummingbird-demo.spdx 2>/dev/null)
+if [ -z "$SBOM_NAME" ]; then
+    echo "❌ ERROR: SBOM missing 'name' field"
+    exit 3
+fi
 
-echo "Running Hummingbird container with bind mounts and default policy..."
-podman run -d \
-  --name demo-policy-run \
-  --env container=podman \
-  -v /opt/myapp/config:/app/config:ro,Z \
-  -v /opt/myapp/logs:/app/logs:rw,Z \
-  -p 8080:8080 \
-  hummingbird-demo:v1
+echo "✅ SBOM metadata complete (name: $SBOM_NAME)"
 
-echo "Waiting for container to start..."
-sleep 5
+# Verify Red Hat SBOM was downloaded
+if [ ! -f rh-openjdk-sbom.json ] || [ ! -s rh-openjdk-sbom.json ]; then
+    echo "❌ ERROR: Red Hat SBOM file is missing or empty"
+    exit 3
+fi
 
-echo "Checking container status..."
-podman ps -a --filter name=demo-policy-run
+echo "✅ Red Hat SBOM downloaded and non-empty"
 
-echo "Testing application endpoint..."
-curl http://localhost:8080/ || echo "Application may still be starting"
+# Compare with UBI image if it exists
+if podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hummingbird-demo:ubi$"; then
+    echo ""
+    echo "Comparing with UBI image..."
 
-echo "=== Step 6: Generating Custom SELinux Policy with udica ==="
+    # Scan UBI image
+    grype hummingbird-demo:ubi --only-fixed > grype-ubi-scan.log 2>&1 || true
 
-echo "Generating udica policy from container inspection..."
-podman inspect demo-policy-run | sudo udica hummingbird_demo
+    echo "UBI image scan summary:"
+    grep -A 2 "Scanned for vulnerabilities" grype-ubi-scan.log || echo "UBI scan completed"
 
-echo "=== Step 7: Examining Generated CIL Policy ==="
+    echo ""
+    echo "Note: Hardened images typically show 0 or near-zero CVEs"
+    echo "      UBI images may show 15-30+ CVEs even when recently built"
+fi
 
-echo "Generated CIL policy content:"
-cat hummingbird_demo.cil
+cd ~
 
-echo "Checking which ports share the http_cache_port_t label..."
-sudo semanage port -l | grep http_cache || echo "Port information not available"
-
-echo "=== Step 8: Loading SELinux Policy ==="
-
-echo "Loading custom SELinux policy..."
-sudo semodule -i hummingbird_demo.cil \
-  /usr/share/udica/templates/{base_container.cil,net_container.cil}
-
-echo "Verifying policy was loaded..."
-sudo semodule -l | grep hummingbird_demo
-echo "✅ SELinux policy loaded successfully"
-
-echo "=== Step 9: Applying Custom Policy ==="
-
-echo "Stopping initial container run..."
-podman stop demo-policy-run
-podman rm demo-policy-run
-
-echo "Starting container with custom SELinux policy..."
-podman run -d \
-  --name demo-selinux \
-  --env container=podman \
-  --security-opt label=type:hummingbird_demo.process \
-  -v /opt/myapp/config:/app/config:ro,Z \
-  -v /opt/myapp/logs:/app/logs:rw,Z \
-  -p 8080:8080 \
-  hummingbird-demo:v1
-
-echo "=== Step 10: Verifying Custom Policy Application ==="
-
-echo "Checking container process label..."
-podman inspect demo-selinux --format '{{.ProcessLabel}}'
-
-echo "Waiting for application to start..."
-sleep 5
-
-echo "Testing application functionality with custom policy..."
-curl http://localhost:8080/
-curl http://localhost:8080/health
-
-echo "=== Step 11: Cleanup ==="
-
-echo "Stopping and removing containers..."
-podman stop demo-selinux || echo "Container may already be stopped"
-podman rm demo-selinux || echo "Container may already be removed"
-
-# Clean up any remaining containers from certificate testing
-podman stop caddy-ssl 2>/dev/null || echo "Caddy SSL container already stopped"
-podman rm caddy-ssl 2>/dev/null || echo "Caddy SSL container already removed"
-
-echo "=== Summary ==="
-echo "✅ Certificate Authority bundle management completed"
-echo "✅ FIPS variants testing completed"
-echo "✅ SELinux udica policy generation and application completed"
-echo "✅ Container hardening with custom SELinux policy verified"
 echo ""
-echo "NOTE: Custom SELinux policy 'hummingbird_demo' remains loaded for future use."
-echo "To remove it later, run: sudo semodule -r hummingbird_demo"
-echo ""
-echo "=== Module 01-03 completed successfully! ==="
+echo "✅ Module 01-03 validation PASSED"
+echo "   - Grype CVE scanning operational"
+echo "   - Syft SBOM generation working"
+echo "   - SBOM contains $PACKAGE_COUNT packages"
+echo "   - Red Hat SBOM download successful"
+echo "   - Files created in ~/scanning/"
+exit 0

@@ -350,7 +350,10 @@ Congratulations! You've completed Sub-Module 1.5 and learned how to customize ha
 
 === Next Steps
 
-In xref:module-01-06-selinux.adoc[Sub-Module 1.6: SELinux Hardening with udica], you'll learn how to generate custom SELinux policies for distroless containers, adding kernel-level mandatory access control to complement the image-level security you've built.
+You've completed the core developer environment modules for Red Hat Hardened Images! You've learned to build minimal images, scan and sign them, customize security configurations, and apply kernel-level access controls.
+
+Move to Module 2 to learn platform-level hardened image deployment with Shipwright and OpenShift.
+
 
 === Troubleshooting
 

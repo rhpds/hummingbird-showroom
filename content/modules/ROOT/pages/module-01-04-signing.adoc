@@ -24,19 +24,48 @@ In this sub-module, you'll use `cosign` to digitally sign your container images 
 
 We've looked for known vulnerabilities, detailed the contents, and are ready to publish. How do we ensure that the image that comes out of the registry matches what went in? A common way to ensure a chain of trust is by digitally signing images. One tool to manage container signing is `cosign`.
 
-Cosign signs and verifies images stored in OCI registries. Since our image lives in local Podman storage, we'll push the image to Quay for signing.
+Cosign signs and verifies images stored in OCI registries. Before we sign our lab images, let's look at how the official hardened images are handled. 
+The "Verify Build" section of the image page provided you with the key used to sign all of the images. This allows you to cryptographically prove the image you pulled is the one we published.
 
-[TIP]
-====
-**Cosign in Production:**
+Let's check that `openjdk` image we've been using to create our Quarkus app.
 
-* **Development**: Generate key pairs locally (as we'll do in this workshop)
-* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
-* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
+[source,bash,role=execute,subs=attributes+]
+----
+cosign verify --insecure-ignore-tlog \
+  --output-file hi-openjdk.sig \
+  --key https://catalog.hummingbird-project.io/cosign.pub \
+  {hummingbird-registry}/openjdk:21-runtime
+----
+----
+Verification for quay.io/hummingbird/openjdk:21-runtime --
+The following checks were performed on each of these signatures:
+  - The cosign claims were validated
+  - The signatures were verified against the specified public key
+----
+
+This shows the image is what it claims to be, the hardened `openjdk:21-runtime` published in our catalog of hardened images.
+
+[NOTE]
 ====
+For now, ignore the warning about skipping verification, that's a lab restriction we'll discuss a little further on.
+====
+
+We also sign UBI images and you can verify that the same way using the key shipped with RHEL. We publish our signing keys in a number of different ways, so you can always find it in a way that fits your use case.
+[source,bash,role=execute,subs=attributes+]
+----
+cosign verify --insecure-ignore-tlog \
+  --output-file ubi-latest.sig \
+  --key /etc/pki/sigstore/SIGSTORE-redhat-release3 \
+  registry.access.redhat.com/ubi9/ubi:latest
+----
+
+If you'd like to see the output of JSON arrays created, feel free to examine the `.sig` files.
+
 
 === Step 1: Log into Quay and re-tag an image
+So far, you've seen how to verify existing signatures and SBOMs published by Red Hat, but you'll want to do the same for your own images. Let's do that now.
 
+Since our image lives in local Podman storage, we'll push the image to Quay for signing.
 An organization for your lab user has already been created, you can log into Quay with `podman` using the same credentials as the UI.
 
 [source,bash,role=execute,subs=attributes+]
@@ -83,6 +112,15 @@ Cosign 2.0 and later requires (and future versions will enforce) digest-based re
 ====
 
 === Step 2: Generate Signing Keys
+
+[TIP]
+====
+**Cosign in Production:**
+
+* **Development**: Generate key pairs locally (as we'll do in this workshop)
+* **Production**: Use keyless signing with OIDC identity or KMS-backed keys
+* **CI/CD**: Integrate with HashiCorp Vault or cloud KMS (AWS KMS, Azure Key Vault, GCP KMS)
+====
 
 Generate a key pair for testing (in production, use keyless signing or KMS), for the purposes of this lab we'll set an empty password via the environment variable.
 

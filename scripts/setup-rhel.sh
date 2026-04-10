@@ -1,5 +1,6 @@
 #! /bin/bash
 # dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
+dnf instally -y nano emacs-nw
 
 # GitHub repository references
 GITHUB_ORG="${GITHUB_ORG:-rhpds}"
@@ -134,24 +135,29 @@ cp ${SETUP_FILES}/flask/Containerfile.ubi /home/rhel/flask/
 echo "✅ Exercise files created successfully"
 
 echo "=== Installing validation scripts ==="
-cp ${SCRIPT_FILES}/validate-module-01-01.sh /home/rhel/validate-mod-01-01.sh
-cp ${SCRIPT_FILES}/validate-module-01-02.sh /home/rhel/validate-mod-01-02.sh
-cp ${SCRIPT_FILES}/validate-module-01-03.sh /home/rhel/validate-mod-01-03.sh
-chmod +x /home/rhel/validate-mod-01-*.sh
+mkdir -p /home/rhel/scripts
+cp ${SCRIPT_FILES}/validate-module-01-01.sh /home/rhel/scripts/validate-mod-01-01.sh
+cp ${SCRIPT_FILES}/validate-module-01-02.sh /home/rhel/scripts/validate-mod-01-02.sh
+cp ${SCRIPT_FILES}/validate-module-01-03.sh /home/rhel/scripts/validate-mod-01-03.sh
+cp ${SCRIPT_FILES}/validate-module-01-04.sh /home/rhel/scripts/validate-mod-01-04.sh
+cp ${SCRIPT_FILES}/validate-module-01-05.sh /home/rhel/scripts/validate-mod-01-05.sh
+chmod +x /home/rhel/scripts/validate-mod-01-*.sh
 
 echo "=== Installing solve scripts ==="
-cp ${SCRIPT_FILES}/solve-module-01-01.sh /home/rhel/solve-mod-01-01.sh
-cp ${SCRIPT_FILES}/solve-module-01-02.sh /home/rhel/solve-mod-01-02.sh
-cp ${SCRIPT_FILES}/solve-module-01-03.sh /home/rhel/solve-mod-01-03.sh
-cp ${SCRIPT_FILES}/solve-module-01-04.sh /home/rhel/solve-mod-01-04.sh
-cp ${SCRIPT_FILES}/solve-module-01-05.sh /home/rhel/solve-mod-01-05.sh
-cp ${SCRIPT_FILES}/solve-module-01-06.sh /home/rhel/solve-mod-01-06.sh
-cp ${SCRIPT_FILES}/solve-module-01-07.sh /home/rhel/solve-mod-01-07.sh
-cp ${SCRIPT_FILES}/solve-module-01-08.sh /home/rhel/solve-mod-01-08.sh
-chmod +x /home/rhel/solve-mod-01-*.sh
+cp ${SCRIPT_FILES}/solve-module-01-01.sh /home/rhel/scripts/solve-mod-01-01.sh
+cp ${SCRIPT_FILES}/solve-module-01-02.sh /home/rhel/scripts/solve-mod-01-02.sh
+cp ${SCRIPT_FILES}/solve-module-01-03.sh /home/rhel/scripts/solve-mod-01-03.sh
+cp ${SCRIPT_FILES}/solve-module-01-04.sh /home/rhel/scripts/solve-mod-01-04.sh
+cp ${SCRIPT_FILES}/solve-module-01-05.sh /home/rhel/scripts/solve-mod-01-05.sh
+cp ${SCRIPT_FILES}/solve-module-01-06.sh /home/rhel/scripts/solve-mod-01-06.sh
+cp ${SCRIPT_FILES}/solve-module-01-07.sh /home/rhel/scripts/solve-mod-01-07.sh
+cp ${SCRIPT_FILES}/solve-module-01-08.sh /home/rhel/scripts/solve-mod-01-08.sh
+chmod +x /home/rhel/scripts/solve-mod-01-*.sh
 
 # Clean up temporary repository clone
 echo "=== Cleaning up temporary files ==="
 rm -rf ${TEMP_REPO}
 
 chown -R rhel:rhel /home/rhel/
+
+subscription-manager unregister && subscription-manager clean

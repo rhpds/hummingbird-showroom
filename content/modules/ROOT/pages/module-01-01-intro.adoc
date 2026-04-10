@@ -65,7 +65,9 @@ For now, stop the `caddy` server.
 podman stop caddy-server
 ----
 
-This will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile for your final webserver.
+This pattern will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile to bundle the assets. This avoids relying on local volume mounts and ensures portability. 
+
+In a production environment, you'll also want to use verified images from the catalog of hardened images. You can see the OCI spec here matches what you saw on the web, but we'll explore cryptographic verifcation a little later on. 
 
 [source,bash,role=execute,subs=attributes+]
 ----
@@ -264,6 +266,12 @@ podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
 STEP 7/11: RUN pip install --index-url http://localhost:8000/simple flask
 error running container: from /usr/bin/crun creating container for [/bin/sh -c pip install --index-url http://localhost:8000/simple flask]: executable file `/bin/sh` not found: No such file or directory
 ----
+[NOTE]
+====
+This failure is deliberate to pivot to our next topic. However if you know a binary or command is available in the image, you can use the "exec form" instead of the "shell form" for `RUN` like `CMD`:
+
+RUN ["/usr/bin/python", "-m",  "pip", "install", " flask" ]
+====
 What happened here? One of the changes to 'distroless' images like our new `default` is the removal of things like shells. 
 The `RUN` step executes provided commands (here `pip install`) by passing them to a shell where the previous `COPY` instructions do not. 
 
