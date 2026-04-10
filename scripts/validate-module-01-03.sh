@@ -90,7 +90,7 @@ echo "✅ Red Hat SBOM downloaded"
 
 # Scan with grype
 echo "Running CVE scan with grype..."
-grype hummingbird-demo:v1 > grype-scan.log 2>&1 || {
+grype hummingbird-demo:v1 2>&1 | tee grype-scan-raw.log | sed 's/\x1b\[[0-9;]*m//g' > grype-scan.log || {
     GRYPE_EXIT=$?
     # Grype returns non-zero if vulnerabilities are found, which is okay
     # Only fail if it's a real error (exit code > 1)
@@ -103,29 +103,44 @@ grype hummingbird-demo:v1 > grype-scan.log 2>&1 || {
 
 echo "✅ Grype scan completed"
 
-# Check scan output
-if ! grep -q "Scanned for vulnerabilities" grype-scan.log; then
-    echo "❌ ERROR: Grype scan output is incomplete"
+# Check scan output is valid (either summary format or table format)
+# Using cleaned log without ANSI codes for reliable parsing
+if ! grep -qE "(Scanned for vulnerabilities|VULNERABILITY.*SEVERITY)" grype-scan.log; then
+    echo "❌ ERROR: Grype scan output is incomplete or malformed"
+    echo "Expected either summary line or CVE table"
     cat grype-scan.log
     exit 2
 fi
 
-# Display scan summary and check for vulnerabilities
-echo "Scan summary:"
-grep -A 2 "Scanned for vulnerabilities" grype-scan.log || true
+# Display scan results
+echo "Scan results:"
 
-# Check if any vulnerabilities were found (exit code 1 means found)
-if [ -f grype-scan.log ]; then
+# Check if we have summary format (no CVEs found)
+if grep -q "Scanned for vulnerabilities" grype-scan.log; then
+    grep -A 2 "Scanned for vulnerabilities" grype-scan.log || true
     VULN_COUNT=$(grep -oP 'Scanned for vulnerabilities\s+\[\K[0-9]+' grype-scan.log || echo "0")
-    if [ "$VULN_COUNT" -gt 0 ]; then
-        echo ""
-        echo "⚠️  WARNING: Found $VULN_COUNT vulnerabilities in hummingbird-demo:v1"
-        echo "   Module notes: Hardened images typically have 0 or near-zero CVEs at ship time"
-        echo "   This may indicate dependencies with known issues (e.g., netty, quarkus libs)"
-        echo "   This is not a validation failure - just documenting current state"
-    else
-        echo "✅ No vulnerabilities found in scan"
-    fi
+    echo "✅ No vulnerabilities found in scan (0 CVEs)"
+
+# Or table format (CVEs found)
+elif grep -q "VULNERABILITY.*SEVERITY" grype-scan.log; then
+    # Count vulnerabilities from table (each line after header is a CVE)
+    VULN_COUNT=$(grep -c "CVE-" grype-scan.log || echo "0")
+    echo ""
+    echo "⚠️  WARNING: Found $VULN_COUNT vulnerability entries in hummingbird-demo:v1"
+    echo "   Module notes: Hardened images typically have 0 or near-zero CVEs at ship time"
+    echo "   This may indicate dependencies with known issues (e.g., glibc, systemd-libs)"
+    echo "   This is NOT a validation failure - just documenting current state"
+    echo ""
+    echo "Sample of findings:"
+    head -20 grype-scan.log
+
+    # Show unique CVEs
+    UNIQUE_CVES=$(grep -oP 'CVE-[0-9-]+' grype-scan.log | sort -u | wc -l)
+    echo ""
+    echo "Unique CVEs: $UNIQUE_CVES"
+    echo "Total entries: $VULN_COUNT (some CVEs affect multiple packages)"
+else
+    echo "⚠️  WARNING: Unexpected grype output format"
 fi
 
 # Generate SBOM with syft (table format for verification)
@@ -140,12 +155,30 @@ echo "✅ SBOM table generated"
 
 # Generate SBOM in SPDX-JSON format (for compliance)
 echo "Generating SBOM (SPDX-JSON format)..."
-syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx 2>&1 || {
-    echo "❌ ERROR: SBOM generation failed"
+echo "Running: syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx"
+echo "Working directory: $(pwd)"
+
+syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx 2>&1 | tee sbom-generation.log || {
+    SYFT_EXIT=$?
+    echo "❌ ERROR: SBOM generation failed with exit code $SYFT_EXIT"
+    echo "Command output:"
+    cat sbom-generation.log
+    echo ""
+    echo "Debug info:"
+    echo "  Current directory: $(pwd)"
+    echo "  Image exists: $(podman images hummingbird-demo:v1 --format '{{.Repository}}:{{.Tag}}')"
+    echo "  syft version: $(syft version | head -3)"
     exit 2
 }
 
 echo "✅ SBOM generated in SPDX-JSON format"
+echo "DEBUG: Verifying file was created..."
+ls -la hummingbird-demo.spdx || {
+    echo "❌ ERROR: SBOM file not found after generation!"
+    echo "Files in current directory:"
+    ls -la
+    exit 2
+}
 
 #
 # 3. ASSERT OUTCOMES (verify expected results)

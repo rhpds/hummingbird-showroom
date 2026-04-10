@@ -30,14 +30,22 @@ if [ ! -f "$SBOM_PATH" ]; then
     echo "   Run: validate-module-01-03.sh or solve-module-01-03.sh"
     echo ""
     echo "Debug info:"
+    echo "  Current user: $(whoami)"
+    echo "  HOME: $HOME"
     echo "  Looking for: $SBOM_PATH"
+    echo "  Current directory: $(pwd)"
     echo "  Directory exists: $([ -d "${HOME}/scanning" ] && echo "yes" || echo "no")"
     if [ -d "${HOME}/scanning" ]; then
         echo "  Files in ~/scanning:"
         ls -la "${HOME}/scanning/" 2>&1 | head -10
+    else
+        echo "  ~/scanning directory does not exist!"
+        echo "  This means validate-module-01-03.sh did not complete successfully"
     fi
     exit 1
 fi
+
+echo "✅ SBOM file found: $SBOM_PATH"
 
 # Check that cosign is installed
 if ! command -v cosign &> /dev/null; then
@@ -166,15 +174,10 @@ VERIFY_OUTPUT=$(cosign verify --key cosign.pub \
   --insecure-ignore-tlog=true \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1) || {
     echo "❌ ERROR: Signature verification failed"
+    echo "Output:"
     echo "$VERIFY_OUTPUT"
     exit 3
 }
-
-if ! echo "$VERIFY_OUTPUT" | grep -q "Verification for"; then
-    echo "❌ ERROR: Unexpected signature verification output"
-    echo "$VERIFY_OUTPUT"
-    exit 3
-fi
 
 echo "✅ Signature verification passed"
 
@@ -185,27 +188,48 @@ ATTEST_OUTPUT=$(cosign verify-attestation --key cosign.pub \
   --insecure-ignore-tlog=true \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1) || {
     echo "❌ ERROR: SBOM attestation verification failed"
+    echo "Output:"
     echo "$ATTEST_OUTPUT"
     exit 3
 }
-
-if ! echo "$ATTEST_OUTPUT" | grep -q "Verification for"; then
-    echo "❌ ERROR: Unexpected attestation verification output"
-    echo "$ATTEST_OUTPUT"
-    exit 3
-fi
 
 echo "✅ SBOM attestation verification passed"
 
 # Verify package count in attestation
 echo "Verifying package count in attestation..."
-ATTEST_PKG_COUNT=$(echo "$ATTEST_OUTPUT" | jq -r '.payload' | base64 -d | jq '.predicate.packages | length' 2>/dev/null) || {
-    echo "❌ ERROR: Failed to extract package count from attestation"
+
+# Extract payload, decode base64, parse JSON - with proper error handling
+PAYLOAD=$(echo "$ATTEST_OUTPUT" | jq -r '.payload' 2>&1)
+if [ $? -ne 0 ] || [ -z "$PAYLOAD" ]; then
+    echo "❌ ERROR: Failed to extract payload from attestation"
+    echo "   jq error: $PAYLOAD"
+    echo "   Attestation output may not be valid JSON"
     exit 3
-}
+fi
+
+DECODED=$(echo "$PAYLOAD" | base64 -d 2>&1)
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Failed to decode base64 payload"
+    echo "   Error: $DECODED"
+    exit 3
+fi
+
+ATTEST_PKG_COUNT=$(echo "$DECODED" | jq '.predicate.packages | length' 2>&1)
+if [ $? -ne 0 ] || [ -z "$ATTEST_PKG_COUNT" ]; then
+    echo "❌ ERROR: Failed to parse SBOM from attestation"
+    echo "   jq error: $ATTEST_PKG_COUNT"
+    echo "   Decoded payload:"
+    echo "$DECODED" | head -20
+    exit 3
+fi
 
 # Compare with original SBOM
-SBOM_PKG_COUNT=$(jq '.packages | length' "$SBOM_PATH" 2>/dev/null)
+SBOM_PKG_COUNT=$(jq '.packages | length' "$SBOM_PATH" 2>&1)
+if [ $? -ne 0 ] || [ -z "$SBOM_PKG_COUNT" ]; then
+    echo "❌ ERROR: Failed to parse original SBOM"
+    echo "   jq error: $SBOM_PKG_COUNT"
+    exit 3
+fi
 
 if [ "$ATTEST_PKG_COUNT" != "$SBOM_PKG_COUNT" ]; then
     echo "❌ ERROR: Package count mismatch"

@@ -12,11 +12,6 @@
 * Test and verify built applications
 --
 
-[IMPORTANT]
-====
-This workshop environment has been optimized for learning efficiency. Required tools, directories, sample applications, and configurations have been pre-installed to focus on core hardened image concepts rather than repetitive setup tasks.
-====
-
 [[multi-stage]]
 == Multi-stage builds with hardened images
 

@@ -41,22 +41,22 @@ sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
 rm cosign-linux-amd64
 
 # Verify installation
-cosign version
+/usr/local/bin/cosign version
 
 # Install syft
 SYFT_VERSION=v1.42.4
 curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
 
 # Verify installation
-syft version
+/usr/local/bin/syft version
 
 # Install grype
 GRYPE_VERSION=v0.111.0
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
 
 # Verify installation
-grype version
-grype db update
+/usr/local/bin/grype version
+/usr/local/bin/grype db update
 
 cat > /tmp/quarkus.sh <<'EOF'
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
