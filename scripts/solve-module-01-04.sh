@@ -10,6 +10,16 @@ set -e
 HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
 DOCKER_REGISTRY="docker.io"
 
+# Quay registry (injected by showroom platform)
+if [ -z "${QUAY_HOSTNAME:-}" ] || [ -z "${QUAY_USER:-}" ] || [ -z "${QUAY_PASSWORD:-}" ]; then
+    echo "ERROR: Quay credentials not available"
+    echo "Required environment variables: QUAY_HOSTNAME, QUAY_USER, QUAY_PASSWORD"
+    echo "These should be injected by the showroom platform"
+    exit 1
+fi
+
+export QUAY_ORG="${QUAY_HOSTNAME}/${QUAY_USER}"
+
 echo "=== Module 01-04 Solve Script ==="
 
 # Check for setup files
@@ -27,13 +37,6 @@ if [ ! -f ~/sample-app/Containerfile ]; then
     exit 1
 fi
 
-# Cleanup function
-cleanup() {
-    podman stop registry 2>/dev/null || true
-    podman rm registry 2>/dev/null || true
-}
-trap cleanup EXIT
-
 # Build hummingbird-demo:v1 if missing
 if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hummingbird-demo:v1$"; then
     echo "=== Building prerequisite: hummingbird-demo:v1 ==="
@@ -49,18 +52,15 @@ if [ ! -f ~/scanning/hummingbird-demo.spdx ]; then
     syft hummingbird-demo:v1 -o spdx-json=hummingbird-demo.spdx
 fi
 
-echo "=== Starting local registry ==="
-podman run -d --name registry -p 5000:5000 ${DOCKER_REGISTRY}/library/registry:2
+echo "=== Logging into Quay ==="
+podman login ${QUAY_HOSTNAME} --username ${QUAY_USER} --password ${QUAY_PASSWORD}
 
-# Give registry a moment to start
-sleep 2
-
-echo "=== Tagging and pushing image to local registry ==="
-podman tag hummingbird-demo:v1 localhost:5000/hummingbird-demo:v1
-podman push --tls-verify=false localhost:5000/hummingbird-demo:v1
+echo "=== Tagging and pushing image to Quay ==="
+podman tag hummingbird-demo:v1 ${QUAY_ORG}/hummingbird-demo:v1
+podman push ${QUAY_ORG}/hummingbird-demo:v1
 
 echo "=== Capturing image digest ==="
-IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' localhost:5000/hummingbird-demo:v1)
+IMAGE_DIGEST=$(podman inspect --format='{{.Digest}}' ${QUAY_ORG}/hummingbird-demo:v1)
 
 if [ -z "$IMAGE_DIGEST" ]; then
     echo "ERROR: Failed to capture image digest"
@@ -76,21 +76,17 @@ cosign generate-key-pair
 echo "=== Signing image with cosign ==="
 cosign sign --yes --key cosign.key \
   --tlog-upload=false \
-  --allow-http-registry \
-  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
 
 echo "=== Attaching SBOM attestation ==="
 cosign attest --yes --key cosign.key \
   --predicate ~/scanning/hummingbird-demo.spdx --type spdxjson \
   --tlog-upload=false \
-  --allow-http-registry \
-  localhost:5000/hummingbird-demo@${IMAGE_DIGEST}
-
-echo "=== Stopping local registry ==="
-podman stop registry
-podman rm registry
+  ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
 
 cd ~
 
 echo "=== Module 01-04 completed ==="
-echo "Created: cosign keys (cosign.key, cosign.pub), signed image with SBOM attestation"
+echo "Created: cosign keys (cosign.key, cosign.pub)"
+echo "Image pushed and signed in Quay: ${QUAY_ORG}/hummingbird-demo:v1"
+echo "SBOM attestation attached"
