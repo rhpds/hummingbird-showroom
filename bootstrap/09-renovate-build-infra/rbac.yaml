@@ -124,6 +124,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
 spec:
   accessModes: [ReadWriteOnce]
+  storageClassName: gp3-csi-immediate
   resources:
     requests:
       storage: 2Gi

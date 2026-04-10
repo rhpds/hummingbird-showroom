@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - storageclass-immediate.yaml
   - rbac.yaml
   - tekton-tasks.yaml
   - tekton-pipelines.yaml
