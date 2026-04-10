@@ -208,7 +208,7 @@ spec:
                   # Auto-detect lab users from hummingbird-builds-lab-user-* namespaces
                   LAB_USERS=$(oc get ns --no-headers 2>/dev/null | \
                       awk '{print $1}' | grep '^hummingbird-builds-lab-user-' | \
-                      sed 's/hummingbird-builds-//' | sort)
+                      sed 's/hummingbird-builds-//' | sort || true)
 
                   if [ -z "$LAB_USERS" ]; then
                       LAB_USERS="lab-user-1"
