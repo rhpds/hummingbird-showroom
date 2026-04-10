@@ -110,9 +110,23 @@ if ! grep -q "Scanned for vulnerabilities" grype-scan.log; then
     exit 2
 fi
 
-# Display scan summary
+# Display scan summary and check for vulnerabilities
 echo "Scan summary:"
 grep -A 2 "Scanned for vulnerabilities" grype-scan.log || true
+
+# Check if any vulnerabilities were found (exit code 1 means found)
+if [ -f grype-scan.log ]; then
+    VULN_COUNT=$(grep -oP 'Scanned for vulnerabilities\s+\[\K[0-9]+' grype-scan.log || echo "0")
+    if [ "$VULN_COUNT" -gt 0 ]; then
+        echo ""
+        echo "⚠️  WARNING: Found $VULN_COUNT vulnerabilities in hummingbird-demo:v1"
+        echo "   Module notes: Hardened images typically have 0 or near-zero CVEs at ship time"
+        echo "   This may indicate dependencies with known issues (e.g., netty, quarkus libs)"
+        echo "   This is not a validation failure - just documenting current state"
+    else
+        echo "✅ No vulnerabilities found in scan"
+    fi
+fi
 
 # Generate SBOM with syft (table format for verification)
 echo "Generating SBOM (table format for verification)..."

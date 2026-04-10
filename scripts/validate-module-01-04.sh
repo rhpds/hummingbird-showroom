@@ -23,10 +23,19 @@ if ! podman images --format "{{.Repository}}:{{.Tag}}" | grep -q "^localhost/hum
 fi
 
 # Check that SBOM exists (from Module 01-03)
-if [ ! -f ~/scanning/hummingbird-demo.spdx ]; then
-    echo "❌ ERROR: ~/scanning/hummingbird-demo.spdx not found"
+SBOM_PATH="${HOME}/scanning/hummingbird-demo.spdx"
+if [ ! -f "$SBOM_PATH" ]; then
+    echo "❌ ERROR: $SBOM_PATH not found"
     echo "   Module 01-04 requires the SBOM from Module 01-03"
     echo "   Run: validate-module-01-03.sh or solve-module-01-03.sh"
+    echo ""
+    echo "Debug info:"
+    echo "  Looking for: $SBOM_PATH"
+    echo "  Directory exists: $([ -d "${HOME}/scanning" ] && echo "yes" || echo "no")"
+    if [ -d "${HOME}/scanning" ]; then
+        echo "  Files in ~/scanning:"
+        ls -la "${HOME}/scanning/" 2>&1 | head -10
+    fi
     exit 1
 fi
 
@@ -137,7 +146,7 @@ echo "✅ Image signed successfully"
 # Attach SBOM attestation
 echo "Attaching SBOM attestation..."
 cosign attest --yes --key cosign.key \
-  --predicate hummingbird-demo.spdx --type spdxjson \
+  --predicate "$SBOM_PATH" --type spdxjson \
   --tlog-upload=false \
   ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST} 2>&1 || {
     echo "❌ ERROR: Failed to attach SBOM attestation"
@@ -196,7 +205,7 @@ ATTEST_PKG_COUNT=$(echo "$ATTEST_OUTPUT" | jq -r '.payload' | base64 -d | jq '.p
 }
 
 # Compare with original SBOM
-SBOM_PKG_COUNT=$(jq '.packages | length' hummingbird-demo.spdx 2>/dev/null)
+SBOM_PKG_COUNT=$(jq '.packages | length' "$SBOM_PATH" 2>/dev/null)
 
 if [ "$ATTEST_PKG_COUNT" != "$SBOM_PKG_COUNT" ]; then
     echo "❌ ERROR: Package count mismatch"
