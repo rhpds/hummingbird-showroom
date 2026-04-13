@@ -61,10 +61,11 @@ asciidoc:
     acs-namespace: 'stackrox'
 
     # Placeholders for lab environment (most are injected by showroom)
+    # Keys use underscores to match the showroom userdata attribute names
     guid: 'PROVIDE-GUID'
     aws-region: 'us-east-1'
-    openshift-console: 'https://console-openshift-console.apps.cluster-{guid}.example.com'
-    openshift-api: 'https://api.cluster-{guid}.example.com:6443'
+    openshift_console_url: 'https://console-openshift-console.apps.cluster-PROVIDE-GUID.example.com'
+    openshift_api_server_url: 'https://api.cluster-PROVIDE-GUID.example.com:6443'
     openshift-user: 'admin'
     openshift-password: 'PROVIDED-IN-LAB'
 

@@ -51,16 +51,32 @@ Phase 4: Attempt to redeploy the legacy image
 [[setup]]
 == Exercise 1: Prepare the Environment
 
-=== Step 1: Create the Lab Namespace
+=== Step 0: Log In to the Cluster
+
+Verify you are logged in to the OpenShift cluster. If the Showroom terminal is not already authenticated, run:
+
+[source,bash,role=execute,subs=attributes]
+----
+oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+----
+
+Confirm the login succeeded:
 
 [source,bash,role=execute]
 ----
-oc new-project hummingbird-acs-lab
+oc whoami
+----
+
+=== Step 1: Create the Lab Namespace
+
+[source,bash,role=execute,subs="attributes"]
+----
+oc new-project hummingbird-acs-{user}
 ----
 
 .*Expected output:*
 ----
-Now using project "hummingbird-acs-lab" on server "https://...".
+Now using project "hummingbird-acs-<your-user>" on server "https://...".
 ----
 
 === Step 2: Set Registry Variables
@@ -245,6 +261,8 @@ cat > acs-create-policies.sh << 'SHEOF'
 set -euo pipefail
 : "${ROX_API_TOKEN:?ROX_API_TOKEN is not set}"
 : "${ACS_ROUTE:?ACS_ROUTE is not set}"
+: "${LAB_NAMESPACE:?LAB_NAMESPACE is not set}"
+: "${POLICY_SUFFIX:?POLICY_SUFFIX is not set}"
 API="https://${ACS_ROUTE}/v1/policies"
 AUTH="Authorization: Bearer ${ROX_API_TOKEN}"
 create_policy() {
@@ -285,15 +303,15 @@ else:
     print(f\"Error: {d.get('message', d)}\")
 "
 }
-cat > /tmp/acs-policy-zero-cve.json << 'EOF'
-{"name":"Zero Fixable CVEs Required","description":"Reject deployments where the image has any fixable CVE.","severity":"CRITICAL_SEVERITY","categories":["Vulnerability Management"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"hummingbird-acs-lab"}],"policySections":[{"sectionName":"Fixable CVE threshold","policyGroups":[{"fieldName":"Fixed By","booleanOperator":"OR","negate":false,"values":[{"value":".*"}]},{"fieldName":"CVSS","booleanOperator":"OR","negate":false,"values":[{"value":">= 0.000000"}]}]}]}
+cat > /tmp/acs-policy-zero-cve.json << EOF
+{"name":"Zero Fixable CVEs Required - ${POLICY_SUFFIX}","description":"Reject deployments where the image has any fixable CVE.","severity":"CRITICAL_SEVERITY","categories":["Vulnerability Management"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"${LAB_NAMESPACE}"}],"policySections":[{"sectionName":"Fixable CVE threshold","policyGroups":[{"fieldName":"Fixed By","booleanOperator":"OR","negate":false,"values":[{"value":".*"}]},{"fieldName":"CVSS","booleanOperator":"OR","negate":false,"values":[{"value":">= 0.000000"}]}]}]}
 EOF
-echo "=== Creating policy: Zero Fixable CVEs Required ==="
+echo "=== Creating policy: Zero Fixable CVEs Required - ${POLICY_SUFFIX} ==="
 create_policy /tmp/acs-policy-zero-cve.json
-cat > /tmp/acs-policy-scan-required.json << 'EOF'
-{"name":"Image Scan Required","description":"Reject deployments where the image has not been scanned by ACS.","severity":"HIGH_SEVERITY","categories":["DevOps Best Practices"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"hummingbird-acs-lab"}],"policySections":[{"sectionName":"Scan status","policyGroups":[{"fieldName":"Unscanned Image","booleanOperator":"OR","negate":false,"values":[{"value":"true"}]}]}]}
+cat > /tmp/acs-policy-scan-required.json << EOF
+{"name":"Image Scan Required - ${POLICY_SUFFIX}","description":"Reject deployments where the image has not been scanned by ACS.","severity":"HIGH_SEVERITY","categories":["DevOps Best Practices"],"lifecycleStages":["DEPLOY"],"enforcementActions":["SCALE_TO_ZERO_ENFORCEMENT"],"eventSource":"NOT_APPLICABLE","disabled":false,"scope":[{"namespace":"${LAB_NAMESPACE}"}],"policySections":[{"sectionName":"Scan status","policyGroups":[{"fieldName":"Unscanned Image","booleanOperator":"OR","negate":false,"values":[{"value":"true"}]}]}]}
 EOF
-echo "=== Creating policy: Image Scan Required ==="
+echo "=== Creating policy: Image Scan Required - ${POLICY_SUFFIX} ==="
 create_policy /tmp/acs-policy-scan-required.json
 echo ""
 echo "Done. Verify in ACS UI: Platform Configuration -> Policy Management"
@@ -384,33 +402,56 @@ EOF
 
 The Quay repository is private. OpenShift needs credentials both to push images during builds and to pull images at deployment time:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
 oc create secret docker-registry quay-pull-secret \
   --docker-server=${WORKSHOP_REGISTRY} \
   --docker-username=${REGISTRY_USER} \
   --docker-password=${REGISTRY_PASSWORD} \
-  -n hummingbird-acs-lab 2>/dev/null || echo "Secret already exists"
+  -n hummingbird-acs-{user} 2>/dev/null || echo "Secret already exists"
 
-oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-lab
-oc secrets link builder quay-pull-secret -n hummingbird-acs-lab
+oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-{user}
+oc secrets link builder quay-pull-secret -n hummingbird-acs-{user}
 ----
 
 === Step 4: Build and Push the Legacy Image
 
 The Showroom terminal does not include `podman`, so we use OpenShift's built-in Binary Build strategy. This uploads your local files and builds the Containerfile on-cluster using a builder pod, then pushes directly to Quay.
 
-[source,bash,role=execute]
+[WARNING]
+====
+*Before running the commands below*, confirm your registry variables are still set from Step 2:
+
+[source,bash,role=execute,subs=attributes]
 ----
+echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
+echo "REGISTRY_USER=${REGISTRY_USER}"
+----
+
+If either line prints blank or `{quay_hostname}` / `{quay_user}` literally, your shell session has reset. Re-run *Step 2* completely before continuing — otherwise the build will push to an invalid image reference and the deployment will fail with `InvalidImageName`.
+====
+
+[source,bash,role=execute,subs="attributes"]
+----
+# Guard: fail loudly if registry variables are not set
+if [ -z "${WORKSHOP_REGISTRY}" ] || [ -z "${REGISTRY_USER}" ]; then
+  echo "ERROR: WORKSHOP_REGISTRY or REGISTRY_USER is not set."
+  echo "       Re-run Step 2 to restore your registry environment variables."
+  exit 1
+fi
+
+# Remove any pre-existing BuildConfig (which may have a stale/wrong image reference)
+oc delete bc/legacy-python-api -n hummingbird-acs-{user} 2>/dev/null || true
+
 oc new-build --strategy=docker --binary=true \
   --name=legacy-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable" \
-  -n hummingbird-acs-lab &>/dev/null || true
+  -n hummingbird-acs-{user}
 
-oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-lab 2>/dev/null || true
+oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-{user} 2>/dev/null || true
 
 cp Containerfile.legacy Dockerfile
-oc start-build legacy-python-api --from-dir=. --follow --wait -n hummingbird-acs-lab
+oc start-build legacy-python-api --from-dir=. --follow --wait -n hummingbird-acs-{user}
 rm -f Dockerfile
 ----
 
@@ -429,14 +470,14 @@ image::module-02/legacy-python-cve-scan.png[Clair Security Scan showing 10 fixab
 
 === Step 5: Deploy to OpenShift
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
 cat << EOF | oc apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
   labels:
     app: legacy-python-api
     tier: legacy
@@ -471,7 +512,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
 spec:
   selector:
     app: legacy-python-api
@@ -483,7 +524,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
 spec:
   to:
     kind: Service
@@ -499,16 +540,16 @@ EOF
 
 Wait for the deployment to become ready:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-oc rollout status deployment/legacy-python-api -n hummingbird-acs-lab --timeout=120s
+oc rollout status deployment/legacy-python-api -n hummingbird-acs-{user} --timeout=120s
 ----
 
 Get the application route:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-LEGACY_ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+LEGACY_ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
 echo "Legacy API URL: https://${LEGACY_ROUTE}"
 ----
 
@@ -713,12 +754,12 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 oc new-build --strategy=docker --binary=true \
   --name=fortress-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve" \
-  -n hummingbird-acs-lab &>/dev/null || true
+  -n hummingbird-acs-{user} &>/dev/null || true
 
-oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-lab 2>/dev/null || true
+oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-{user} 2>/dev/null || true
 
 cp Containerfile.fortress Dockerfile
-oc start-build fortress-python-api --from-dir=. --follow --wait -n hummingbird-acs-lab
+oc start-build fortress-python-api --from-dir=. --follow --wait -n hummingbird-acs-{user}
 rm -f Dockerfile
 ----
 
@@ -911,14 +952,14 @@ Note that `skopeo` only inspects the top-level manifest index. Cosign-style atte
 
 === Step 1: Deploy the Hummingbird Image
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
 cat << EOF | oc apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
   labels:
     app: fortress-python-api
     tier: fortress
@@ -960,7 +1001,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
 spec:
   selector:
     app: fortress-python-api
@@ -972,7 +1013,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
 spec:
   to:
     kind: Service
@@ -983,14 +1024,14 @@ spec:
     termination: edge
 EOF
 
-oc rollout status deployment/fortress-python-api -n hummingbird-acs-lab --timeout=120s
+oc rollout status deployment/fortress-python-api -n hummingbird-acs-{user} --timeout=120s
 ----
 
 === Step 2: Verify the Application
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
 curl -sk "https://${ROUTE}/api/v1/greeting"
 ----
 
@@ -1095,38 +1136,40 @@ If the admission controller shows `False`, ask your workshop instructor to enabl
 
 === Steps 2-3: Create Enforcement Policies
 
-This script creates two policies via the ACS REST API:
+This script creates two policies via the ACS REST API, scoped to your personal lab namespace:
 
-* **Zero Fixable CVEs Required** (Critical) -- blocks any deployment where the image has fixable CVEs
-* **Image Scan Required** (High) -- blocks any deployment where the image has not been scanned
+* **Zero Fixable CVEs Required - {user}** (Critical) -- blocks any deployment where the image has fixable CVEs
+* **Image Scan Required - {user}** (High) -- blocks any deployment where the image has not been scanned
 
-Run the helper script:
+Run the helper script, passing your namespace and policy suffix via environment variables:
 
 [source,bash,role=execute,subs="attributes"]
 ----
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 export ACS_ROUTE ROX_API_TOKEN
+export LAB_NAMESPACE="hummingbird-acs-{user}"
+export POLICY_SUFFIX="{user}"
 
 bash acs-create-policies.sh
 ----
 
 .*Expected output (first run):*
 ----
-=== Creating policy: Zero Fixable CVEs Required ===
-Created policy: Zero Fixable CVEs Required (id: <uuid>)
-=== Creating policy: Image Scan Required ===
-Created policy: Image Scan Required (id: <uuid>)
+=== Creating policy: Zero Fixable CVEs Required - <your-user> ===
+Created policy: Zero Fixable CVEs Required - <your-user> (id: <uuid>)
+=== Creating policy: Image Scan Required - <your-user> ===
+Created policy: Image Scan Required - <your-user> (id: <uuid>)
 
 Done. Verify in ACS UI: Platform Configuration -> Policy Management
 ----
 
 .*Expected output (if policies already exist):*
 ----
-=== Creating policy: Zero Fixable CVEs Required ===
-Policy 'Zero Fixable CVEs Required' already exists (id: <uuid>). Ensuring enforcement...
+=== Creating policy: Zero Fixable CVEs Required - <your-user> ===
+Policy 'Zero Fixable CVEs Required - <your-user>' already exists (id: <uuid>). Ensuring enforcement...
   Enforcement enabled.
-=== Creating policy: Image Scan Required ===
-Policy 'Image Scan Required' already exists (id: <uuid>). Ensuring enforcement...
+=== Creating policy: Image Scan Required - <your-user> ===
+Policy 'Image Scan Required - <your-user>' already exists (id: <uuid>). Ensuring enforcement...
   Enforcement enabled.
 
 Done. Verify in ACS UI: Platform Configuration -> Policy Management
@@ -1137,7 +1180,7 @@ Done. Verify in ACS UI: Platform Configuration -> Policy Management
 If the policies already exist, the script ensures enforcement is enabled (`SCALE_TO_ZERO_ENFORCEMENT`). This handles the case where built-in ACS policies exist but default to `INFORM` mode without enforcement.
 ====
 
-Verify in the ACS dashboard under *Platform Configuration* -> *Policy Management*. Search for `Zero Fixable CVEs Required`:
+Verify in the ACS dashboard under *Platform Configuration* -> *Policy Management*. Search for your policy name:
 
 image::module-02/acs-policy-zero-cve-list.png[ACS Policy Management showing Zero Fixable CVEs Required policy with Critical severity]
 
@@ -1158,21 +1201,21 @@ Navigate to *Platform Configuration* -> *Policy Management* -> *Create Policy*:
 
 Policy 1:
 
-  - **Name**: `Zero Fixable CVEs Required`
+  - **Name**: `Zero Fixable CVEs Required - <your-user>`
   - **Severity**: Critical
   - **Lifecycle**: Deploy
   - **Response**: Inform and enforce
   - **Policy Criteria**: `Fixed By` matches `.*` AND `CVSS` >= 0
-  - **Policy Scope**: namespace `hummingbird-acs-lab`
+  - **Policy Scope**: namespace `hummingbird-acs-<your-user>`
 
 Policy 2:
 
-  - **Name**: `Image Scan Required`
+  - **Name**: `Image Scan Required - <your-user>`
   - **Severity**: High
   - **Lifecycle**: Deploy
   - **Response**: Inform and enforce
   - **Policy Criteria**: `Unscanned Image` = true
-  - **Policy Scope**: namespace `hummingbird-acs-lab`
+  - **Policy Scope**: namespace `hummingbird-acs-<your-user>`
 ====
 
 === Step 4: Verify Policies Are Active
@@ -1181,7 +1224,7 @@ Policy 2:
 ----
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
-for POLICY_NAME in "Zero Fixable CVEs Required" "Image Scan Required"; do
+for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
     "https://${ACS_ROUTE}/v1/policies" | \
     python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
@@ -1191,19 +1234,19 @@ for POLICY_NAME in "Zero Fixable CVEs Required" "Image Scan Required"; do
 import json, sys
 p = json.load(sys.stdin)
 enf = [e for e in p.get('enforcementActions',[]) if e != 'UNSET_ENFORCEMENT']
-print(f'{p[\"name\"]:<35} {p[\"severity\"]:<20} {\", \".join(enf) or \"INFORM\"}')"
+print(f'{p[\"name\"]:<50} {p[\"severity\"]:<20} {\", \".join(enf) or \"INFORM\"}')"
 done
 ----
 
 .*Expected output:*
 ----
-Zero Fixable CVEs Required          CRITICAL_SEVERITY    SCALE_TO_ZERO_ENFORCEMENT
-Image Scan Required                 HIGH_SEVERITY        SCALE_TO_ZERO_ENFORCEMENT
+Zero Fixable CVEs Required - <your-user>           CRITICAL_SEVERITY    SCALE_TO_ZERO_ENFORCEMENT
+Image Scan Required - <your-user>                  HIGH_SEVERITY        SCALE_TO_ZERO_ENFORCEMENT
 ----
 
-Both policies are now active and will be evaluated by the admission controller on every deployment create or update in the `hummingbird-acs-lab` namespace.
+Both policies are now active and will be evaluated by the admission controller on every deployment create or update in your `hummingbird-acs-<your-user>` namespace.
 
-You can also verify in the ACS UI: navigate to *Platform Configuration* -> *Policy Management* and search for `Zero Fixable` or `Image Scan Required`.
+You can also verify in the ACS UI: navigate to *Platform Configuration* -> *Policy Management* and search for your username to find both policies.
 
 [[prove-guardrails]]
 == Exercise 8: Prove the Guardrails (Simulated Pipeline Failure)
@@ -1222,7 +1265,7 @@ echo ""
 
 oc set image deployment/fortress-python-api \
   api=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
-  -n hummingbird-acs-lab 2>&1
+  -n hummingbird-acs-{user} 2>&1
 
 echo ""
 echo "Exit code: $?"
@@ -1237,7 +1280,7 @@ error: failed to patch image update to pod template: admission webhook
 "policyeval.stackrox.io" denied the request:
 The attempted operation violated 1 enforced policy, described below:
 
-Policy: Zero Fixable CVEs Required
+Policy: Zero Fixable CVEs Required - <your-user>
 - Description:
     ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
       attack surface eradication over reactive patching.
@@ -1260,7 +1303,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: legacy-regression-test
-  namespace: hummingbird-acs-lab
+  namespace: hummingbird-acs-{user}
   labels:
     app: legacy-regression-test
 spec:
@@ -1291,7 +1334,7 @@ error when creating "STDIN": admission webhook "policyeval.stackrox.io"
 denied the request:
 The attempted operation violated 1 enforced policy, described below:
 
-Policy: Zero Fixable CVEs Required
+Policy: Zero Fixable CVEs Required - <your-user>
 - Description:
     ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
       attack surface eradication over reactive patching.
@@ -1325,11 +1368,11 @@ The operational model has shifted:
 
 Confirm that your Hummingbird deployment is still running and serving traffic:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs="attributes"]
 ----
-oc get deployment fortress-python-api -n hummingbird-acs-lab
+oc get deployment fortress-python-api -n hummingbird-acs-{user}
 
-ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-lab -o jsonpath='{.spec.host}')
+ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
 curl -sk "https://${ROUTE}/api/v1/greeting"
 ----
 
@@ -1350,7 +1393,7 @@ Query the policy violations via the ACS REST API:
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-lab" | \
+  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-{user}" | \
   python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -1367,13 +1410,13 @@ for a in data.get('alerts', []):
 
 .*Expected output:*
 ----
-Policy: Zero Fixable CVEs Required
+Policy: Zero Fixable CVEs Required - <your-user>
   State: ATTEMPTED  |  Enforcement: FAIL_DEPLOYMENT_CREATE_ENFORCEMENT  |  Deployment: legacy-regression-test
 
-Policy: Zero Fixable CVEs Required
+Policy: Zero Fixable CVEs Required - <your-user>
   State: ATTEMPTED  |  Enforcement: FAIL_DEPLOYMENT_UPDATE_ENFORCEMENT  |  Deployment: fortress-python-api
 
-Policy: Zero Fixable CVEs Required
+Policy: Zero Fixable CVEs Required - <your-user>
   State: ACTIVE  |  Enforcement: SCALE_TO_ZERO_ENFORCEMENT  |  Deployment: legacy-python-api
 ----
 
@@ -1388,7 +1431,7 @@ You can also view violations visually in the ACS Central UI. Navigate to *Violat
 
 image::module-02/acs-violations-list.png[ACS Violations list showing 108 results including Zero Fixable CVEs Required enforced on legacy-python-api]
 
-Click on the *Zero Fixable CVEs Required* violation to see the individual CVEs that triggered it:
+Click on your *Zero Fixable CVEs Required* violation to see the individual CVEs that triggered it:
 
 image::module-02/acs-violation-cves.png[Violation detail showing fixable CVEs in mercurial pip and setuptools components]
 
@@ -1443,11 +1486,11 @@ Remove the lab resources when you are finished:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc delete project hummingbird-acs-lab
+oc delete project hummingbird-acs-{user}
 
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
-for POLICY_NAME in "Zero Fixable CVEs Required" "Image Scan Required"; do
+for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
     "https://${ACS_ROUTE}/v1/policies" | \
     python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
@@ -1538,7 +1581,7 @@ curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   "https://${ACS_ROUTE}/v1/policies" | \
   python3 -c "import json,sys; [print(p['name'], p['disabled']) for p in json.load(sys.stdin).get('policies',[]) if 'zero fixable' in p['name'].lower()]"
 
-oc get events -n hummingbird-acs-lab --sort-by=.metadata.creationTimestamp | tail -20
+oc get events -n hummingbird-acs-{user} --sort-by=.metadata.creationTimestamp | tail -20
 ----
 
 **Issue: Hummingbird image fails to start (exec format error)**

@@ -1,0 +1,19 @@
+apiVersion: noobaa.io/v1alpha1
+kind: BackingStore
+metadata:
+  name: noobaa-default-backing-store
+  namespace: openshift-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  type: pv-pool
+  pvPool:
+    numVolumes: 1
+    storageClass: gp3-csi
+    resources:
+      limits:
+        memory: "2Gi"
+      requests:
+        memory: "2Gi"
+        storage: "160Gi"

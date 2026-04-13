@@ -78,7 +78,7 @@ Part 5: Testing the Full Loop Locally with Podman (~5 min)
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc login --server={openshift-api}
+oc login --server={openshift_api_server_url}
 ----
 
 Verify the connection:
