@@ -224,7 +224,7 @@ for i in $(seq 1 "${NUM_USERS}"); do
     fi
 
     # quay-pull-secret (used in ACS lab -- per-user namespace)
-    ACS_NS="hummingbird-acs-lab-${USER}"
+    ACS_NS="hummingbird-acs-${USER}"
     if oc get secret quay-pull-secret -n "$ACS_NS" > /dev/null 2>&1; then
         pass "quay-pull-secret: present in ${ACS_NS}"
     else
