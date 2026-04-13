@@ -56,7 +56,7 @@ Verify your cluster access:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc login {openshift-api} -u {openshift-user}
+oc login {openshift_api_server_url} -u {openshift-user}
 oc version
 oc auth can-i create clusterrole
 ----
@@ -106,7 +106,7 @@ Confirm you can access your OpenShift cluster:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc login {openshift-api} -u {openshift-user}
+oc login {openshift_api_server_url} -u {openshift-user}
 ----
 
 When prompted, enter your password: `{openshift-password}`

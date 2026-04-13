@@ -57,7 +57,7 @@ Verify you are logged in to the OpenShift cluster. If the Showroom terminal is n
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc login -u {user} -p {password} {openshift-api} --insecure-skip-tls-verify
+oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
 ----
 
 Confirm the login succeeded:
