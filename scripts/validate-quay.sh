@@ -223,12 +223,12 @@ for i in $(seq 1 "${NUM_USERS}"); do
         fail "Creds ${USER}" "registry-credentials in ${NS} does not reference ${QUAY_ROUTE}"
     fi
 
-    # quay-pull-secret (used in ACS lab)
-    ACS_NS="hummingbird-acs-lab"
+    # quay-pull-secret (used in ACS lab -- per-user namespace)
+    ACS_NS="hummingbird-acs-lab-${USER}"
     if oc get secret quay-pull-secret -n "$ACS_NS" > /dev/null 2>&1; then
         pass "quay-pull-secret: present in ${ACS_NS}"
     else
-        warn "quay-pull-secret: missing in ${ACS_NS} (needed for ACS lab builds)"
+        warn "quay-pull-secret: missing in ${ACS_NS} (created during ACS lab exercise)"
     fi
 done
 

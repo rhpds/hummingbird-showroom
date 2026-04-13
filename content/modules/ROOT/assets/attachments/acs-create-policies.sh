@@ -2,12 +2,15 @@
 # Create ACS enforcement policies for the Zero-CVE workshop.
 # Usage: bash acs-create-policies.sh
 #
-# Requires: ROX_API_TOKEN and ACS_ROUTE environment variables.
+# Requires: ROX_API_TOKEN, ACS_ROUTE, LAB_NAMESPACE, and POLICY_SUFFIX
+# environment variables.
 
 set -euo pipefail
 
 : "${ROX_API_TOKEN:?ROX_API_TOKEN is not set}"
 : "${ACS_ROUTE:?ACS_ROUTE is not set}"
+: "${LAB_NAMESPACE:?LAB_NAMESPACE is not set}"
+: "${POLICY_SUFFIX:?POLICY_SUFFIX is not set}"
 
 API="https://${ACS_ROUTE}/v1/policies"
 AUTH="Authorization: Bearer ${ROX_API_TOKEN}"
@@ -55,9 +58,9 @@ else:
 }
 
 # --- Policy 1: Zero Fixable CVEs Required ---
-cat > /tmp/acs-policy-zero-cve.json << 'EOF'
+cat > /tmp/acs-policy-zero-cve.json << EOF
 {
-  "name": "Zero Fixable CVEs Required",
+  "name": "Zero Fixable CVEs Required - ${POLICY_SUFFIX}",
   "description": "Reject deployments where the image has any fixable CVE. Enforces proactive attack surface eradication over reactive patching.",
   "severity": "CRITICAL_SEVERITY",
   "categories": ["Vulnerability Management"],
@@ -65,7 +68,7 @@ cat > /tmp/acs-policy-zero-cve.json << 'EOF'
   "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
   "eventSource": "NOT_APPLICABLE",
   "disabled": false,
-  "scope": [{"namespace": "hummingbird-acs-lab"}],
+  "scope": [{"namespace": "${LAB_NAMESPACE}"}],
   "policySections": [{
     "sectionName": "Fixable CVE threshold",
     "policyGroups": [
@@ -76,13 +79,13 @@ cat > /tmp/acs-policy-zero-cve.json << 'EOF'
 }
 EOF
 
-echo "=== Creating policy: Zero Fixable CVEs Required ==="
+echo "=== Creating policy: Zero Fixable CVEs Required - ${POLICY_SUFFIX} ==="
 create_policy /tmp/acs-policy-zero-cve.json
 
 # --- Policy 2: Image Scan Required ---
-cat > /tmp/acs-policy-scan-required.json << 'EOF'
+cat > /tmp/acs-policy-scan-required.json << EOF
 {
-  "name": "Image Scan Required",
+  "name": "Image Scan Required - ${POLICY_SUFFIX}",
   "description": "Reject deployments where the image has not been scanned by ACS. Ensures every runtime artifact has a verified vulnerability assessment.",
   "severity": "HIGH_SEVERITY",
   "categories": ["DevOps Best Practices"],
@@ -90,7 +93,7 @@ cat > /tmp/acs-policy-scan-required.json << 'EOF'
   "enforcementActions": ["SCALE_TO_ZERO_ENFORCEMENT"],
   "eventSource": "NOT_APPLICABLE",
   "disabled": false,
-  "scope": [{"namespace": "hummingbird-acs-lab"}],
+  "scope": [{"namespace": "${LAB_NAMESPACE}"}],
   "policySections": [{
     "sectionName": "Scan status",
     "policyGroups": [
@@ -100,7 +103,7 @@ cat > /tmp/acs-policy-scan-required.json << 'EOF'
 }
 EOF
 
-echo "=== Creating policy: Image Scan Required ==="
+echo "=== Creating policy: Image Scan Required - ${POLICY_SUFFIX} ==="
 create_policy /tmp/acs-policy-scan-required.json
 
 echo ""
