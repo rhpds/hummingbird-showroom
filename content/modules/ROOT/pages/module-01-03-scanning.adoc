@@ -23,27 +23,6 @@ Change to a new directory to hold our work for this exercise.
 ----
 cd ~/scanning
 ----
-[[pull-sbom]]
-== Red Hat provided SBOMs
-
-Transparency is a key pillar in a secure software supply chain.
-Each image provided includes a Software Bill of Materials (SBOM) that details the contents. 
-You saw the web version, but that's not particularly useful for use with security tools.Using `cosign` you can download the SBOM from the registry directly.
-Let's get the SBOM for the `openjdk` image we used to build the Quarkus app.
-
-[source,bash,role=execute]
-----
-cosign download sbom {hummingbird-registry}/openjdk:21-runtime
-----
-[NOTE]
-====
-You will see a warning about using attestations instead of JSON. We'll go over this concept and the `cosign` tool in more depth during a later exercise. We just want to see that the SBOM is available.
-====
-
-The JSON will have information about checksums, packages, publishers and more. Our SBOMs are usefult to understand the contents of the base, but you'll likely want to publish SBOMs that include your application and any of it's dependencies as well.
-
-Before we generate an SBOM, let's explore the CVE space with a scanner.
-
 [[vulnerability-scanning]]
 == Vulnerability Scanning with Grype
 The tools we're using in this module use the Podman API to find and inspect images, so we can enable that now for our user.
@@ -169,6 +148,26 @@ Knowing what the potential vulnerabilities exist in an image is one part of the 
 
 [[sbom-generation]]
 == SBOM Generation with Syft
+
+[[pull-sbom]]
+== Red Hat provided SBOMs
+
+Transparency is a key pillar in a secure software supply chain.
+Each image provided includes a Software Bill of Materials (SBOM) that details the contents. 
+You saw the web version, but that's not particularly useful for use with security tools.Using `cosign` you can download the SBOM from the registry directly.
+Let's get the SBOM for the `openjdk` image we used to build the Quarkus app.
+
+[source,bash,role=execute]
+----
+cosign download sbom {hummingbird-registry}/openjdk:21-runtime
+----
+[NOTE]
+====
+You will see a warning about using attestations instead of JSON. We'll go over this concept and the `cosign` tool in more depth during a later exercise. We just want to see that the SBOM is available.
+====
+
+The JSON will have information about checksums, packages, publishers and more. Our SBOMs are useful to understand the contents of the base, but you'll likely want to publish SBOMs that include your application and any of it's dependencies as well.
+Let's explore how to do that with `syft`.
 
 === Step 3: Generate SBOM
 

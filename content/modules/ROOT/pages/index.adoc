@@ -39,10 +39,9 @@ This module will introduce the new web application.
 In this hands-on module, you'll build and secure container images using a pre-configured developer environment:
 
 * **Multi-Stage Builds**: Build production images using various different types of harnded images
-* **Security Tools**: Use cosign, syft, and grype for image signing and scanning
 * **Size Optimization**: Compare image sizes and vulnerability counts
+* **Security Tools**: Use cosign, syft, and grype for image signing and scanning
 * **Security Workflow**: Scan for CVEs, generate SBOMs, sign and verify images
-* **SELinux Hardening**: Generate custom SELinux policies with udica
 
 === Module 2: Building Hardened Images with Shipwright on OpenShift
 

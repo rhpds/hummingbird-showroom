@@ -162,7 +162,7 @@ podman stop caddy-ssl
 
 In addition to the `default` and `builder` variants already discussed, we also have variants designed around specific security profiles. One example is the `fips` variant, aimed at satisfying the needs of a containerized application that must meet the Federal Information Processing Standards (FIPS) 140-3 standard for security and interoperability.
 
-While not this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring additional compliance measures on top of the baseline images and how these variants combine. It also shows how you can separate container enforcement from host enforcement to provide a better overall application security posture.
+While this particular regulatory requirement may not be universal, it serves as a useful example of how we are exploring additional compliance measures on top of the baseline images and how these variants combine. It also shows how you can separate container enforcement from host enforcement to provide a better overall application security posture.
 
 The `fips` variant changes the algorithms available in the container and also uses the validated FIPS provider delivered in RHEL.  Note that while the algorithms are always enforced, the underlying host or cluster must also be operating in a FIPS mode to ensure full compliance. Like the `default`, a `-builder` variant exists to support multi-stage and other build patterns.
 
@@ -302,7 +302,7 @@ Running FIPS Validation Checks
 
 ✓ FIPS CAPABLE
 ----
-Here the test programs shows us new details of the inner workings of the `fips` variant.
+Here the test program shows us new details of the inner workings of the `fips` variant.
 
 <.> The main OpenSSL version is the same as in the `default` image
 <.> The compliant module *is present and reporting a version* different than the main OpenSSL package (which is expected)

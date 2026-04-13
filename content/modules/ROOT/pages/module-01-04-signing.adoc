@@ -65,7 +65,7 @@ If you'd like to see the output of JSON arrays created, feel free to examine the
 === Step 1: Log into Quay and re-tag an image
 So far, you've seen how to verify existing signatures and SBOMs published by Red Hat, but you'll want to do the same for your own images. Let's do that now.
 
-Since our image lives in local Podman storage, we'll push the image to Quay for signing.
+Since our image lives in local Podman storage, we'll push the image to the lab instance of Red Hat Quay for signing.
 An organization for your lab user has already been created, you can log into Quay with `podman` using the same credentials as the UI.
 
 [source,bash,role=execute,subs=attributes+]

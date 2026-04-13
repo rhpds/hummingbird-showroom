@@ -3,6 +3,7 @@ set -e
 
 # Module 01-01: Building with Hummingbird
 # Auto-generated script from executable bash blocks
+# Status to stdout, errors to stderr, internal commands suppressed
 #
 # Note: Container startup timing requires readiness checks for reliable automation
 
@@ -19,20 +20,20 @@ echo "=== Running caddy server and testing ==="
 podman run -d --rm --name caddy-server \
   -p 8080:8080 \
   -v ~/webserver:/usr/share/caddy:ro,Z \
-  ${HUMMINGBIRD_REGISTRY}/caddy:latest
+  ${HUMMINGBIRD_REGISTRY}/caddy:latest >/dev/null 2>&1
 
 # Wait for container to be ready and test
 echo "Testing container readiness..."
 for i in {1..5}; do
     if curl -f -s http://localhost:8080 > /dev/null 2>&1; then
-        curl http://localhost:8080
+        curl http://localhost:8080 >/dev/null 2>&1
         echo "✅ Caddy server responding successfully"
         break
     fi
     echo "Waiting for container to start (attempt $i/5)..."
     sleep 1
 done
-podman stop caddy-server
+podman stop caddy-server >/dev/null 2>&1
 
 echo "=== Creating Containerfile for caddy ==="
 cat  > ~/webserver/Containerfile << EOF
@@ -42,14 +43,14 @@ COPY index.html /usr/share/caddy/
 EOF
 
 echo "=== Building and running caddy containerfile ==="
-podman build -t my-website -f ~/webserver/Containerfile ~/webserver
-podman run -d --rm --name webserver -p 8080:8080 my-website
+podman build -t my-website -f ~/webserver/Containerfile ~/webserver >/dev/null 2>&1
+podman run -d --rm --name webserver -p 8080:8080 my-website >/dev/null 2>&1
 
 # Wait for container to be ready and test
 echo "Testing webserver container readiness..."
 for i in {1..5}; do
     if curl -f -s http://localhost:8080 > /dev/null 2>&1; then
-        curl http://localhost:8080
+        curl http://localhost:8080 >/dev/null 2>&1
         echo "✅ Webserver container responding successfully"
         break
     fi
@@ -58,31 +59,31 @@ for i in {1..5}; do
 done
 
 echo "=== Testing with containerized curl ==="
-podman run --rm --net=host ${HUMMINGBIRD_REGISTRY}/curl:latest http://localhost:8080
-podman stop webserver
+podman run --rm --net=host ${HUMMINGBIRD_REGISTRY}/curl:latest http://localhost:8080 >/dev/null 2>&1
+podman stop webserver >/dev/null 2>&1
 
 echo "=== Step 2: Using pre-created Flask application ==="
 cp ~/webserver/index.html ~/flask/
 
 
 echo "=== Building UBI Flask version ==="
-podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask
+podman build --net=host -t my-flasksite:ubi -f ~/flask/Containerfile.ubi ~/flask >/dev/null 2>&1
 
 echo "=== Testing UBI Flask application ==="
-podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:ubi
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:ubi >/dev/null 2>&1
 
 # Wait for Flask container to be ready and test
 echo "Testing UBI Flask container readiness..."
 for i in {1..5}; do
     if curl -f -s http://localhost:8080 > /dev/null 2>&1; then
-        curl http://localhost:8080
+        curl http://localhost:8080 >/dev/null 2>&1
         echo "✅ UBI Flask container responding successfully"
         break
     fi
     echo "Waiting for Flask to start (attempt $i/5)..."
     sleep 1
 done
-podman stop flask-demo
+podman stop flask-demo >/dev/null 2>&1
 
 echo "=== Step 4: Creating Hummingbird Flask Containerfile ==="
 cat > ~/flask/Containerfile.hi << EOF
@@ -119,34 +120,34 @@ ENTRYPOINT ["python", "./app.py"]
 EOF
 
 echo "=== Building and testing Hummingbird Flask application ==="
-podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask
-podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi
+podman build --net=host -t my-flasksite:hi -f ~/flask/Containerfile.hi ~/flask >/dev/null 2>&1
+podman run -d --rm --name flask-demo -p 8080:8080 my-flasksite:hi >/dev/null 2>&1
 
 # Wait for Flask container to be ready and test
 echo "Testing Flask container readiness..."
 for i in {1..5}; do
     if curl -f -s http://localhost:8080 > /dev/null 2>&1; then
-        curl http://localhost:8080
+        curl http://localhost:8080 >/dev/null 2>&1
         echo "✅ Flask container responding successfully"
         break
     fi
     echo "Waiting for Flask to start (attempt $i/5)..."
     sleep 1
 done
-podman stop flask-demo
+podman stop flask-demo >/dev/null 2>&1
 
 echo "=== Comparing Flask image sizes ==="
-podman images my-flasksite
+podman images my-flasksite >/dev/null 2>&1
 
 echo "=== Cleanup ==="
 
 echo "Stopping and removing containers..."
-podman stop webserver 2>/dev/null || echo "Webserver container already stopped"
-podman rm webserver 2>/dev/null || echo "Webserver container already removed"
-podman stop caddy-server 2>/dev/null || echo "Caddy server container already stopped"
-podman rm caddy-server 2>/dev/null || echo "Caddy server container already removed"
-podman stop flask-demo 2>/dev/null || echo "Flask container already stopped"
-podman rm flask-demo 2>/dev/null || echo "Flask container already removed"
+podman stop webserver >/dev/null 2>&1 || echo "Webserver container already stopped"
+podman rm webserver >/dev/null 2>&1 || echo "Webserver container already removed"
+podman stop caddy-server >/dev/null 2>&1 || echo "Caddy server container already stopped"
+podman rm caddy-server >/dev/null 2>&1 || echo "Caddy server container already removed"
+podman stop flask-demo >/dev/null 2>&1 || echo "Flask container already stopped"
+podman rm flask-demo >/dev/null 2>&1 || echo "Flask container already removed"
 
 echo "=== Summary ==="
 echo "✅ Container image building and testing completed"

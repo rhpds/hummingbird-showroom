@@ -67,7 +67,7 @@ podman stop caddy-server
 
 This pattern will work for very simple testing, but to use this image in a production environment, it's better to create a custom Containerfile to bundle the assets. This avoids relying on local volume mounts and ensures portability. 
 
-In a production environment, you'll also want to use verified images from the catalog of hardened images. You can see the OCI spec here matches what you saw on the web, but we'll explore cryptographic verifcation a little later on. 
+In a production environment, you'll also want to use verified images from the catalog of hardened images. You can see the OCI spec here matches what you saw on the web, but we'll explore cryptographic verification a little later on. 
 
 [source,bash,role=execute,subs=attributes+]
 ----
@@ -111,7 +111,7 @@ Note the use of `--net=host` here to let an user container connect to the expose
 
 We should see the same results as the local binary. But these can be useful to reduce the dependency on host customization.
 
-Go head and stop the webserver.
+Go ahead and stop the webserver.
 [source,bash,role=execute]
 ----
 podman stop webserver
@@ -278,6 +278,10 @@ The `RUN` step executes provided commands (here `pip install`) by passing them t
 Without a shell, what can we do? Switch to the `builder` variant.
 
 Edit the Containerfile and change the `FROM` to include the appropriate tag.
+[TIP]
+====
+The `nano` and `emacs` editors are also available if you feel more comfortable with those
+====
 [source,bash,role=execute,subs=attributes+]
 ----
 vi ~/flask/Containerfile.hi
