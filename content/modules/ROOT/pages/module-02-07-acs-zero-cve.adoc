@@ -51,6 +51,22 @@ Phase 4: Attempt to redeploy the legacy image
 [[setup]]
 == Exercise 1: Prepare the Environment
 
+=== Step 0: Log In to the Cluster
+
+Verify you are logged in to the OpenShift cluster. If the Showroom terminal is not already authenticated, run:
+
+[source,bash,role=execute,subs=attributes]
+----
+oc login -u {user} -p {password} {openshift-api} --insecure-skip-tls-verify
+----
+
+Confirm the login succeeded:
+
+[source,bash,role=execute]
+----
+oc whoami
+----
+
 === Step 1: Create the Lab Namespace
 
 [source,bash,role=execute]

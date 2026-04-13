@@ -23,6 +23,22 @@ Shipwright provides a Kubernetes-native build framework built on Tekton. Instead
 
 The pre-installed `buildah` ClusterBuildStrategy (shipped with the Builds for Red Hat OpenShift operator) works with any standard Containerfile, making it the natural choice for the multi-stage Hummingbird pattern you already know.
 
+== Log In to the Cluster
+
+Before running any commands, verify you are logged in to the OpenShift cluster. If the Showroom terminal is not already authenticated, run:
+
+[source,bash,role=execute,subs=attributes]
+----
+oc login -u {user} -p {password} {openshift-api} --insecure-skip-tls-verify
+----
+
+Confirm the login succeeded:
+
+[source,bash,role=execute]
+----
+oc whoami
+----
+
 == Project setup
 
 Switch to your hummingbird project on the OpenShift Cluster:
