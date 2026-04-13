@@ -73,7 +73,8 @@ Let's only expose the HTTPS port this time.
 podman run --rm -d --name caddy-ssl -p 8443:8443  -v ~/webserver:/usr/share/caddy:ro,Z caddy:ssl
 ----
 
-With the new SSL enabled Caddy site running, we can test against the new port
+With the new SSL enabled Caddy site running, we can test against the new port using the `curl` image.
+
 [source,bash,role=execute,subs=attributes+]
 ----
 podman run --net=host --rm -it  {hummingbird-registry}/curl https://localhost:8443
@@ -145,7 +146,7 @@ podman build -t curl:local-ca -f ~/Containerfile.pem ~
 
 === Step 6: Test curl with custom CA
 
-With the certificate in place, we should get our original `index.html` served via SSL.
+With the certificate in place, we should get our original `index.html` served via SSL. This sort of internal customization is a good use case for containerized versions of tools.
 [source,bash,role=execute]
 ----
 podman run --net=host --rm -it curl:local-ca https://localhost:8443
@@ -247,7 +248,7 @@ podman build -t fips:yes -f ~/fips/Containerfile.fips ~/fips
 
 === Step 11: Run and compare FIPS enforcement
 
-Running our application, we can see that MD5 and other methods considered less secure are disallowed in our `fips` based container.
+Running our application in the `default` variant, we can see that MD5 and other methods considered less secure are available to any `python` application.
 
 [source,bash,role=execute]
 ----
@@ -279,7 +280,7 @@ The test program highlights the algorithms and providers available to an applica
 
 Running this image in a FIPS environment would not comply with the standard.
 
-
+Running the same application in the `fips` variant tells a different story about the available methods.
 [source,bash,role=execute]
 ----
 podman run --rm fips:yes
