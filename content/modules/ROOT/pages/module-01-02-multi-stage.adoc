@@ -43,7 +43,7 @@ This application listens on all interfaces (0.0.0.0) port 8080 for container dep
 [[multi-stage-containerfile]]
 == Multi-Stage Containerfile
 
-Now let's create the Containerfile that builds our application using the multi-stage pattern.
+Multi-stage builds create new images for each set of steps, delimited by a new `FROM` directive, effectively creating a scripted build in a single Containerfile.
 The first stage will use the `builder` variant of the `openjdk-21` image. This provides additional tools like `dnf` to install RPMs into the environment.
 Once we've created the application with `maven`, we can copy just the necessary application files to the `runtime` variant for deployment.
 Not only do all of the `maven` build artifacts stay in the first stage, but so do any additional packages or tools we may have needed to get a working build environment.
@@ -81,7 +81,10 @@ Building a multi-stage image with `podman` is no different than any other image.
 ----
 podman build -t hummingbird-demo:v1 -f ~/sample-app/Containerfile ~/sample-app
 ----
-
+[NOTE]
+====
+This build may take 2-3 minutes to complete
+====
 .*Expected output (excerpt):*
 ----
 [1/2] STEP 1/9: FROM {hummingbird-registry}/openjdk:21-builder AS builder
@@ -180,9 +183,9 @@ Congratulations! You've completed Sub-Module 1.2 and mastered multi-stage builds
 
 **Multi-Stage Build Pattern:**
 
-* **Stage 1 (Builder)**: Hardened image (~435MB) with all build tools (JDK, Maven)
-* **Stage 2 (Runtime)**: Hardened runtime (~253MB base) with only the JRE
-* **Result**: ~272MB final image -- 40% smaller than shipping the full builder image (~454MB)
+* **Stage 1 (Builder)**: Hardened image (~535MB) with all build tools (JDK, Maven)
+* **Stage 2 (Runtime)**: Hardened image (~258MB) with only the JRE
+* **Result**: ~272MB final image with application 
 
 **Best Practices Applied:**
 

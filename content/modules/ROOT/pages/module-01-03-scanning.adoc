@@ -88,9 +88,12 @@ Use Grype to scan your multi-stage image for known CVEs:
 
 [source,bash,role=execute]
 ----
-grype hummingbird-demo:v1
+grype hummingbird-demo:v1 --by-cve
 ----
-
+[NOTE]
+====
+The scan make take 1-2 minutes to complete. The `--by-cve` flag normalizes the output to CVE identifers instead of other datasouces like GHSA, where available. This can make comparing to other sources and tools easier.
+====
 .*Expected output:*
 ----
  ⠸ Vulnerability DB                ━━━━━━━━━━━━━━━━━━━━  [hydrating]
@@ -118,21 +121,27 @@ Now scan the UBI version:
 
 [source,bash,role=execute]
 ----
-grype hummingbird-demo:ubi --only-fixed
+grype hummingbird-demo:ubi --by-cve --only-fixed
 ----
-[NOTE]
-====
-The `--only-fixed` flag is one of several filters available and shows only vulnerabilities with available patches. This is useful because it focuses on immediate issues and not `wontfix` issues set by the distro.  To see the full output, run the command again without the flag.
-====
-
 .*Expected output (varies, but typically):*
 ----
- ✔ Scanned for vulnerabilities     [29 vulnerability matches]
-   ├── by severity: 2 critical, 25 high, 105 medium, 84 low, 1 negligible (1 unknown)
-   └── by status:   29 fixed, 189 not-fixed, 189 ignored
+✔ Loaded image                                                     hummingbird-demo:ubi ✔ Parsed image  sha256:03dc3b506b2cf65edccead9c049bf460668ec31f0ca8a3b30ac5152a46240946
+✔ Cataloged contents   be81f714bea39f05007a9870444cd024bac7d642efbceeb5a2eedf5a696a2c6f
+   ├── ✔ Packages                        [991 packages]  
+   ├── ✔ Executables                     [529 executables]  
+   ├── ✔ File metadata                   [6,134 locations]  
+   └── ✔ File digests                    [6,134 files]  
+ ✔ Scanned for vulnerabilities     [33 vulnerability matches]  
+   ├── by severity: 2 critical, 34 high, 146 medium, 98 low, 1 negligible (1 unknown)
+   └── by status:   33 fixed, 249 not-fixed, 249 ignored
 <cut>
 ----
 Take particular note of the `Type` column in the output. Most of these are `java-archive` packages, and pulled in as part of the build process for the UBI based version of our quarkus app. Since we used a single container, and not a multi-stage, all of the build artifacts are included in our production image. This shows how the `distroless` and minimal approaches can benefit production environments.
+[NOTE]
+====
+The `--only-fixed` flag is another of several filters available and shows only vulnerabilities with available patches. This is useful because it focuses on immediate issues and not `wontfix` issues set by the distro.  To see the full output, run the command again without the flag.
+====
+
 
 [IMPORTANT]
 ====
@@ -157,7 +166,7 @@ Each image provided includes a Software Bill of Materials (SBOM) that details th
 You saw the web version, but that's not particularly useful for use with security tools.Using `cosign` you can download the SBOM from the registry directly.
 Let's get the SBOM for the `openjdk` image we used to build the Quarkus app.
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes+]
 ----
 cosign download sbom {hummingbird-registry}/openjdk:21-runtime
 ----
@@ -166,7 +175,7 @@ cosign download sbom {hummingbird-registry}/openjdk:21-runtime
 You will see a warning about using attestations instead of JSON. We'll go over this concept and the `cosign` tool in more depth during a later exercise. We just want to see that the SBOM is available.
 ====
 
-The JSON will have information about checksums, packages, publishers and more. Our SBOMs are useful to understand the contents of the base, but you'll likely want to publish SBOMs that include your application and any of it's dependencies as well.
+The JSON displayed will have information about checksums, packages, publishers and more. Our SBOMs are useful to understand the contents of the base, but you'll likely want to publish SBOMs that include your application and any of it's dependencies as well.
 Let's explore how to do that with `syft`.
 
 === Step 3: Generate SBOM
@@ -233,7 +242,7 @@ jq '.packages | length' hummingbird-demo.spdx
 
 .*Expected output:*
 ----
-170
+166
 ----
 [NOTE]
 ====
