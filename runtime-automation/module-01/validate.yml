@@ -78,10 +78,13 @@
     - name: "Validate 01-04: Image Signing and Attestation"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-04.sh > /tmp/validate-01-04.sh && {{ vm_env }} bash /tmp/validate-01-04.sh"
+          "rm -f ~/scanning/cosign.key ~/scanning/cosign.pub && \
+           curl -sL {{ scripts_base }}/validate-module-01-04.sh > /tmp/validate-01-04.sh && \
+           {{ vm_env }} bash /tmp/validate-01-04.sh"
       register: r_04
       ignore_errors: true
       changed_when: false
+      no_log: true
       timeout: 300
 
     # ── Module 01-05 ───────────────────────────────────────────────────────
