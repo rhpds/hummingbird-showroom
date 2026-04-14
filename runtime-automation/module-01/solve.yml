@@ -19,21 +19,22 @@
 
   tasks:
 
-    # ── Bootstrap: install virtctl if not present ──────────────────────────
+    # ── Bootstrap: download virtctl from cluster downloads route ─────────
 
-    - name: Check if virtctl is installed
-      ansible.builtin.command: which virtctl
-      register: r_virtctl
+    - name: Download virtctl from cluster downloads route
+      ansible.builtin.get_url:
+        url: "https://downloads.{{ openshift_cluster_ingress_domain }}/amd64/linux/virtctl"
+        dest: /tmp/virtctl
+        mode: "0755"
+        validate_certs: false
+      register: r_virtctl_download
       ignore_errors: true
-      changed_when: false
 
-    - name: Download virtctl from cluster
+    - name: Fallback — download virtctl from GitHub releases
       ansible.builtin.shell: |
-        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-        curl -skL "https://github.com/kubevirt/kubevirt/releases/latest/download/virtctl-linux-${ARCH}" \
+        curl -skL "https://github.com/kubevirt/kubevirt/releases/latest/download/virtctl-linux-amd64" \
           -o /tmp/virtctl && chmod +x /tmp/virtctl
-        ln -sf /tmp/virtctl /usr/local/bin/virtctl
-      when: r_virtctl.rc != 0
+      when: r_virtctl_download is failed
       changed_when: true
 
     # ── Task 1: Build multi-stage Quarkus image ────────────────────────────
@@ -41,7 +42,7 @@
     - name: Clone sample Quarkus repo on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -52,7 +53,7 @@
     - name: Build Quarkus image with Buildah on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -65,7 +66,7 @@
     - name: Log in to Quay registry on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -78,7 +79,7 @@
     - name: Push image to Quay on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -93,7 +94,7 @@
     - name: Run Grype vulnerability scan on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -105,7 +106,7 @@
     - name: Generate SBOM with Syft on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -119,7 +120,7 @@
     - name: Generate Cosign key pair on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -130,7 +131,7 @@
     - name: Sign image with Cosign on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
@@ -143,7 +144,7 @@
     - name: Attach SBOM as attestation with Cosign on RHEL VM
       ansible.builtin.command:
         cmd: >
-          virtctl ssh {{ vm_name }}
+          /tmp/virtctl ssh {{ vm_name }}
           -n {{ rhel_ns }}
           --kubeconfig={{ k8s_kubeconfig | default(omit) }}
           --local-ssh-opts="-o StrictHostKeyChecking=no"
