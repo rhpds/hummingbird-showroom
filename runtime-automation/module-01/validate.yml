@@ -30,41 +30,59 @@
 
     # ── Task 2: Image pushed to Quay ──────────────────────────────────────
 
-    - name: Set Quay basic auth header
-      ansible.builtin.set_fact:
-        _quay_auth: "Basic {{ (quay_user + ':' + password) | b64encode }}"
+    # ── Tasks 2-4: Check tags via Docker registry API /v2/ ────────────────
+    # /v2/ supports Basic auth natively; /api/v1/ requires OAuth token.
+
+    - name: Get Docker registry token for Quay
+      ansible.builtin.uri:
+        url: "https://{{ quay_host }}/v2/auth?service={{ quay_host }}&scope=repository:{{ image_repo }}:pull"
+        method: GET
+        url_username: "{{ quay_user }}"
+        url_password: "{{ password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200, 401]
+      register: r_token
       no_log: true
 
-    - name: Get image tags from Quay
+    - name: Set registry auth header
+      ansible.builtin.set_fact:
+        _reg_auth: "Bearer {{ r_token.json.token | default('') }}"
+      no_log: true
+
+    - name: Check image manifest exists (latest tag)
       ansible.builtin.uri:
-        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest"
-        method: GET
+        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest"
+        method: HEAD
         headers:
-          Authorization: "{{ _quay_auth }}"
+          Authorization: "{{ _reg_auth }}"
+          Accept: "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
         validate_certs: false
         status_code: [200, 401, 404]
       register: r_quay_tags
 
-    # ── Task 3: Cosign signature exists in Quay ───────────────────────────
+    # ── Task 3: Cosign signature exists ───────────────────────────────────
 
-    - name: Get .sig tag from Quay (cosign signature)
+    - name: Check .sig tag exists (cosign signature)
       ansible.builtin.uri:
-        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.sig"
-        method: GET
+        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest.sig"
+        method: HEAD
         headers:
-          Authorization: "{{ _quay_auth }}"
+          Authorization: "{{ _reg_auth }}"
+          Accept: "application/vnd.oci.image.manifest.v1+json"
         validate_certs: false
         status_code: [200, 401, 404]
       register: r_quay_sig
 
-    # ── Task 4: SBOM attestation exists in Quay ───────────────────────────
+    # ── Task 4: SBOM attestation exists ───────────────────────────────────
 
-    - name: Get .att tag from Quay (SBOM attestation)
+    - name: Check .att tag exists (SBOM attestation)
       ansible.builtin.uri:
-        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.att"
-        method: GET
+        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest.att"
+        method: HEAD
         headers:
-          Authorization: "{{ _quay_auth }}"
+          Authorization: "{{ _reg_auth }}"
+          Accept: "application/vnd.oci.image.manifest.v1+json"
         validate_certs: false
         status_code: [200, 401, 404]
       register: r_quay_att
@@ -76,15 +94,9 @@
         _vm_ok: >-
           {{ r_vmi.resources | length > 0 and
              r_vmi.resources[0].status.phase | default('') == 'Running' }}
-        _image_ok: >-
-          {{ r_quay_tags.status == 200 and
-             r_quay_tags.json.tags | default([]) | length > 0 }}
-        _sig_ok: >-
-          {{ r_quay_sig.status == 200 and
-             r_quay_sig.json.tags | default([]) | length > 0 }}
-        _att_ok: >-
-          {{ r_quay_att.status == 200 and
-             r_quay_att.json.tags | default([]) | length > 0 }}
+        _image_ok: "{{ r_quay_tags.status == 200 }}"
+        _sig_ok: "{{ r_quay_sig.status == 200 }}"
+        _att_ok: "{{ r_quay_att.status == 200 }}"
 
     - name: Validate all tasks
       validation_check:
