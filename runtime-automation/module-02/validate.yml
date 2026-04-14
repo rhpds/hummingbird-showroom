@@ -1,0 +1,119 @@
+---
+# VALIDATE — Module 2: Platform-Scale Security Pipeline on OpenShift
+# Checks BuildRun, Pipeline, PipelineRun via kubernetes.core
+# Extravars: k8s_kubeconfig, student_user, guid, domain
+
+- name: Module 2 Validation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    build_ns: "{{ student_user }}-hummingbird-builds"
+    prod_ns: "{{ student_user }}-hummingbird-production"
+
+  tasks:
+
+    # ── Task 1: Registry credentials secret exists ─────────────────────────
+
+    - name: Check registry-credentials secret exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: v1
+        kind: Secret
+        name: registry-credentials
+        namespace: "{{ build_ns }}"
+      register: r_secret
+
+    # ── Task 2: Shipwright Build CR exists ────────────────────────────────
+
+    - name: Check Shipwright Build CR exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: Build
+        name: secure-quarkus-build
+        namespace: "{{ build_ns }}"
+      register: r_build
+
+    # ── Task 3: A successful BuildRun exists ─────────────────────────────
+
+    - name: Get all BuildRuns in build namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: BuildRun
+        namespace: "{{ build_ns }}"
+        label_selectors:
+          - "build.shipwright.io/name=secure-quarkus-build"
+      register: r_buildruns
+
+    # ── Task 4: Tekton Pipeline exists ───────────────────────────────────
+
+    - name: Check security-pipeline exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: tekton.dev/v1
+        kind: Pipeline
+        name: security-pipeline
+        namespace: "{{ build_ns }}"
+      register: r_pipeline
+
+    # ── Task 5: A successful PipelineRun exists ───────────────────────────
+
+    - name: Get all PipelineRuns for security-pipeline
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: tekton.dev/v1
+        kind: PipelineRun
+        namespace: "{{ build_ns }}"
+        label_selectors:
+          - "tekton.dev/pipeline=security-pipeline"
+      register: r_pipelineruns
+
+    # ── Build results ──────────────────────────────────────────────────────
+
+    - name: Build results
+      ansible.builtin.set_fact:
+        _secret_ok: "{{ r_secret.resources | length > 0 }}"
+        _build_ok: "{{ r_build.resources | length > 0 }}"
+        _buildrun_ok: >-
+          {{ r_buildruns.resources | length > 0 and
+             (r_buildruns.resources |
+              map(attribute='status.conditions') |
+              map('selectattr', 'type', 'equalto', 'Succeeded') |
+              map('selectattr', 'status', 'equalto', 'True') |
+              map('list') | select | list | length > 0) }}
+        _pipeline_ok: "{{ r_pipeline.resources | length > 0 }}"
+        _pipelinerun_ok: >-
+          {{ r_pipelineruns.resources | length > 0 and
+             (r_pipelineruns.resources |
+              map(attribute='status.conditions') |
+              map('selectattr', 'type', 'equalto', 'Succeeded') |
+              map('selectattr', 'status', 'equalto', 'True') |
+              map('list') | select | list | length > 0) }}
+
+    - name: Validate all tasks
+      validation_check:
+        check: "{{ _secret_ok and _build_ok and _buildrun_ok and _pipeline_ok and _pipelinerun_ok }}"
+        pass_msg: |
+          ✅ Task 1: Quay registry credentials secret exists in {{ build_ns }}
+          ✅ Task 2: Shipwright Build CR secure-quarkus-build exists
+          ✅ Task 3: BuildRun completed successfully
+          ✅ Task 4: Tekton security-pipeline exists
+          ✅ Task 5: PipelineRun completed successfully
+        error_msg: |
+          {{ '✅' if _secret_ok else '❌' }} Task 1: registry-credentials secret in {{ build_ns }}
+          {{ '✅' if _build_ok else '❌' }} Task 2: Shipwright Build CR secure-quarkus-build
+          {{ '✅' if _buildrun_ok else '❌' }} Task 3: A successful BuildRun
+          {{ '✅' if _pipeline_ok else '❌' }} Task 4: Tekton security-pipeline exists
+          {{ '✅' if _pipelinerun_ok else '❌' }} Task 5: A successful PipelineRun
+
+          Fix:
+            oc get buildruns -n {{ build_ns }}
+            oc get pipelineruns -n {{ build_ns }}
+            oc logs -f $(oc get pipelineruns -n {{ build_ns }} -o name | tail -1) -n {{ build_ns }}

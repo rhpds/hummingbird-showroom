@@ -15,10 +15,12 @@ ui:
     snapshot: true
   supplemental_files:
   - path: ./content/supplemental-ui
+  - path: ./content/lib
 
 antora:
   extensions:
   - '@sntke/antora-mermaid-extension'
+  - require: ./content/lib/inject-buttons.js
 
 output:
   dir: ./www

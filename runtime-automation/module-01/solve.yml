@@ -1,0 +1,112 @@
+---
+# SOLVE — Module 1: Zero CVE Containers on RHEL VM
+# SSH directly to VM IP via sshpass (no virtctl needed).
+# VM IP is read from VirtualMachineInstance status via kubernetes.core.
+# Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user,
+#            password, rhel_vm_user, rhel_vm_password
+
+- name: Module 1 Solve
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    rhel_ns: "{{ student_user }}-rhel"
+    vm_name: rhel
+    vm_user: "{{ rhel_vm_user | default('rhel') }}"
+    vm_password: "{{ rhel_vm_password | default(password) }}"
+    image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest"
+    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
+    ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+  tasks:
+
+    # ── Bootstrap: get VM IP from VMI ─────────────────────────────────────
+
+    - name: Get VirtualMachineInstance status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ vm_name }}"
+        namespace: "{{ rhel_ns }}"
+      register: r_vmi
+
+    - name: Set VM IP
+      ansible.builtin.set_fact:
+        vm_ip: "{{ r_vmi.resources[0].status.interfaces[0].ipAddress }}"
+
+    # ── Task 1: Build multi-stage Quarkus image ────────────────────────────
+
+    - name: Clone sample Quarkus repo on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "rm -rf ~/sample-quarkus-hummingbird && git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
+      changed_when: true
+      no_log: true
+
+    - name: Build Quarkus image with Buildah on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~/sample-quarkus-hummingbird && buildah bud --format=oci -t {{ image_ref }} ."
+      changed_when: true
+      no_log: true
+      timeout: 300
+
+    - name: Log in to Quay registry on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "podman login {{ quay_hostname }} --username={{ quay_user }} --password={{ password }} --tls-verify=false"
+      changed_when: true
+      no_log: true
+
+    - name: Push image to Quay on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "buildah push --tls-verify=false {{ image_ref }} docker://{{ image_ref }}"
+      changed_when: true
+      no_log: true
+      timeout: 120
+
+    # ── Task 2: Vulnerability scan + SBOM ─────────────────────────────────
+
+    - name: Run Grype vulnerability scan on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "grype {{ image_ref }} --add-cpes-if-none -o json > ~/scan-results.json 2>&1 || true"
+      changed_when: true
+      ignore_errors: true
+      timeout: 120
+
+    - name: Generate SBOM with Syft on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
+      changed_when: true
+      ignore_errors: true
+      timeout: 120
+
+    # ── Task 3: Sign image with Cosign ────────────────────────────────────
+
+    - name: Generate Cosign key pair on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
+      changed_when: true
+      no_log: true
+
+    - name: Sign image with Cosign on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign sign --key cosign.key --allow-insecure-registry {{ image_ref }} 2>&1"
+      changed_when: true
+      no_log: true
+
+    - name: Attest SBOM with Cosign on RHEL VM
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign attest --key cosign.key \
+           --predicate sbom.json --type spdxjson \
+           --allow-insecure-registry {{ image_ref }} 2>&1 || true"
+      changed_when: true
+      no_log: true
