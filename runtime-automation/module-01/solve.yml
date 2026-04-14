@@ -64,9 +64,9 @@
         ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
         {{ vm_user }}@{{ vm_ip }}
         "podman login {{ quay_hostname }}
-         --username={{ quay_user }} --password={{ password }}"
+         --username={{ quay_user }} --password={{ password }}
+         --tls-verify=false"
       changed_when: true
-      no_log: true
 
     - name: Push image to Quay on RHEL VM
       ansible.builtin.shell: >
