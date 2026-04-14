@@ -1,0 +1,226 @@
+---
+# SOLVE — Module 2: Platform-Scale Security Pipeline on OpenShift
+# Runner: zt-runner sidecar pod, cluster-admin SA kubeconfig
+# Extravars: k8s_kubeconfig, student_user, guid, domain, password
+
+- name: Module 2 Solve
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    build_ns: "{{ student_user }}-hummingbird-builds"
+    prod_ns: "{{ student_user }}-hummingbird-production"
+    quay_host: "quay.{{ domain }}"
+    image_ref: "quay.{{ domain }}/{{ student_user }}/secure-quarkus:latest"
+    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
+
+  tasks:
+
+    # ── Task 1: Quay registry credentials secret ──────────────────────────
+
+    - name: Create Quay registry credentials secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: registry-credentials
+            namespace: "{{ build_ns }}"
+          type: kubernetes.io/dockerconfigjson
+          stringData:
+            .dockerconfigjson: >-
+              {"auths":{"{{ quay_host }}":{"username":"{{ student_user }}","password":"{{ password }}","auth":"{{ (student_user + ':' + password) | b64encode }}"}}}
+      no_log: true
+
+    # ── Task 2: Shipwright Build CR ───────────────────────────────────────
+
+    - name: Create Shipwright Build CR
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: Build
+          metadata:
+            name: secure-quarkus-build
+            namespace: "{{ build_ns }}"
+          spec:
+            source:
+              type: Git
+              git:
+                url: "{{ repo_url }}"
+                revision: main
+            strategy:
+              name: buildah
+              kind: ClusterBuildStrategy
+            output:
+              image: "{{ image_ref }}"
+              credentials:
+                name: registry-credentials
+
+    # ── Task 3: Trigger BuildRun ──────────────────────────────────────────
+
+    - name: Delete existing BuildRun if present
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: absent
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: BuildRun
+          metadata:
+            name: secure-quarkus-buildrun-solve
+            namespace: "{{ build_ns }}"
+
+    - name: Trigger BuildRun
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: BuildRun
+          metadata:
+            name: secure-quarkus-buildrun-solve
+            namespace: "{{ build_ns }}"
+          spec:
+            build:
+              name: secure-quarkus-build
+
+    - name: Wait for BuildRun to complete
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: BuildRun
+        name: secure-quarkus-buildrun-solve
+        namespace: "{{ build_ns }}"
+      register: r_buildrun
+      until: >-
+        r_buildrun.resources | length > 0 and
+        (r_buildrun.resources[0].status.conditions | default([]) |
+         selectattr('type', 'equalto', 'Succeeded') | list | length > 0)
+      retries: 60
+      delay: 10
+
+    # ── Task 4: Security Pipeline (Tekton) ───────────────────────────────
+
+    - name: Create Tekton security pipeline
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: tekton.dev/v1
+          kind: Pipeline
+          metadata:
+            name: security-pipeline
+            namespace: "{{ build_ns }}"
+          spec:
+            params:
+              - name: IMAGE
+                type: string
+            tasks:
+              - name: grype-scan
+                taskRef:
+                  name: grype-scan-task
+                params:
+                  - name: IMAGE
+                    value: "$(params.IMAGE)"
+              - name: deploy
+                runAfter: [grype-scan]
+                taskRef:
+                  name: oc-deploy-task
+                params:
+                  - name: IMAGE
+                    value: "$(params.IMAGE)"
+                  - name: NAMESPACE
+                    value: "{{ prod_ns }}"
+
+    - name: Create Grype scan Tekton Task
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: tekton.dev/v1
+          kind: Task
+          metadata:
+            name: grype-scan-task
+            namespace: "{{ build_ns }}"
+          spec:
+            params:
+              - name: IMAGE
+                type: string
+            steps:
+              - name: scan
+                image: anchore/grype:latest
+                script: |
+                  #!/bin/sh
+                  grype "$(params.IMAGE)" --add-cpes-if-none -o json > /workspace/scan-results.json
+                  echo "Scan complete"
+
+    - name: Create OC deploy Tekton Task
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: tekton.dev/v1
+          kind: Task
+          metadata:
+            name: oc-deploy-task
+            namespace: "{{ build_ns }}"
+          spec:
+            params:
+              - name: IMAGE
+                type: string
+              - name: NAMESPACE
+                type: string
+            steps:
+              - name: deploy
+                image: registry.redhat.io/openshift4/ose-cli:latest
+                script: |
+                  #!/bin/sh
+                  oc set image deployment/quarkus-app quarkus-app=$(params.IMAGE) -n $(params.NAMESPACE) || \
+                  oc new-app $(params.IMAGE) --name=quarkus-app -n $(params.NAMESPACE)
+                  oc rollout status deployment/quarkus-app -n $(params.NAMESPACE) --timeout=120s
+
+    - name: Trigger security PipelineRun
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: tekton.dev/v1
+          kind: PipelineRun
+          metadata:
+            generateName: security-pipeline-run-
+            namespace: "{{ build_ns }}"
+          spec:
+            pipelineRef:
+              name: security-pipeline
+            params:
+              - name: IMAGE
+                value: "{{ image_ref }}"
+
+    - name: Wait for PipelineRun to complete
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: tekton.dev/v1
+        kind: PipelineRun
+        namespace: "{{ build_ns }}"
+        label_selectors:
+          - "tekton.dev/pipeline=security-pipeline"
+      register: r_pr
+      until: >-
+        r_pr.resources | length > 0 and
+        (r_pr.resources | sort(attribute='metadata.creationTimestamp') | last).status.conditions |
+        default([]) | selectattr('type', 'equalto', 'Succeeded') | list | length > 0
+      retries: 60
+      delay: 10

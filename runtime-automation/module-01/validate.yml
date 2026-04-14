@@ -1,0 +1,116 @@
+---
+# VALIDATE — Module 1: Zero CVE Containers on RHEL VM
+# Checks via Quay API (accessible from OCP) + VM status via kubernetes.core
+# Extravars: k8s_kubeconfig, student_user, guid, domain, password
+
+- name: Module 1 Validation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    rhel_ns: "{{ student_user }}-rhel"
+    vm_name: rhel
+    quay_host: "quay.{{ domain }}"
+    quay_user: "{{ student_user }}"
+    image_repo: "{{ student_user }}/secure-quarkus-jvm"
+
+  tasks:
+
+    # ── Task 1: RHEL VM is running ─────────────────────────────────────────
+
+    - name: Check RHEL VM is running
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ vm_name }}"
+        namespace: "{{ rhel_ns }}"
+      register: r_vmi
+
+    # ── Task 2: Image pushed to Quay ──────────────────────────────────────
+
+    - name: Get Quay OAuth token
+      ansible.builtin.uri:
+        url: "https://{{ quay_host }}/api/v1/user/initialize"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ quay_user }}"
+          password: "{{ password }}"
+          access_token: true
+        validate_certs: false
+        status_code: [200, 201, 400]
+      register: r_quay_token
+      no_log: true
+
+    - name: Get image tags from Quay
+      ansible.builtin.uri:
+        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+        validate_certs: false
+        status_code: [200, 404]
+      register: r_quay_tags
+
+    # ── Task 3: Cosign signature exists in Quay ───────────────────────────
+
+    - name: Get .sig tag from Quay (cosign signature)
+      ansible.builtin.uri:
+        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.sig"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+        validate_certs: false
+        status_code: [200, 404]
+      register: r_quay_sig
+
+    # ── Task 4: SBOM attestation exists in Quay ───────────────────────────
+
+    - name: Get .att tag from Quay (SBOM attestation)
+      ansible.builtin.uri:
+        url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.att"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+        validate_certs: false
+        status_code: [200, 404]
+      register: r_quay_att
+
+    # ── Build results ──────────────────────────────────────────────────────
+
+    - name: Build results
+      ansible.builtin.set_fact:
+        _vm_ok: >-
+          {{ r_vmi.resources | length > 0 and
+             r_vmi.resources[0].status.phase | default('') == 'Running' }}
+        _image_ok: >-
+          {{ r_quay_tags.status == 200 and
+             r_quay_tags.json.tags | default([]) | length > 0 }}
+        _sig_ok: >-
+          {{ r_quay_sig.status == 200 and
+             r_quay_sig.json.tags | default([]) | length > 0 }}
+        _att_ok: >-
+          {{ r_quay_att.status == 200 and
+             r_quay_att.json.tags | default([]) | length > 0 }}
+
+    - name: Validate all tasks
+      validation_check:
+        check: "{{ _vm_ok and _image_ok and _sig_ok }}"
+        pass_msg: |
+          ✅ Task 1: RHEL VM is running in {{ rhel_ns }}
+          ✅ Task 2: Image secure-quarkus-jvm:latest pushed to Quay
+          ✅ Task 3: Cosign signature (.sig tag) found in Quay
+          {{ '✅' if _att_ok else '⚠️ ' }} Task 4: SBOM attestation (.att tag) in Quay
+        error_msg: |
+          {{ '✅' if _vm_ok else '❌' }} Task 1: RHEL VM running in {{ rhel_ns }}
+          {{ '✅' if _image_ok else '❌' }} Task 2: Image secure-quarkus-jvm:latest in Quay
+          {{ '✅' if _sig_ok else '❌' }} Task 3: Cosign signature (.sig) in Quay
+          {{ '✅' if _att_ok else '❌' }} Task 4: SBOM attestation (.att) in Quay
+
+          Fix — run on the RHEL VM terminal:
+            cd ~/sample-quarkus-hummingbird
+            buildah bud --format=oci -t quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest .
+            buildah push quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest
+            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest
