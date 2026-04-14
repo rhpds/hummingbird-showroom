@@ -102,9 +102,11 @@
       changed_when: true
       no_log: true
 
-    - name: Attach SBOM as attestation on RHEL VM
+    - name: Attest SBOM with Cosign on RHEL VM
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "cd ~ && COSIGN_PASSWORD='' cosign attach attestation --attestation sbom.json --allow-insecure-registry {{ image_ref }} 2>&1 || true"
+          "cd ~ && COSIGN_PASSWORD='' cosign attest --key cosign.key \
+           --predicate sbom.json --type spdxjson \
+           --allow-insecure-registry {{ image_ref }} 2>&1 || true"
       changed_when: true
       no_log: true
