@@ -44,7 +44,6 @@
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
           "{{ vm_env }} bash /tmp/solve-01-01.sh"
       changed_when: true
-      no_log: true
       timeout: 300
 
     # ── Module 01-02: Multi-Stage Builds ──────────────────────────────────
