@@ -42,7 +42,7 @@
         headers:
           Authorization: "{{ _quay_auth }}"
         validate_certs: false
-        status_code: [200, 404]
+        status_code: [200, 401, 404]
       register: r_quay_tags
 
     # ── Task 3: Cosign signature exists in Quay ───────────────────────────
@@ -54,7 +54,7 @@
         headers:
           Authorization: "{{ _quay_auth }}"
         validate_certs: false
-        status_code: [200, 404]
+        status_code: [200, 401, 404]
       register: r_quay_sig
 
     # ── Task 4: SBOM attestation exists in Quay ───────────────────────────
@@ -66,7 +66,7 @@
         headers:
           Authorization: "{{ _quay_auth }}"
         validate_certs: false
-        status_code: [200, 404]
+        status_code: [200, 401, 404]
       register: r_quay_att
 
     # ── Build results ──────────────────────────────────────────────────────
