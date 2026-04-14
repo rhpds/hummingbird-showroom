@@ -12,10 +12,10 @@
     rhel_ns: "{{ student_user }}-rhel"
     vm_name: rhel
     vm_user: rhel
-    quay_host: "quay.{{ domain }}"
-    quay_user: "{{ student_user }}"
+    quay_host: "{{ quay_hostname }}"
+    quay_user: "{{ quay_user }}"
     repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
-    image_ref: "quay.{{ domain }}/{{ student_user }}/secure-quarkus-jvm:latest"
+    image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest"
 
   tasks:
 

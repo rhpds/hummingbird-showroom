@@ -10,9 +10,9 @@
   vars:
     rhel_ns: "{{ student_user }}-rhel"
     vm_name: rhel
-    quay_host: "quay.{{ domain }}"
-    quay_user: "{{ student_user }}"
-    image_repo: "{{ student_user }}/secure-quarkus-jvm"
+    quay_host: "{{ quay_hostname }}"
+    quay_user: "{{ quay_user }}"
+    image_repo: "{{ quay_user }}/secure-quarkus-jvm"
 
   tasks:
 
@@ -111,6 +111,6 @@
 
           Fix — run on the RHEL VM terminal:
             cd ~/sample-quarkus-hummingbird
-            buildah bud --format=oci -t quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest .
-            buildah push quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest
-            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key quay.{{ domain }}/{{ quay_user }}/secure-quarkus-jvm:latest
+            buildah bud --format=oci -t {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest .
+            buildah push {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest
+            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest
