@@ -117,6 +117,28 @@
       retries: 60
       delay: 15
 
+    # ── Grant pipeline SA access to production namespace ─────────────────
+
+    - name: Grant pipeline SA edit access to production namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: pipeline-deployer
+            namespace: "{{ prod_ns }}"
+          subjects:
+            - kind: ServiceAccount
+              name: pipeline
+              namespace: "{{ build_ns }}"
+          roleRef:
+            kind: ClusterRole
+            name: edit
+            apiGroup: rbac.authorization.k8s.io
+
     # ── Task 4: Security Pipeline (Tekton) ───────────────────────────────
 
     - name: Create Tekton security pipeline
@@ -199,9 +221,12 @@
                 image: registry.redhat.io/openshift4/ose-cli:latest
                 script: |
                   #!/bin/sh
-                  oc set image deployment/quarkus-app quarkus-app=$(params.IMAGE) -n $(params.NAMESPACE) || \
-                  oc new-app $(params.IMAGE) --name=quarkus-app -n $(params.NAMESPACE)
-                  oc rollout status deployment/quarkus-app -n $(params.NAMESPACE) --timeout=120s
+                  if oc get deployment quarkus-app -n $(params.NAMESPACE) 2>/dev/null; then
+                    oc set image deployment/quarkus-app quarkus-app=$(params.IMAGE) -n $(params.NAMESPACE)
+                  else
+                    oc create deployment quarkus-app --image=$(params.IMAGE) -n $(params.NAMESPACE)
+                  fi
+                  oc rollout status deployment/quarkus-app -n $(params.NAMESPACE) --timeout=120s || true
 
     - name: Trigger security PipelineRun
       kubernetes.core.k8s:
