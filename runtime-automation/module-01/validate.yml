@@ -1,7 +1,7 @@
 ---
 # VALIDATE — Module 1: Zero CVE Containers on RHEL VM
-# Checks via Quay API (accessible from OCP) + VM status via kubernetes.core
-# Extravars: k8s_kubeconfig, student_user, guid, domain, password
+# Uses Docker V2 registry API with Bearer token to check image/sig/att tags.
+# Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user, password
 
 - name: Module 1 Validation
   hosts: localhost
@@ -9,10 +9,8 @@
   gather_facts: false
   vars:
     rhel_ns: "{{ student_user }}-rhel"
-    vm_name: rhel
-    quay_host: "{{ quay_hostname }}"
-    quay_user: "{{ quay_user }}"
     image_repo: "{{ quay_user }}/secure-quarkus-jvm"
+    quay_host: "{{ quay_hostname }}"
 
   tasks:
 
@@ -24,16 +22,13 @@
         validate_certs: false
         api_version: kubevirt.io/v1
         kind: VirtualMachineInstance
-        name: "{{ vm_name }}"
+        name: rhel
         namespace: "{{ rhel_ns }}"
       register: r_vmi
 
-    # ── Task 2: Image pushed to Quay ──────────────────────────────────────
+    # ── Tasks 2-4: Check image/sig/att via Docker V2 Registry API ─────────
 
-    # ── Tasks 2-4: Check tags via Docker registry API /v2/ ────────────────
-    # /v2/ supports Basic auth natively; /api/v1/ requires OAuth token.
-
-    - name: Get Docker registry token for Quay
+    - name: Get Docker V2 Bearer token for Quay
       ansible.builtin.uri:
         url: "https://{{ quay_host }}/v2/auth?service={{ quay_host }}&scope=repository:{{ image_repo }}:pull"
         method: GET
@@ -45,47 +40,15 @@
       register: r_token
       no_log: true
 
-    - name: Set registry auth header
-      ansible.builtin.set_fact:
-        _reg_auth: "Bearer {{ r_token.json.token | default('') }}"
-      no_log: true
-
-    - name: Check image manifest exists (latest tag)
+    - name: Get all tags from Quay registry
       ansible.builtin.uri:
-        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest"
-        method: HEAD
+        url: "https://{{ quay_host }}/v2/{{ image_repo }}/tags/list"
+        method: GET
         headers:
-          Authorization: "{{ _reg_auth }}"
-          Accept: "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+          Authorization: "Bearer {{ r_token.json.token | default('') }}"
         validate_certs: false
         status_code: [200, 401, 404]
-      register: r_quay_tags
-
-    # ── Task 3: Cosign signature exists ───────────────────────────────────
-
-    - name: Check .sig tag exists (cosign signature)
-      ansible.builtin.uri:
-        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest.sig"
-        method: HEAD
-        headers:
-          Authorization: "{{ _reg_auth }}"
-          Accept: "application/vnd.oci.image.manifest.v1+json"
-        validate_certs: false
-        status_code: [200, 401, 404]
-      register: r_quay_sig
-
-    # ── Task 4: SBOM attestation exists ───────────────────────────────────
-
-    - name: Check .att tag exists (SBOM attestation)
-      ansible.builtin.uri:
-        url: "https://{{ quay_host }}/v2/{{ image_repo }}/manifests/latest.att"
-        method: HEAD
-        headers:
-          Authorization: "{{ _reg_auth }}"
-          Accept: "application/vnd.oci.image.manifest.v1+json"
-        validate_certs: false
-        status_code: [200, 401, 404]
-      register: r_quay_att
+      register: r_tags
 
     # ── Build results ──────────────────────────────────────────────────────
 
@@ -94,9 +57,15 @@
         _vm_ok: >-
           {{ r_vmi.resources | length > 0 and
              r_vmi.resources[0].status.phase | default('') == 'Running' }}
-        _image_ok: "{{ r_quay_tags.status == 200 }}"
-        _sig_ok: "{{ r_quay_sig.status == 200 }}"
-        _att_ok: "{{ r_quay_att.status == 200 }}"
+        _image_ok: >-
+          {{ r_tags.status == 200 and
+             'latest' in (r_tags.json.tags | default([])) }}
+        _sig_ok: >-
+          {{ r_tags.status == 200 and
+             (r_tags.json.tags | default([])) | select('match', '.*\\.sig$') | list | length > 0 }}
+        _att_ok: >-
+          {{ r_tags.status == 200 and
+             (r_tags.json.tags | default([])) | select('match', '.*\\.att$') | list | length > 0 }}
 
     - name: Validate all tasks
       validation_check:
@@ -114,6 +83,6 @@
 
           Fix — run on the RHEL VM terminal:
             cd ~/sample-quarkus-hummingbird
-            buildah bud --format=oci -t {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest .
-            buildah push {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest
-            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key {{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest
+            buildah bud --format=oci -t {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest .
+            buildah push --tls-verify=false {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest
+            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key --allow-insecure-registry {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest
