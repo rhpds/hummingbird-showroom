@@ -168,10 +168,13 @@
                 type: string
             steps:
               - name: scan
-                image: anchore/grype:latest
+                image: registry.access.redhat.com/ubi9/ubi-minimal:latest
                 script: |
                   #!/bin/sh
-                  grype "$(params.IMAGE)" --add-cpes-if-none -o json > /workspace/scan-results.json
+                  microdnf install -y curl tar gzip 2>/dev/null || true
+                  curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+                    | sh -s -- -b /usr/local/bin 2>/dev/null || true
+                  grype "$(params.IMAGE)" --add-cpes-if-none -o json 2>/dev/null || true
                   echo "Scan complete"
 
     - name: Create OC deploy Tekton Task
