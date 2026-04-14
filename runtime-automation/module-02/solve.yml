@@ -63,6 +63,9 @@
             strategy:
               name: buildah
               kind: ClusterBuildStrategy
+            paramValues:
+              - name: dockerfile
+                value: Containerfile
             output:
               image: "{{ image_ref }}"
               credentials:
