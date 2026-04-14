@@ -40,9 +40,8 @@
 
     - name: "Module 01-01: Building with Hummingbird"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-01.sh -o /tmp/solve-01-01.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-01.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-01.sh | {{ vm_env }} bash"
       changed_when: true
       timeout: 300
 
@@ -50,9 +49,8 @@
 
     - name: "Module 01-02: Multi-Stage Builds"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-02.sh -o /tmp/solve-01-02.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-02.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-02.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -61,9 +59,8 @@
 
     - name: "Module 01-03: Vulnerability Scanning and SBOMs"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-03.sh -o /tmp/solve-01-03.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-03.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-03.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -72,9 +69,8 @@
 
     - name: "Module 01-04: Image Signing and Attestation"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-04.sh -o /tmp/solve-01-04.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-04.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-04.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -83,9 +79,8 @@
 
     - name: "Module 01-05: Custom Security Configurations"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-05.sh -o /tmp/solve-01-05.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-05.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-05.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -94,9 +89,8 @@
 
     - name: "Module 01-06: SELinux with udica"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-06.sh -o /tmp/solve-01-06.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-06.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-06.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -105,9 +99,8 @@
 
     - name: "Module 01-07: Advanced SELinux"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-07.sh -o /tmp/solve-01-07.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-07.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-07.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
@@ -116,9 +109,8 @@
 
     - name: "Module 01-08: chunkah Layer Splitting"
       ansible.builtin.shell: |
-        curl -sL {{ scripts_base }}/solve-module-01-08.sh -o /tmp/solve-01-08.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "{{ vm_env }} bash /tmp/solve-01-08.sh"
+          "curl -sL {{ scripts_base }}/solve-module-01-08.sh | {{ vm_env }} bash"
       changed_when: true
       no_log: true
       timeout: 300
