@@ -155,12 +155,12 @@
                       - containerPort: 8080
                     livenessProbe:
                       httpGet:
-                        path: /health
+                        path: /q/health
                         port: 8080
                       initialDelaySeconds: 10
                     readinessProbe:
                       httpGet:
-                        path: /health
+                        path: /q/health
                         port: 8080
                       initialDelaySeconds: 5
 
