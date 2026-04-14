@@ -21,22 +21,23 @@
     # ── Sub-module 2.1: Quay registry credentials secret ──────────────────
 
     - name: "2.1 - Create Quay registry credentials secret"
-      ansible.builtin.command: >
-        oc create secret docker-registry registry-credentials
-        --docker-server={{ quay_host }}
-        --docker-username={{ quay_user }}
-        --docker-password={{ password }}
-        -n {{ build_ns }}
-        --kubeconfig={{ k8s_kubeconfig | default('/tmp/kubeconfig') }}
-        --dry-run=client -o yaml | oc apply --kubeconfig={{ k8s_kubeconfig | default('/tmp/kubeconfig') }} -f -
+      ansible.builtin.shell: |
+        oc create secret docker-registry registry-credentials \
+          --docker-server={{ quay_host }} \
+          --docker-username={{ quay_user }} \
+          --docker-password={{ password }} \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }} \
+          --dry-run=client -o yaml | \
+        oc apply --kubeconfig={{ k8s_kubeconfig | default(omit) }} -f -
       changed_when: true
       no_log: true
 
     - name: "2.1 - Link registry-credentials to pipeline SA"
-      ansible.builtin.command: >
-        oc secrets link pipeline registry-credentials
-        -n {{ build_ns }}
-        --kubeconfig={{ k8s_kubeconfig | default('/tmp/kubeconfig') }}
+      ansible.builtin.shell: |
+        oc secrets link pipeline registry-credentials \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
       changed_when: true
       ignore_errors: true
 
@@ -119,10 +120,10 @@
     # ── Sub-module 2.1: Deploy application ────────────────────────────────
 
     - name: "2.1 - Link registry-credentials to default SA for pull"
-      ansible.builtin.command: >
-        oc secrets link default registry-credentials --for=pull
-        -n {{ build_ns }}
-        --kubeconfig={{ k8s_kubeconfig | default('/tmp/kubeconfig') }}
+      ansible.builtin.shell: |
+        oc secrets link default registry-credentials --for=pull \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
       changed_when: true
       ignore_errors: true
 
