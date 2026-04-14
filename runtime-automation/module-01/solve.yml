@@ -16,6 +16,7 @@
     vm_password: "{{ rhel_vm_password | default(password) }}"
     image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest"
     repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
+    ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
   tasks:
 
@@ -38,42 +39,31 @@
     # ── Task 1: Build multi-stage Quarkus image ────────────────────────────
 
     - name: Clone sample Quarkus repo on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "rm -rf ~/sample-quarkus-hummingbird &&
-         git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "rm -rf ~/sample-quarkus-hummingbird && git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
       changed_when: true
       no_log: true
 
     - name: Build Quarkus image with Buildah on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "cd ~/sample-quarkus-hummingbird &&
-         buildah bud --format=oci -t {{ image_ref }} ."
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~/sample-quarkus-hummingbird && buildah bud --format=oci -t {{ image_ref }} ."
       changed_when: true
       no_log: true
       timeout: 300
 
     - name: Log in to Quay registry on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "podman login {{ quay_hostname }}
-         --username={{ quay_user }} --password={{ password }}
-         --tls-verify=false"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "podman login {{ quay_hostname }} --username={{ quay_user }} --password={{ password }} --tls-verify=false"
       changed_when: true
+      no_log: true
 
     - name: Push image to Quay on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "buildah push --tls-verify=false {{ image_ref }} docker://{{ image_ref }}"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "buildah push --tls-verify=false {{ image_ref }} docker://{{ image_ref }}"
       changed_when: true
       no_log: true
       timeout: 120
@@ -81,22 +71,17 @@
     # ── Task 2: Vulnerability scan + SBOM ─────────────────────────────────
 
     - name: Run Grype vulnerability scan on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "grype {{ image_ref }} --add-cpes-if-none
-         -o json > ~/scan-results.json 2>&1 || true"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "grype {{ image_ref }} --add-cpes-if-none -o json > ~/scan-results.json 2>&1 || true"
       changed_when: true
       no_log: true
       timeout: 120
 
     - name: Generate SBOM with Syft on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
       changed_when: true
       no_log: true
       timeout: 120
@@ -104,31 +89,22 @@
     # ── Task 3: Sign image with Cosign ────────────────────────────────────
 
     - name: Generate Cosign key pair on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "cd ~ && COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
       changed_when: true
       no_log: true
 
     - name: Sign image with Cosign on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "cd ~ && COSIGN_PASSWORD='' cosign sign --key cosign.key
-         --allow-insecure-registry {{ image_ref }} 2>&1"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign sign --key cosign.key --allow-insecure-registry {{ image_ref }} 2>&1"
       changed_when: true
       no_log: true
 
     - name: Attach SBOM as attestation on RHEL VM
-      ansible.builtin.shell: >
-        sshpass -p "{{ vm_password }}"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ vm_user }}@{{ vm_ip }}
-        "cd ~ && COSIGN_PASSWORD='' cosign attach attestation
-         --attestation sbom.json
-         --allow-insecure-registry {{ image_ref }} 2>&1 || true"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "cd ~ && COSIGN_PASSWORD='' cosign attach attestation --attestation sbom.json --allow-insecure-registry {{ image_ref }} 2>&1 || true"
       changed_when: true
       no_log: true
