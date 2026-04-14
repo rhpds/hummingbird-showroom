@@ -42,7 +42,7 @@
     - name: "Validate 01-01: Building with Hummingbird"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-01.sh | {{ vm_env }} bash"
+          "curl -sL {{ scripts_base }}/validate-module-01-01.sh > /tmp/validate-01-01.sh && {{ vm_env }} bash /tmp/validate-01-01.sh"
       register: r_01
       ignore_errors: true
       changed_when: false
@@ -54,7 +54,7 @@
     - name: "Validate 01-02: Multi-Stage Builds"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-02.sh | {{ vm_env }} bash"
+          "curl -sL {{ scripts_base }}/validate-module-01-02.sh > /tmp/validate-01-02.sh && {{ vm_env }} bash /tmp/validate-01-02.sh"
       register: r_02
       ignore_errors: true
       changed_when: false
@@ -66,7 +66,7 @@
     - name: "Validate 01-03: Vulnerability Scanning and SBOMs"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-03.sh | {{ vm_env }} bash"
+          "curl -sL {{ scripts_base }}/validate-module-01-03.sh > /tmp/validate-01-03.sh && {{ vm_env }} bash /tmp/validate-01-03.sh"
       register: r_03
       ignore_errors: true
       changed_when: false
@@ -78,7 +78,7 @@
     - name: "Validate 01-04: Image Signing and Attestation"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-04.sh | {{ vm_env }} bash"
+          "curl -sL {{ scripts_base }}/validate-module-01-04.sh > /tmp/validate-01-04.sh && {{ vm_env }} bash /tmp/validate-01-04.sh"
       register: r_04
       ignore_errors: true
       changed_when: false
@@ -89,7 +89,7 @@
     - name: "Validate 01-05: Custom Security Configurations"
       ansible.builtin.shell: |
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "curl -sL {{ scripts_base }}/validate-module-01-05.sh | {{ vm_env }} bash"
+          "curl -sL {{ scripts_base }}/validate-module-01-05.sh > /tmp/validate-01-05.sh && {{ vm_env }} bash /tmp/validate-01-05.sh"
       register: r_05
       ignore_errors: true
       changed_when: false
