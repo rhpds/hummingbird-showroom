@@ -50,6 +50,10 @@
         status_code: [200, 401, 404]
       register: r_tags
 
+    - name: Debug tags response
+      ansible.builtin.debug:
+        msg: "status={{ r_tags.status }} tags={{ r_tags.json.tags | default([]) }}"
+
     # ── Build results ──────────────────────────────────────────────────────
 
     - name: Build results
@@ -62,10 +66,10 @@
              'latest' in (r_tags.json.tags | default([])) }}
         _sig_ok: >-
           {{ r_tags.status == 200 and
-             (r_tags.json.tags | default([])) | select('match', '.*\\.sig$') | list | length > 0 }}
+             (r_tags.json.tags | default([]) | join(' ')) is search('\.sig') }}
         _att_ok: >-
           {{ r_tags.status == 200 and
-             (r_tags.json.tags | default([])) | select('match', '.*\\.att$') | list | length > 0 }}
+             (r_tags.json.tags | default([]) | join(' ')) is search('\.att') }}
 
     - name: Validate all tasks
       validation_check:
