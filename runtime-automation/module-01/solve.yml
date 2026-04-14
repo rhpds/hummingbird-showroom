@@ -75,7 +75,6 @@
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
           "grype {{ image_ref }} --add-cpes-if-none -o json > ~/scan-results.json 2>&1 || true"
       changed_when: true
-      no_log: true
       timeout: 120
 
     - name: Generate SBOM with Syft on RHEL VM
@@ -83,7 +82,7 @@
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
           "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
       changed_when: true
-      no_log: true
+      ignore_errors: true
       timeout: 120
 
     # ── Task 3: Sign image with Cosign ────────────────────────────────────
