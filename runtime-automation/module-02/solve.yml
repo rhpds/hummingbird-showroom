@@ -18,21 +18,28 @@
 
     # ── Task 1: Quay registry credentials secret ──────────────────────────
 
-    - name: Create Quay registry credentials secret
+    - name: Delete existing registry-credentials secret if present
       kubernetes.core.k8s:
         kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
-        state: present
+        state: absent
         definition:
           apiVersion: v1
           kind: Secret
           metadata:
             name: registry-credentials
             namespace: "{{ build_ns }}"
-          type: kubernetes.io/dockerconfigjson
-          stringData:
-            .dockerconfigjson: >-
-              {"auths":{"{{ quay_host }}":{"username":"{{ quay_user }}","password":"{{ password }}","auth":"{{ (quay_user + ':' + password) | b64encode }}"}}}
+
+    - name: Create Quay registry credentials secret
+      ansible.builtin.command: >
+        oc create secret docker-registry registry-credentials
+        --docker-server={{ quay_host }}
+        --docker-username={{ quay_user }}
+        --docker-password={{ password }}
+        -n {{ build_ns }}
+        --kubeconfig={{ k8s_kubeconfig | default('/tmp/kubeconfig') }}
+      changed_when: true
+      no_log: true
 
     # ── Task 2: Shipwright Build CR ───────────────────────────────────────
 
