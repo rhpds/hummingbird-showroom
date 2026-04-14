@@ -100,7 +100,7 @@
             build:
               name: secure-quarkus-build
 
-    - name: Wait for BuildRun to complete
+    - name: Wait for BuildRun to complete (True or False, not Unknown)
       kubernetes.core.k8s_info:
         kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
@@ -112,9 +112,10 @@
       until: >-
         r_buildrun.resources | length > 0 and
         (r_buildrun.resources[0].status.conditions | default([]) |
-         selectattr('type', 'equalto', 'Succeeded') | list | length > 0)
+         selectattr('type', 'equalto', 'Succeeded') |
+         selectattr('status', 'ne', 'Unknown') | list | length > 0)
       retries: 60
-      delay: 10
+      delay: 15
 
     # ── Task 4: Security Pipeline (Tekton) ───────────────────────────────
 
@@ -217,7 +218,7 @@
               - name: IMAGE
                 value: "{{ image_ref }}"
 
-    - name: Wait for PipelineRun to complete
+    - name: Wait for PipelineRun to complete (True or False, not Unknown)
       kubernetes.core.k8s_info:
         kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
@@ -229,7 +230,8 @@
       register: r_pr
       until: >-
         r_pr.resources | length > 0 and
-        (r_pr.resources | sort(attribute='metadata.creationTimestamp') | last).status.conditions |
-        default([]) | selectattr('type', 'equalto', 'Succeeded') | list | length > 0
+        ((r_pr.resources | sort(attribute='metadata.creationTimestamp') | last).status.conditions |
+         default([]) | selectattr('type', 'equalto', 'Succeeded') |
+         selectattr('status', 'ne', 'Unknown') | list | length > 0)
       retries: 60
-      delay: 10
+      delay: 15

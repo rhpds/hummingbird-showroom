@@ -83,21 +83,19 @@
         _build_ok: "{{ r_build.resources | length > 0 }}"
         _buildrun_ok: >-
           {{ r_buildruns.resources | length > 0 and
-             r_buildruns.resources |
-             selectattr('status.conditions', 'defined') |
-             map(attribute='status.conditions') |
-             map('selectattr', 'type', 'equalto', 'Succeeded') |
-             map('selectattr', 'status', 'equalto', 'True') |
-             map('list') | select('ne', []) | list | length > 0 }}
+             (r_buildruns.resources |
+              map(attribute='status.conditions') |
+              map('selectattr', 'type', 'equalto', 'Succeeded') |
+              map('selectattr', 'status', 'equalto', 'True') |
+              map('list') | select | list | length > 0) }}
         _pipeline_ok: "{{ r_pipeline.resources | length > 0 }}"
         _pipelinerun_ok: >-
           {{ r_pipelineruns.resources | length > 0 and
-             r_pipelineruns.resources |
-             selectattr('status.conditions', 'defined') |
-             map(attribute='status.conditions') |
-             map('selectattr', 'type', 'equalto', 'Succeeded') |
-             map('selectattr', 'status', 'equalto', 'True') |
-             map('list') | select('ne', []) | list | length > 0 }}
+             (r_pipelineruns.resources |
+              map(attribute='status.conditions') |
+              map('selectattr', 'type', 'equalto', 'Succeeded') |
+              map('selectattr', 'status', 'equalto', 'True') |
+              map('list') | select | list | length > 0) }}
 
     - name: Validate all tasks
       validation_check:
