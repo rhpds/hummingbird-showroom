@@ -1,9 +1,7 @@
 ---
 # SOLVE — Module 1: Zero CVE Containers on RHEL VM
-# SSH directly to VM IP via sshpass (no virtctl needed).
-# VM IP is read from VirtualMachineInstance status via kubernetes.core.
-# Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user,
-#            password, rhel_vm_user, rhel_vm_password
+# Runs existing solve scripts from scripts/ directory on the RHEL VM via SSH.
+# Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user, password
 
 - name: Module 1 Solve
   hosts: localhost
@@ -11,24 +9,26 @@
   gather_facts: false
   vars:
     rhel_ns: "{{ student_user }}-rhel"
-    vm_name: rhel
     vm_user: "{{ rhel_vm_user | default('rhel') }}"
     vm_password: "{{ rhel_vm_password | default(password) }}"
-    image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest"
-    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
     ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    scripts_base: "https://raw.githubusercontent.com/rhpds/hummingbird-showroom/main/scripts"
+    vm_env: >-
+      QUAY_HOSTNAME={{ quay_hostname }}
+      QUAY_USER={{ quay_user }}
+      QUAY_PASSWORD={{ password }}
 
   tasks:
 
-    # ── Bootstrap: get VM IP from VMI ─────────────────────────────────────
+    # ── Get VM IP ──────────────────────────────────────────────────────────
 
-    - name: Get VirtualMachineInstance status
+    - name: Get VirtualMachineInstance IP
       kubernetes.core.k8s_info:
         kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
         api_version: kubevirt.io/v1
         kind: VirtualMachineInstance
-        name: "{{ vm_name }}"
+        name: rhel
         namespace: "{{ rhel_ns }}"
       register: r_vmi
 
@@ -36,77 +36,90 @@
       ansible.builtin.set_fact:
         vm_ip: "{{ r_vmi.resources[0].status.interfaces[0].ipAddress }}"
 
-    # ── Task 1: Build multi-stage Quarkus image ────────────────────────────
+    # ── Module 01-01: Building with Hummingbird ────────────────────────────
 
-    - name: Clone sample Quarkus repo on RHEL VM
+    - name: "Module 01-01: Building with Hummingbird"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-01.sh -o /tmp/solve-01-01.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "rm -rf ~/sample-quarkus-hummingbird && git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
-      changed_when: true
-      no_log: true
-
-    - name: Build Quarkus image with Buildah on RHEL VM
-      ansible.builtin.shell: |
-        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "cd ~/sample-quarkus-hummingbird && buildah bud --format=oci -t {{ image_ref }} ."
+          "{{ vm_env }} bash /tmp/solve-01-01.sh"
       changed_when: true
       no_log: true
       timeout: 300
 
-    - name: Log in to Quay registry on RHEL VM
+    # ── Module 01-02: Multi-Stage Builds ──────────────────────────────────
+
+    - name: "Module 01-02: Multi-Stage Builds"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-02.sh -o /tmp/solve-01-02.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "podman login {{ quay_hostname }} --username={{ quay_user }} --password={{ password }} --tls-verify=false"
+          "{{ vm_env }} bash /tmp/solve-01-02.sh"
       changed_when: true
       no_log: true
+      timeout: 300
 
-    - name: Push image to Quay on RHEL VM
+    # ── Module 01-03: Vulnerability Scanning & SBOMs ──────────────────────
+
+    - name: "Module 01-03: Vulnerability Scanning and SBOMs"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-03.sh -o /tmp/solve-01-03.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "buildah push --tls-verify=false {{ image_ref }} docker://{{ image_ref }}"
+          "{{ vm_env }} bash /tmp/solve-01-03.sh"
       changed_when: true
       no_log: true
-      timeout: 120
+      timeout: 300
 
-    # ── Task 2: Vulnerability scan + SBOM ─────────────────────────────────
+    # ── Module 01-04: Image Signing & Attestation ─────────────────────────
 
-    - name: Run Grype vulnerability scan on RHEL VM
+    - name: "Module 01-04: Image Signing and Attestation"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-04.sh -o /tmp/solve-01-04.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "grype {{ image_ref }} --add-cpes-if-none -o json > ~/scan-results.json 2>&1 || true"
-      changed_when: true
-      ignore_errors: true
-      timeout: 120
-
-    - name: Generate SBOM with Syft on RHEL VM
-      ansible.builtin.shell: |
-        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
-      changed_when: true
-      ignore_errors: true
-      timeout: 120
-
-    # ── Task 3: Sign image with Cosign ────────────────────────────────────
-
-    - name: Generate Cosign key pair on RHEL VM
-      ansible.builtin.shell: |
-        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "cd ~ && COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
+          "{{ vm_env }} bash /tmp/solve-01-04.sh"
       changed_when: true
       no_log: true
+      timeout: 300
 
-    - name: Sign image with Cosign on RHEL VM
+    # ── Module 01-05: Custom Security Configurations ──────────────────────
+
+    - name: "Module 01-05: Custom Security Configurations"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-05.sh -o /tmp/solve-01-05.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "cd ~ && COSIGN_PASSWORD='' cosign sign --key cosign.key --allow-insecure-registry {{ image_ref }} 2>&1"
+          "{{ vm_env }} bash /tmp/solve-01-05.sh"
       changed_when: true
       no_log: true
+      timeout: 300
 
-    - name: Attest SBOM with Cosign on RHEL VM
+    # ── Module 01-06: SELinux with udica ──────────────────────────────────
+
+    - name: "Module 01-06: SELinux with udica"
       ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-06.sh -o /tmp/solve-01-06.sh
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
-          "cd ~ && COSIGN_PASSWORD='' cosign attest --key cosign.key \
-           --predicate sbom.json --type spdxjson \
-           --allow-insecure-registry {{ image_ref }} 2>&1 || true"
+          "{{ vm_env }} bash /tmp/solve-01-06.sh"
       changed_when: true
       no_log: true
+      timeout: 300
+
+    # ── Module 01-07: Advanced SELinux ────────────────────────────────────
+
+    - name: "Module 01-07: Advanced SELinux"
+      ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-07.sh -o /tmp/solve-01-07.sh
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "{{ vm_env }} bash /tmp/solve-01-07.sh"
+      changed_when: true
+      no_log: true
+      timeout: 300
+
+    # ── Module 01-08: chunkah Layer Splitting ─────────────────────────────
+
+    - name: "Module 01-08: chunkah Layer Splitting"
+      ansible.builtin.shell: |
+        curl -sL {{ scripts_base }}/solve-module-01-08.sh -o /tmp/solve-01-08.sh
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "{{ vm_env }} bash /tmp/solve-01-08.sh"
+      changed_when: true
+      no_log: true
+      timeout: 300
