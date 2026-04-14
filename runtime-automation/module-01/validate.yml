@@ -50,10 +50,6 @@
         status_code: [200, 401, 404]
       register: r_tags
 
-    - name: Debug tags response
-      ansible.builtin.debug:
-        msg: "status={{ r_tags.status }} tags={{ r_tags.json.tags | default([]) }}"
-
     # ── Build results ──────────────────────────────────────────────────────
 
     - name: Build results
