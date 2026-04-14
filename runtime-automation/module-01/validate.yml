@@ -30,18 +30,9 @@
 
     # ── Task 2: Image pushed to Quay ──────────────────────────────────────
 
-    - name: Get Quay OAuth token
-      ansible.builtin.uri:
-        url: "https://{{ quay_host }}/api/v1/user/initialize"
-        method: POST
-        body_format: json
-        body:
-          username: "{{ quay_user }}"
-          password: "{{ password }}"
-          access_token: true
-        validate_certs: false
-        status_code: [200, 201, 400]
-      register: r_quay_token
+    - name: Set Quay basic auth header
+      ansible.builtin.set_fact:
+        _quay_auth: "Basic {{ (quay_user + ':' + password) | b64encode }}"
       no_log: true
 
     - name: Get image tags from Quay
@@ -49,7 +40,7 @@
         url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest"
         method: GET
         headers:
-          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+          Authorization: "{{ _quay_auth }}"
         validate_certs: false
         status_code: [200, 404]
       register: r_quay_tags
@@ -61,7 +52,7 @@
         url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.sig"
         method: GET
         headers:
-          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+          Authorization: "{{ _quay_auth }}"
         validate_certs: false
         status_code: [200, 404]
       register: r_quay_sig
@@ -73,7 +64,7 @@
         url: "https://{{ quay_host }}/api/v1/repository/{{ image_repo }}/tag/?specificTag=latest.att"
         method: GET
         headers:
-          Authorization: "Bearer {{ r_quay_token.json.access_token | default('') }}"
+          Authorization: "{{ _quay_auth }}"
         validate_certs: false
         status_code: [200, 404]
       register: r_quay_att
