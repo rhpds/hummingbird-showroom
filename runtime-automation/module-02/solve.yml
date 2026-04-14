@@ -33,7 +33,6 @@
           stringData:
             .dockerconfigjson: >-
               {"auths":{"{{ quay_host }}":{"username":"{{ quay_user }}","password":"{{ password }}","auth":"{{ (quay_user + ':' + password) | b64encode }}"}}}
-      no_log: true
 
     # ── Task 2: Shipwright Build CR ───────────────────────────────────────
 
