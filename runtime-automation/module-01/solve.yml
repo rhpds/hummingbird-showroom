@@ -1,8 +1,9 @@
 ---
 # SOLVE — Module 1: Zero CVE Containers on RHEL VM
-# Runner: zt-runner sidecar pod on OCP with cluster-admin SA kubeconfig
-# SSH to RHEL VM via virtctl using the SA kubeconfig
-# Extravars: k8s_kubeconfig, student_user, guid, domain
+# SSH directly to VM IP via sshpass (no virtctl needed).
+# VM IP is read from VirtualMachineInstance status via kubernetes.core.
+# Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user,
+#            password, rhel_vm_user, rhel_vm_password
 
 - name: Module 1 Solve
   hosts: localhost
@@ -11,146 +12,123 @@
   vars:
     rhel_ns: "{{ student_user }}-rhel"
     vm_name: rhel
-    vm_user: rhel
-    quay_host: "{{ quay_hostname }}"
-    quay_user: "{{ quay_user }}"
-    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
+    vm_user: "{{ rhel_vm_user | default('rhel') }}"
+    vm_password: "{{ rhel_vm_password | default(password) }}"
     image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus-jvm:latest"
+    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
 
   tasks:
 
-    # ── Bootstrap: download virtctl from cluster downloads route ─────────
+    # ── Bootstrap: get VM IP from VMI ─────────────────────────────────────
 
-    - name: Download virtctl from cluster downloads route
-      ansible.builtin.get_url:
-        url: "https://downloads.{{ openshift_cluster_ingress_domain }}/amd64/linux/virtctl"
-        dest: /tmp/virtctl
-        mode: "0755"
+    - name: Get VirtualMachineInstance status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
-      register: r_virtctl_download
-      ignore_errors: true
+        api_version: kubevirt.io/v1
+        kind: VirtualMachineInstance
+        name: "{{ vm_name }}"
+        namespace: "{{ rhel_ns }}"
+      register: r_vmi
 
-    - name: Fallback — download virtctl from GitHub releases
-      ansible.builtin.shell: |
-        curl -skL "https://github.com/kubevirt/kubevirt/releases/latest/download/virtctl-linux-amd64" \
-          -o /tmp/virtctl && chmod +x /tmp/virtctl
-      when: r_virtctl_download is failed
-      changed_when: true
+    - name: Set VM IP
+      ansible.builtin.set_fact:
+        vm_ip: "{{ r_vmi.resources[0].status.interfaces[0].ipAddress }}"
 
     # ── Task 1: Build multi-stage Quarkus image ────────────────────────────
 
     - name: Clone sample Quarkus repo on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "rm -rf ~/sample-quarkus-hummingbird &&
-              git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "rm -rf ~/sample-quarkus-hummingbird &&
+         git clone {{ repo_url }} ~/sample-quarkus-hummingbird"
       changed_when: true
+      no_log: true
 
     - name: Build Quarkus image with Buildah on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "cd ~/sample-quarkus-hummingbird &&
-              buildah bud --format=oci
-              -t {{ image_ref }} ."
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "cd ~/sample-quarkus-hummingbird &&
+         buildah bud --format=oci -t {{ image_ref }} ."
       changed_when: true
+      no_log: true
       timeout: 300
 
     - name: Log in to Quay registry on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "podman login {{ quay_host }}
-              --username={{ quay_user }}
-              --password={{ password }}"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "podman login {{ quay_hostname }}
+         --username={{ quay_user }} --password={{ password }}"
       changed_when: true
       no_log: true
 
     - name: Push image to Quay on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "buildah push --tls-verify=false
-              {{ image_ref }}
-              docker://{{ image_ref }}"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "buildah push --tls-verify=false {{ image_ref }} docker://{{ image_ref }}"
       changed_when: true
+      no_log: true
       timeout: 120
 
     # ── Task 2: Vulnerability scan + SBOM ─────────────────────────────────
 
     - name: Run Grype vulnerability scan on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "grype {{ image_ref }} --add-cpes-if-none
-              -o json > ~/scan-results.json 2>&1 || true"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "grype {{ image_ref }} --add-cpes-if-none
+         -o json > ~/scan-results.json 2>&1 || true"
       changed_when: true
+      no_log: true
       timeout: 120
 
     - name: Generate SBOM with Syft on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "syft {{ image_ref }}
-              -o spdx-json > ~/sbom.json 2>&1"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "syft {{ image_ref }} -o spdx-json > ~/sbom.json 2>&1"
       changed_when: true
+      no_log: true
       timeout: 120
 
     # ── Task 3: Sign image with Cosign ────────────────────────────────────
 
     - name: Generate Cosign key pair on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "cd ~ &&
-              COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "cd ~ && COSIGN_PASSWORD='' cosign generate-key-pair 2>&1 || true"
       changed_when: true
+      no_log: true
 
     - name: Sign image with Cosign on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "cd ~ &&
-              COSIGN_PASSWORD='' cosign sign --key cosign.key
-              --allow-insecure-registry
-              {{ image_ref }} 2>&1"
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "cd ~ && COSIGN_PASSWORD='' cosign sign --key cosign.key
+         --allow-insecure-registry {{ image_ref }} 2>&1"
       changed_when: true
+      no_log: true
 
-    - name: Attach SBOM as attestation with Cosign on RHEL VM
-      ansible.builtin.command:
-        cmd: >
-          /tmp/virtctl ssh {{ vm_name }}
-          -n {{ rhel_ns }}
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-          --local-ssh-opts="-o StrictHostKeyChecking=no"
-          -- "cd ~ &&
-              COSIGN_PASSWORD='' cosign attach attestation
-              --attestation sbom.json
-              --allow-insecure-registry
-              {{ image_ref }} 2>&1 || true"
+    - name: Attach SBOM as attestation on RHEL VM
+      ansible.builtin.shell: >
+        sshpass -p "{{ vm_password }}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ vm_user }}@{{ vm_ip }}
+        "cd ~ && COSIGN_PASSWORD='' cosign attach attestation
+         --attestation sbom.json
+         --allow-insecure-registry {{ image_ref }} 2>&1 || true"
       changed_when: true
+      no_log: true
