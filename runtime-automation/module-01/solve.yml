@@ -75,6 +75,7 @@
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
           "grype {{ image_ref }} --add-cpes-if-none -o json > ~/scan-results.json 2>&1 || true"
       changed_when: true
+      ignore_errors: true
       timeout: 120
 
     - name: Generate SBOM with Syft on RHEL VM
