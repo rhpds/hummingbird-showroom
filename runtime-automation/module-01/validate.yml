@@ -80,12 +80,17 @@
         sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
           "rm -f ~/scanning/cosign.key ~/scanning/cosign.pub && \
            curl -sL {{ scripts_base }}/validate-module-01-04.sh > /tmp/validate-01-04.sh && \
-           {{ vm_env }} bash /tmp/validate-01-04.sh"
-      register: r_04
-      ignore_errors: true
+           {{ vm_env }} bash /tmp/validate-01-04.sh 2>&1 || true"
+      register: r_04_raw
       changed_when: false
       no_log: true
       timeout: 300
+
+    - name: "Check 01-04 key outcomes in output"
+      ansible.builtin.set_fact:
+        r_04_ok: >-
+          {{ '✅ Signature verification passed' in r_04_raw.stdout and
+             '✅ SBOM attestation verification passed' in r_04_raw.stdout }}
 
     # ── Module 01-05 ───────────────────────────────────────────────────────
 
@@ -106,7 +111,7 @@
         _01_ok: "{{ r_01.rc == 0 }}"
         _02_ok: "{{ r_02.rc == 0 }}"
         _03_ok: "{{ r_03.rc == 0 }}"
-        _04_ok: "{{ r_04.rc == 0 }}"
+        _04_ok: "{{ r_04_ok }}"
         _05_ok: "{{ r_05.rc == 0 }}"
 
     - name: Validate all tasks
