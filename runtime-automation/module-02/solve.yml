@@ -10,8 +10,8 @@
   vars:
     build_ns: "{{ student_user }}-hummingbird-builds"
     prod_ns: "{{ student_user }}-hummingbird-production"
-    quay_host: "quay.{{ domain }}"
-    image_ref: "quay.{{ domain }}/{{ student_user }}/secure-quarkus:latest"
+    quay_host: "{{ quay_hostname }}"
+    image_ref: "{{ quay_hostname }}/{{ quay_user }}/secure-quarkus:latest"
     repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
 
   tasks:
@@ -32,7 +32,7 @@
           type: kubernetes.io/dockerconfigjson
           stringData:
             .dockerconfigjson: >-
-              {"auths":{"{{ quay_host }}":{"username":"{{ student_user }}","password":"{{ password }}","auth":"{{ (student_user + ':' + password) | b64encode }}"}}}
+              {"auths":{"{{ quay_host }}":{"username":"{{ quay_user }}","password":"{{ password }}","auth":"{{ (quay_user + ':' + password) | b64encode }}"}}}
       no_log: true
 
     # ── Task 2: Shipwright Build CR ───────────────────────────────────────
