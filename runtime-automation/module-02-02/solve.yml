@@ -32,7 +32,7 @@
       ansible.builtin.shell: |
         ACS_NS="{{ r_acs_ns.stdout | trim }}"
         ACS_ROUTE=$({{ oc_cmd }} get route central -n ${ACS_NS} -o jsonpath='{.spec.host}')
-        ACS_PASSWORD=$({{ oc_cmd }} get secret central-htpasswd -n ${ACS_NS} \
+        ACS_PASSWORD=$({{ oc_cmd }} get secret acs-password -n ${ACS_NS} \
           -o jsonpath='{.data.password}' | base64 -d)
         echo "ROUTE=${ACS_ROUTE}"
         echo "PASSWORD=${ACS_PASSWORD}"
