@@ -1,6 +1,7 @@
 ---
 # VALIDATE — Module 1: Zero CVE Containers on RHEL VM
-# Uses Docker V2 registry API with Bearer token to check image/sig/att tags.
+# Runs existing validate scripts from scripts/ directory on the RHEL VM via SSH.
+# Each script exits 0 on pass, non-zero on fail.
 # Extravars: k8s_kubeconfig, student_user, guid, quay_hostname, quay_user, password
 
 - name: Module 1 Validation
@@ -9,14 +10,20 @@
   gather_facts: false
   vars:
     rhel_ns: "{{ student_user }}-rhel"
-    image_repo: "{{ quay_user }}/secure-quarkus-jvm"
-    quay_host: "{{ quay_hostname }}"
+    vm_user: "{{ rhel_vm_user | default('rhel') }}"
+    vm_password: "{{ rhel_vm_password | default(password) }}"
+    ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    scripts_base: "https://raw.githubusercontent.com/rhpds/hummingbird-showroom/main/scripts"
+    vm_env: >-
+      QUAY_HOSTNAME={{ quay_hostname }}
+      QUAY_USER={{ quay_user }}
+      QUAY_PASSWORD={{ password }}
 
   tasks:
 
-    # ── Task 1: RHEL VM is running ─────────────────────────────────────────
+    # ── Get VM IP ──────────────────────────────────────────────────────────
 
-    - name: Check RHEL VM is running
+    - name: Get VirtualMachineInstance IP
       kubernetes.core.k8s_info:
         kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
         validate_certs: false
@@ -26,63 +33,99 @@
         namespace: "{{ rhel_ns }}"
       register: r_vmi
 
-    # ── Tasks 2-4: Check image/sig/att via Docker V2 Registry API ─────────
+    - name: Set VM IP
+      ansible.builtin.set_fact:
+        vm_ip: "{{ r_vmi.resources[0].status.interfaces[0].ipAddress }}"
 
-    - name: Get Docker V2 Bearer token for Quay
-      ansible.builtin.uri:
-        url: "https://{{ quay_host }}/v2/auth?service={{ quay_host }}&scope=repository:{{ image_repo }}:pull"
-        method: GET
-        url_username: "{{ quay_user }}"
-        url_password: "{{ password }}"
-        force_basic_auth: true
-        validate_certs: false
-        status_code: [200, 401]
-      register: r_token
+    # ── Module 01-01 ───────────────────────────────────────────────────────
+
+    - name: "Validate 01-01: Building with Hummingbird"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "curl -sL {{ scripts_base }}/validate-module-01-01.sh > /tmp/validate-01-01.sh && {{ vm_env }} bash /tmp/validate-01-01.sh"
+      register: r_01
+      ignore_errors: true
+      changed_when: false
       no_log: true
+      timeout: 300
 
-    - name: Get all tags from Quay registry
-      ansible.builtin.uri:
-        url: "https://{{ quay_host }}/v2/{{ image_repo }}/tags/list"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ r_token.json.token | default('') }}"
-        validate_certs: false
-        status_code: [200, 401, 404]
-      register: r_tags
+    # ── Module 01-02 ───────────────────────────────────────────────────────
 
-    # ── Build results ──────────────────────────────────────────────────────
+    - name: "Validate 01-02: Multi-Stage Builds"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "curl -sL {{ scripts_base }}/validate-module-01-02.sh > /tmp/validate-01-02.sh && {{ vm_env }} bash /tmp/validate-01-02.sh"
+      register: r_02
+      ignore_errors: true
+      changed_when: false
+      no_log: true
+      timeout: 300
+
+    # ── Module 01-03 ───────────────────────────────────────────────────────
+
+    - name: "Validate 01-03: Vulnerability Scanning and SBOMs"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "curl -sL {{ scripts_base }}/validate-module-01-03.sh > /tmp/validate-01-03.sh && {{ vm_env }} bash /tmp/validate-01-03.sh"
+      register: r_03
+      ignore_errors: true
+      changed_when: false
+      no_log: true
+      timeout: 300
+
+    # ── Module 01-04 ───────────────────────────────────────────────────────
+
+    - name: "Validate 01-04: Image Signing and Attestation"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "rm -f ~/scanning/cosign.key ~/scanning/cosign.pub && \
+           curl -sL {{ scripts_base }}/validate-module-01-04.sh > /tmp/validate-01-04.sh && \
+           {{ vm_env }} bash /tmp/validate-01-04.sh 2>&1 || true"
+      register: r_04_raw
+      changed_when: false
+      no_log: true
+      timeout: 300
+
+    - name: "Check 01-04 key outcomes in output"
+      ansible.builtin.set_fact:
+        r_04_ok: >-
+          {{ '✅ Signature verification passed' in r_04_raw.stdout and
+             '✅ SBOM attestation verification passed' in r_04_raw.stdout }}
+
+    # ── Module 01-05 ───────────────────────────────────────────────────────
+
+    - name: "Validate 01-05: Custom Security Configurations"
+      ansible.builtin.shell: |
+        sshpass -p "{{ vm_password }}" ssh {{ ssh_opts }} {{ vm_user }}@{{ vm_ip }} \
+          "curl -sL {{ scripts_base }}/validate-module-01-05.sh > /tmp/validate-01-05.sh && {{ vm_env }} bash /tmp/validate-01-05.sh"
+      register: r_05
+      ignore_errors: true
+      changed_when: false
+      no_log: true
+      timeout: 300
+
+    # ── Build results and report ───────────────────────────────────────────
 
     - name: Build results
       ansible.builtin.set_fact:
-        _vm_ok: >-
-          {{ r_vmi.resources | length > 0 and
-             r_vmi.resources[0].status.phase | default('') == 'Running' }}
-        _image_ok: >-
-          {{ r_tags.status == 200 and
-             'latest' in (r_tags.json.tags | default([])) }}
-        _sig_ok: >-
-          {{ r_tags.status == 200 and
-             (r_tags.json.tags | default([]) | join(' ')) is search('\.sig') }}
-        _att_ok: >-
-          {{ r_tags.status == 200 and
-             (r_tags.json.tags | default([]) | join(' ')) is search('\.att') }}
+        _01_ok: "{{ r_01.rc == 0 }}"
+        _02_ok: "{{ r_02.rc == 0 }}"
+        _03_ok: "{{ r_03.rc == 0 }}"
+        _04_ok: "{{ r_04_ok }}"
+        _05_ok: "{{ r_05.rc == 0 }}"
 
     - name: Validate all tasks
       validation_check:
-        check: "{{ _vm_ok and _image_ok and _sig_ok }}"
+        check: "{{ _01_ok and _02_ok and _03_ok and _04_ok and _05_ok }}"
         pass_msg: |
-          ✅ Task 1: RHEL VM is running in {{ rhel_ns }}
-          ✅ Task 2: Image secure-quarkus-jvm:latest pushed to Quay
-          ✅ Task 3: Cosign signature (.sig tag) found in Quay
-          {{ '✅' if _att_ok else '⚠️ ' }} Task 4: SBOM attestation (.att tag) in Quay
+          ✅ Module 01-01: Building with Hummingbird
+          ✅ Module 01-02: Multi-Stage Builds
+          ✅ Module 01-03: Vulnerability Scanning and SBOMs
+          ✅ Module 01-04: Image Signing and Attestation
+          ✅ Module 01-05: Custom Security Configurations
         error_msg: |
-          {{ '✅' if _vm_ok else '❌' }} Task 1: RHEL VM running in {{ rhel_ns }}
-          {{ '✅' if _image_ok else '❌' }} Task 2: Image secure-quarkus-jvm:latest in Quay
-          {{ '✅' if _sig_ok else '❌' }} Task 3: Cosign signature (.sig) in Quay
-          {{ '✅' if _att_ok else '❌' }} Task 4: SBOM attestation (.att) in Quay
-
-          Fix — run on the RHEL VM terminal:
-            cd ~/sample-quarkus-hummingbird
-            buildah bud --format=oci -t {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest .
-            buildah push --tls-verify=false {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest
-            COSIGN_PASSWORD='' cosign sign --key ~/cosign.key --allow-insecure-registry {{ quay_host }}/{{ quay_user }}/secure-quarkus-jvm:latest
+          {{ '✅' if _01_ok else '❌' }} Module 01-01: Building with Hummingbird
+          {{ '✅' if _02_ok else '❌' }} Module 01-02: Multi-Stage Builds
+          {{ '✅' if _03_ok else '❌' }} Module 01-03: Vulnerability Scanning and SBOMs
+          {{ '✅' if _04_ok else '❌' }} Module 01-04: Image Signing and Attestation
+          {{ '✅' if _05_ok else '❌' }} Module 01-05: Custom Security Configurations
