@@ -91,6 +91,26 @@ echo "5. Updating YAML files..."
 update_files "*.yml" "YAML files"
 update_files "*.yaml" "YAML files"
 
+# 5a. Update JSON files
+echo ""
+echo "5a. Updating JSON files..."
+find . -type f -name "*.json" \
+    -not -path "./.git/*" \
+    -not -path "./node_modules/*" \
+    -not -path "./package-lock.json" | while read -r file; do
+    if grep -q "$OLD_REGISTRY" "$file" 2>/dev/null; then
+        echo "  - $file"
+
+        # Update plain registry references (e.g., "quay.io/hummingbird")
+        sed -i "s/$OLD_ESCAPED/$NEW_ESCAPED/g" "$file"
+
+        # Update escaped registry patterns in regex (e.g., "quay\\.io/hummingbird")
+        OLD_PATTERN_ESCAPED=$(echo "$OLD_REGISTRY" | sed 's/\./\\\\./g')
+        NEW_PATTERN_ESCAPED=$(echo "$NEW_REGISTRY" | sed 's/\./\\\\./g')
+        sed -i "s/$OLD_PATTERN_ESCAPED/$NEW_PATTERN_ESCAPED/g" "$file"
+    fi
+done
+
 # 6. Update README
 echo ""
 echo "6. Updating README..."
@@ -108,6 +128,19 @@ echo "=========================================="
 echo ""
 echo "Summary of changes:"
 git diff --stat 2>/dev/null || echo "(Git not available or no changes detected)"
+echo ""
+
+# Verify JSON files were updated
+echo "Checking JSON files..."
+if [[ -f "renovate.json" ]]; then
+    RENOVATE_REFS=$(grep -c "$OLD_REGISTRY" renovate.json 2>/dev/null || true)
+    if [[ $RENOVATE_REFS -gt 0 ]]; then
+        echo "⚠ WARNING: renovate.json still contains $RENOVATE_REFS reference(s) to $OLD_REGISTRY"
+    else
+        echo "✓ renovate.json fully updated"
+    fi
+fi
+
 echo ""
 echo "Next steps:"
 echo "1. Review changes: git diff"
