@@ -71,7 +71,11 @@ echo "Image digest: ${IMAGE_DIGEST}"
 
 echo "=== Generating cosign key pair ==="
 export COSIGN_PASSWORD=""
-cosign generate-key-pair
+if [ ! -f cosign.key ] || [ ! -f cosign.pub ]; then
+    cosign generate-key-pair
+else
+    echo "Cosign keys already exist, skipping key generation"
+fi
 
 echo "=== Signing image with cosign ==="
 cosign sign --yes --key cosign.key \
