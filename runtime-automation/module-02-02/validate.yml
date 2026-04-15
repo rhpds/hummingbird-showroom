@@ -197,10 +197,10 @@
           {{ '✅' if _policy_cve_ok else '⚠️ ' }} ACS policy "Zero Fixable CVEs Required - {{ student_user }}"
           {{ '✅' if _policy_scan_ok else '⚠️ ' }} ACS policy "Image Scan Required - {{ student_user }}"
         error_msg: |
-          {{ '✅' if _ns_ok else '❌' }} Lab namespace {{ acs_lab_ns }}
-          {{ '✅' if _legacy_ok else '❌' }} legacy-python-api Deployment ready
-          {{ '✅' if _fortress_ok else '❌' }} fortress-python-api Deployment ready
-          {{ '✅' if _legacy_http_ok else '❌' }} Legacy /api/v1/greeting returns 200
-          {{ '✅' if _fortress_http_ok else '❌' }} Fortress /api/v1/greeting returns 200
-          {{ '✅' if _policy_cve_ok else '❌' }} ACS policy "Zero Fixable CVEs Required - {{ student_user }}"
-          {{ '✅' if _policy_scan_ok else '❌' }} ACS policy "Image Scan Required - {{ student_user }}"
+          {{ '✅ Lab namespace ' + acs_lab_ns + ' exists' if _ns_ok else '❌ Step incomplete: Lab namespace ' + acs_lab_ns + ' not found' }}
+          {{ '✅ legacy-python-api Deployment ready' if _legacy_ok else '❌ Step incomplete: legacy-python-api Deployment not ready' }}
+          {{ '✅ fortress-python-api Deployment ready' if _fortress_ok else '❌ Step incomplete: fortress-python-api Deployment not ready' }}
+          {{ '✅ Legacy /api/v1/greeting returns 200' if _legacy_http_ok else '❌ Step incomplete: Legacy /api/v1/greeting did not return 200' }}
+          {{ '✅ Fortress /api/v1/greeting returns 200' if _fortress_http_ok else '❌ Step incomplete: Fortress /api/v1/greeting did not return 200' }}
+          {{ '✅ ACS policy "Zero Fixable CVEs Required - ' + student_user + '"' if _policy_cve_ok else '❌ Step incomplete: ACS policy "Zero Fixable CVEs Required - ' + student_user + '" not found' }}
+          {{ '✅ ACS policy "Image Scan Required - ' + student_user + '"' if _policy_scan_ok else '❌ Step incomplete: ACS policy "Image Scan Required - ' + student_user + '" not found' }}
