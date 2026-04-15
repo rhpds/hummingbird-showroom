@@ -11,7 +11,6 @@
     acs_lab_ns: "{{ student_user }}-hummingbird-acs-lab"
     legacy_image: "{{ quay_hostname }}/{{ quay_user }}/legacy-python-api:vulnerable"
     fortress_image: "{{ quay_hostname }}/{{ quay_user }}/fortress-python-api:zero-cve"
-    oc_cmd: "oc --kubeconfig={{ k8s_kubeconfig | default(omit) }}"
 
   tasks:
 
@@ -19,7 +18,7 @@
 
     - name: "Ex1 - Discover ACS namespace"
       ansible.builtin.shell: |
-        {{ oc_cmd }} get namespaces --no-headers | \
+        oc get namespaces --no-headers | \
           grep -E "^(stackrox|rhacs-operator|rhacs) " | awk '{print $1}' | head -1
       register: r_acs_ns
       changed_when: false
@@ -28,22 +27,24 @@
       ansible.builtin.meta: end_play
       when: r_acs_ns.stdout | trim == ''
 
-    - name: "Ex1 - Get ACS route and credentials"
+    - name: "Ex1 - Get ACS route"
       ansible.builtin.shell: |
-        ACS_NS="{{ r_acs_ns.stdout | trim }}"
-        ACS_ROUTE=$({{ oc_cmd }} get route central -n ${ACS_NS} -o jsonpath='{.spec.host}')
-        ACS_PASSWORD=$({{ oc_cmd }} get secret acs-password -n ${ACS_NS} \
-          -o jsonpath='{.data.password}' | base64 -d)
-        echo "ROUTE=${ACS_ROUTE}"
-        echo "PASSWORD=${ACS_PASSWORD}"
-      register: r_acs_creds
+        oc get route central -n {{ r_acs_ns.stdout | trim }} -o jsonpath='{.spec.host}'
+      register: r_acs_route
+      changed_when: false
+
+    - name: "Ex1 - Get ACS password"
+      ansible.builtin.shell: |
+        oc get secret acs-password -n {{ r_acs_ns.stdout | trim }} \
+          -o jsonpath='{.data.password}' | base64 -d
+      register: r_acs_password
       no_log: true
       changed_when: false
 
     - name: "Ex1 - Set ACS credentials"
       ansible.builtin.set_fact:
-        acs_route: "{{ r_acs_creds.stdout | regex_search('ROUTE=(.+)', '\\1') | first }}"
-        acs_password: "{{ r_acs_creds.stdout | regex_search('PASSWORD=(.+)', '\\1') | first }}"
+        acs_route: "{{ r_acs_route.stdout | trim }}"
+        acs_password: "{{ r_acs_password.stdout | trim }}"
       no_log: true
 
     - name: "Ex1 - Generate ACS API token"
@@ -64,26 +65,25 @@
 
     - name: "Ex1 - Create lab namespace"
       ansible.builtin.shell: |
-        {{ oc_cmd }} get namespace {{ acs_lab_ns }} 2>/dev/null || \
-        {{ oc_cmd }} create namespace {{ acs_lab_ns }}
+        oc get namespace {{ acs_lab_ns }} 2>/dev/null || \
+        oc create namespace {{ acs_lab_ns }}
       changed_when: true
 
     - name: "Ex1 - Create Quay pull secret"
       ansible.builtin.shell: |
-        {{ oc_cmd }} create secret docker-registry quay-pull-secret \
+        oc create secret docker-registry quay-pull-secret \
           --docker-server={{ quay_hostname }} \
           --docker-username={{ quay_user }} \
           --docker-password={{ password }} \
           -n {{ acs_lab_ns }} \
-          --dry-run=client -o yaml | \
-        {{ oc_cmd }} apply -f -
+          --dry-run=client -o yaml | oc apply -f -
       changed_when: true
       no_log: true
 
     - name: "Ex1 - Link pull secret to service accounts"
       ansible.builtin.shell: |
-        {{ oc_cmd }} secrets link default quay-pull-secret --for=pull -n {{ acs_lab_ns }} || true
-        {{ oc_cmd }} secrets link builder quay-pull-secret -n {{ acs_lab_ns }} || true
+        oc secrets link default quay-pull-secret --for=pull -n {{ acs_lab_ns }} || true
+        oc secrets link builder quay-pull-secret -n {{ acs_lab_ns }} || true
       changed_when: true
 
     # ── Exercise 2: Build and deploy legacy image ──────────────────────────
@@ -133,18 +133,18 @@
 
     - name: "Ex2 - Create legacy BuildConfig"
       ansible.builtin.shell: |
-        {{ oc_cmd }} delete bc/legacy-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
-        {{ oc_cmd }} new-build --strategy=docker --binary=true \
+        oc delete bc/legacy-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
+        oc new-build --strategy=docker --binary=true \
           --name=legacy-python-api \
           --to-docker --to="{{ legacy_image }}" \
           -n {{ acs_lab_ns }}
-        {{ oc_cmd }} set build-secret --push bc/legacy-python-api quay-pull-secret \
+        oc set build-secret --push bc/legacy-python-api quay-pull-secret \
           -n {{ acs_lab_ns }} 2>/dev/null || true
       changed_when: true
 
     - name: "Ex2 - Build and push legacy image"
       ansible.builtin.shell: |
-        {{ oc_cmd }} start-build legacy-python-api \
+        oc start-build legacy-python-api \
           --from-dir=/tmp/acs-legacy-build \
           --follow --wait \
           -n {{ acs_lab_ns }}
@@ -153,7 +153,7 @@
 
     - name: "Ex2 - Deploy legacy application"
       ansible.builtin.shell: |
-        cat << EOF | {{ oc_cmd }} apply -f -
+        cat << EOF | oc apply -f -
         apiVersion: apps/v1
         kind: Deployment
         metadata:
@@ -217,8 +217,7 @@
 
     - name: "Ex2 - Wait for legacy deployment"
       ansible.builtin.shell: |
-        {{ oc_cmd }} rollout status deployment/legacy-python-api \
-          -n {{ acs_lab_ns }} --timeout=120s
+        oc rollout status deployment/legacy-python-api -n {{ acs_lab_ns }} --timeout=120s
       changed_when: false
 
     # ── Exercise 4: Build the Immutable Fortress ───────────────────────────
@@ -242,18 +241,18 @@
 
     - name: "Ex4 - Create fortress BuildConfig"
       ansible.builtin.shell: |
-        {{ oc_cmd }} delete bc/fortress-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
-        {{ oc_cmd }} new-build --strategy=docker --binary=true \
+        oc delete bc/fortress-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
+        oc new-build --strategy=docker --binary=true \
           --name=fortress-python-api \
           --to-docker --to="{{ fortress_image }}" \
           -n {{ acs_lab_ns }}
-        {{ oc_cmd }} set build-secret --push bc/fortress-python-api quay-pull-secret \
+        oc set build-secret --push bc/fortress-python-api quay-pull-secret \
           -n {{ acs_lab_ns }} 2>/dev/null || true
       changed_when: true
 
     - name: "Ex4 - Build and push fortress image"
       ansible.builtin.shell: |
-        {{ oc_cmd }} start-build fortress-python-api \
+        oc start-build fortress-python-api \
           --from-dir=/tmp/acs-legacy-build \
           --follow --wait \
           -n {{ acs_lab_ns }}
@@ -262,7 +261,7 @@
 
     - name: "Ex4/Ex6 - Deploy fortress application"
       ansible.builtin.shell: |
-        cat << EOF | {{ oc_cmd }} apply -f -
+        cat << EOF | oc apply -f -
         apiVersion: apps/v1
         kind: Deployment
         metadata:
@@ -331,8 +330,7 @@
 
     - name: "Ex6 - Wait for fortress deployment"
       ansible.builtin.shell: |
-        {{ oc_cmd }} rollout status deployment/fortress-python-api \
-          -n {{ acs_lab_ns }} --timeout=120s
+        oc rollout status deployment/fortress-python-api -n {{ acs_lab_ns }} --timeout=120s
       changed_when: false
 
     # ── Exercise 7: Create ACS Enforcement Policies ────────────────────────
