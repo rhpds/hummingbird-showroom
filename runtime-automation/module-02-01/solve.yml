@@ -212,6 +212,16 @@
       retries: 30
       delay: 10
 
+    - name: "Get sample-quarkus Route"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: sample-quarkus
+        namespace: "{{ build_ns }}"
+      register: r_route
+
     - name: "Test /hello endpoint"
       ansible.builtin.uri:
         url: "http://{{ r_route.resources[0].spec.host }}/hello"
@@ -220,10 +230,7 @@
         status_code: [200]
       register: r_hello
       ignore_errors: true
-      vars:
-        r_route: >-
-          {{ lookup('kubernetes.core.k8s',
-             kubeconfig=k8s_kubeconfig | default(omit),
-             api_version='route.openshift.io/v1',
-             kind='Route', resource_name='sample-quarkus',
-             namespace=build_ns) }}
+      retries: 5
+      delay: 5
+      until: r_hello.status == 200
+      when: r_route.resources | length > 0
