@@ -1,6 +1,6 @@
 ---
 # SOLVE — Sub-Module 2.2: The Immutable Fortress — Zero-CVE with ACS Enforcement
-# Exercises 1-8: legacy build, fortress build, ACS scan, policies, admission blocking
+# Mirrors exact CLI commands from the module. Uses shell module throughout.
 # Extravars: k8s_kubeconfig, student_user, quay_hostname, quay_user, password
 
 - name: "Sub-Module 2.2 Solve"
@@ -9,398 +9,341 @@
   gather_facts: false
   vars:
     acs_lab_ns: "{{ student_user }}-hummingbird-acs-lab"
-    quay_host: "{{ quay_hostname }}"
     legacy_image: "{{ quay_hostname }}/{{ quay_user }}/legacy-python-api:vulnerable"
     fortress_image: "{{ quay_hostname }}/{{ quay_user }}/fortress-python-api:zero-cve"
-    assets_base: "https://raw.githubusercontent.com/rhpds/hummingbird-showroom/main/content/modules/ROOT/assets/attachments"
+    oc_cmd: "oc --kubeconfig={{ k8s_kubeconfig | default(omit) }}"
 
   tasks:
 
     # ── Exercise 1: Prepare the Environment ───────────────────────────────
 
     - name: "Ex1 - Discover ACS namespace"
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        api_version: v1
-        kind: Namespace
-      register: r_all_ns
-
-    - name: "Ex1 - Set ACS namespace"
-      ansible.builtin.set_fact:
-        acs_ns: >-
-          {{ r_all_ns.resources | map(attribute='metadata.name') |
-             select('match', '^(stackrox|rhacs-operator|rhacs)$') | list | first | default('') }}
+      ansible.builtin.shell: |
+        {{ oc_cmd }} get namespaces --no-headers | \
+          grep -E "^(stackrox|rhacs-operator|rhacs) " | awk '{print $1}' | head -1
+      register: r_acs_ns
+      changed_when: false
 
     - name: "Ex1 - Skip if ACS not installed"
       ansible.builtin.meta: end_play
-      when: acs_ns == ''
+      when: r_acs_ns.stdout | trim == ''
 
-    - name: "Ex1 - Get ACS Central route"
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        api_version: route.openshift.io/v1
-        kind: Route
-        name: central
-        namespace: "{{ acs_ns }}"
-      register: r_acs_route
-
-    - name: "Ex1 - Get ACS admin password"
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        api_version: v1
-        kind: Secret
-        name: acs-password
-        namespace: "{{ acs_ns }}"
-      register: r_acs_secret
+    - name: "Ex1 - Get ACS route and credentials"
+      ansible.builtin.shell: |
+        ACS_NS="{{ r_acs_ns.stdout | trim }}"
+        ACS_ROUTE=$({{ oc_cmd }} get route central -n ${ACS_NS} -o jsonpath='{.spec.host}')
+        ACS_PASSWORD=$({{ oc_cmd }} get secret central-htpasswd -n ${ACS_NS} \
+          -o jsonpath='{.data.password}' | base64 -d)
+        echo "ROUTE=${ACS_ROUTE}"
+        echo "PASSWORD=${ACS_PASSWORD}"
+      register: r_acs_creds
       no_log: true
+      changed_when: false
 
     - name: "Ex1 - Set ACS credentials"
       ansible.builtin.set_fact:
-        acs_route: "{{ r_acs_route.resources[0].spec.host }}"
-        acs_password: "{{ r_acs_secret.resources[0].data.password | b64decode }}"
+        acs_route: "{{ r_acs_creds.stdout | regex_search('ROUTE=(.+)', '\\1') | first }}"
+        acs_password: "{{ r_acs_creds.stdout | regex_search('PASSWORD=(.+)', '\\1') | first }}"
       no_log: true
 
     - name: "Ex1 - Generate ACS API token"
-      ansible.builtin.uri:
-        url: "https://{{ acs_route }}/v1/apitokens/generate"
-        method: POST
-        body_format: json
-        body:
-          name: "solve-{{ student_user }}"
-          role: Admin
-        headers:
-          Authorization: "Basic {{ ('admin:' + acs_password) | b64encode }}"
-        validate_certs: false
-        status_code: [200, 201]
+      ansible.builtin.shell: |
+        curl -sk -u "admin:{{ acs_password }}" \
+          "https://{{ acs_route }}/v1/apitokens/generate" \
+          -X POST -H 'Content-Type: application/json' \
+          -d '{"name":"solve-{{ student_user }}","role":"Admin"}' | \
+          python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))"
       register: r_token
       no_log: true
+      changed_when: false
 
-    - name: "Ex1 - Set ACS API token"
+    - name: "Ex1 - Set ACS token"
       ansible.builtin.set_fact:
-        acs_token: "{{ r_token.json.token }}"
+        acs_token: "{{ r_token.stdout | trim }}"
       no_log: true
 
     - name: "Ex1 - Create lab namespace"
-      kubernetes.core.k8s:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: "{{ acs_lab_ns }}"
+      ansible.builtin.shell: |
+        {{ oc_cmd }} get namespace {{ acs_lab_ns }} 2>/dev/null || \
+        {{ oc_cmd }} create namespace {{ acs_lab_ns }}
+      changed_when: true
 
     - name: "Ex1 - Create Quay pull secret"
       ansible.builtin.shell: |
-        oc create secret docker-registry quay-pull-secret \
-          --docker-server={{ quay_host }} \
+        {{ oc_cmd }} create secret docker-registry quay-pull-secret \
+          --docker-server={{ quay_hostname }} \
           --docker-username={{ quay_user }} \
           --docker-password={{ password }} \
           -n {{ acs_lab_ns }} \
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }} \
           --dry-run=client -o yaml | \
-        oc apply --kubeconfig={{ k8s_kubeconfig | default(omit) }} -f -
+        {{ oc_cmd }} apply -f -
       changed_when: true
       no_log: true
 
-    - name: "Ex1 - Link quay-pull-secret to default and builder SAs"
+    - name: "Ex1 - Link pull secret to service accounts"
       ansible.builtin.shell: |
-        oc secrets link default quay-pull-secret --for=pull \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-        oc secrets link builder quay-pull-secret \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+        {{ oc_cmd }} secrets link default quay-pull-secret --for=pull -n {{ acs_lab_ns }} || true
+        {{ oc_cmd }} secrets link builder quay-pull-secret -n {{ acs_lab_ns }} || true
       changed_when: true
-      ignore_errors: true
 
-    # ── Exercise 2: Deploy the Anti-Pattern (Legacy Python API) ───────────
+    # ── Exercise 2: Build and deploy legacy image ──────────────────────────
 
-    - name: "Ex2 - Create build directory for legacy image"
-      ansible.builtin.file:
-        path: /tmp/acs-legacy-build
-        state: directory
-        mode: "0755"
+    - name: "Ex2 - Write app.py and legacy Containerfile"
+      ansible.builtin.shell: |
+        mkdir -p /tmp/acs-legacy-build
+        cat > /tmp/acs-legacy-build/app.py << 'PYEOF'
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        import json, os
 
-    - name: "Ex2 - Write app.py"
-      ansible.builtin.copy:
-        dest: /tmp/acs-legacy-build/app.py
-        content: |
-          from http.server import HTTPServer, BaseHTTPRequestHandler
-          import json, os
+        class APIHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/healthz":
+                    self._respond(200, {"status": "healthy"})
+                elif self.path == "/api/v1/greeting":
+                    self._respond(200, {"message": "Hello from the Immutable Fortress lab"})
+                else:
+                    self._respond(404, {"error": "not found"})
 
-          class APIHandler(BaseHTTPRequestHandler):
-              def do_GET(self):
-                  if self.path == "/healthz":
-                      self._respond(200, {"status": "healthy"})
-                  elif self.path == "/api/v1/greeting":
-                      self._respond(200, {"message": "Hello from the Immutable Fortress lab"})
-                  else:
-                      self._respond(404, {"error": "not found"})
+            def _respond(self, code, body):
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
 
-              def _respond(self, code, body):
-                  self.send_response(code)
-                  self.send_header("Content-Type", "application/json")
-                  self.end_headers()
-                  self.wfile.write(json.dumps(body).encode())
+            def log_message(self, format, *args):
+                pass
 
-              def log_message(self, format, *args):
-                  pass
+        if __name__ == "__main__":
+            port = int(os.environ.get("PORT", "8080"))
+            server = HTTPServer(("0.0.0.0", port), APIHandler)
+            print(f"Listening on :{port}")
+            server.serve_forever()
+        PYEOF
 
-          if __name__ == "__main__":
-              port = int(os.environ.get("PORT", "8080"))
-              server = HTTPServer(("0.0.0.0", port), APIHandler)
-              print(f"Listening on :{port}")
-              server.serve_forever()
-
-    - name: "Ex2 - Write legacy Containerfile"
-      ansible.builtin.copy:
-        dest: /tmp/acs-legacy-build/Dockerfile
-        content: |
-          FROM quay.io/takinosh/python3.11-buster:latest
-          WORKDIR /app
-          COPY app.py .
-          RUN chmod 644 app.py && chown 1001:0 app.py
-          EXPOSE 8080
-          USER 1001
-          CMD ["python3", "app.py"]
+        cat > /tmp/acs-legacy-build/Dockerfile << 'EOF'
+        FROM quay.io/takinosh/python3.11-buster:latest
+        WORKDIR /app
+        COPY app.py .
+        RUN chmod 644 app.py && chown 1001:0 app.py
+        EXPOSE 8080
+        USER 1001
+        CMD ["python3", "app.py"]
+        EOF
+      changed_when: true
 
     - name: "Ex2 - Create legacy BuildConfig"
       ansible.builtin.shell: |
-        oc delete bc/legacy-python-api \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }} 2>/dev/null || true
-        oc new-build --strategy=docker --binary=true \
+        {{ oc_cmd }} delete bc/legacy-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
+        {{ oc_cmd }} new-build --strategy=docker --binary=true \
           --name=legacy-python-api \
           --to-docker --to="{{ legacy_image }}" \
-          -n {{ acs_lab_ns }} \
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-        oc set build-secret --push bc/legacy-python-api quay-pull-secret \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+          -n {{ acs_lab_ns }}
+        {{ oc_cmd }} set build-secret --push bc/legacy-python-api quay-pull-secret \
+          -n {{ acs_lab_ns }} 2>/dev/null || true
       changed_when: true
 
     - name: "Ex2 - Build and push legacy image"
       ansible.builtin.shell: |
-        oc start-build legacy-python-api \
+        {{ oc_cmd }} start-build legacy-python-api \
           --from-dir=/tmp/acs-legacy-build \
           --follow --wait \
-          -n {{ acs_lab_ns }} \
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+          -n {{ acs_lab_ns }}
       changed_when: true
       timeout: 300
 
     - name: "Ex2 - Deploy legacy application"
-      kubernetes.core.k8s:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        state: present
-        definition: "{{ item }}"
-      loop:
-        - apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: legacy-python-api
-            namespace: "{{ acs_lab_ns }}"
-            labels:
+      ansible.builtin.shell: |
+        cat << EOF | {{ oc_cmd }} apply -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: legacy-python-api
+          namespace: {{ acs_lab_ns }}
+          labels:
+            app: legacy-python-api
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
               app: legacy-python-api
-              tier: legacy
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
+          template:
+            metadata:
+              labels:
                 app: legacy-python-api
-            template:
-              metadata:
-                labels:
-                  app: legacy-python-api
-                  tier: legacy
-              spec:
-                containers:
-                  - name: api
-                    image: "{{ legacy_image }}"
-                    ports:
-                      - containerPort: 8080
-                    livenessProbe:
-                      httpGet:
-                        path: /healthz
-                        port: 8080
-                      initialDelaySeconds: 5
-                    readinessProbe:
-                      httpGet:
-                        path: /healthz
-                        port: 8080
-                      initialDelaySeconds: 3
-        - apiVersion: v1
-          kind: Service
-          metadata:
+            spec:
+              containers:
+              - name: api
+                image: {{ legacy_image }}
+                ports:
+                - containerPort: 8080
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8080
+                  initialDelaySeconds: 5
+                readinessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8080
+                  initialDelaySeconds: 3
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: legacy-python-api
+          namespace: {{ acs_lab_ns }}
+        spec:
+          selector:
+            app: legacy-python-api
+          ports:
+          - port: 8080
+            targetPort: 8080
+        ---
+        apiVersion: route.openshift.io/v1
+        kind: Route
+        metadata:
+          name: legacy-python-api
+          namespace: {{ acs_lab_ns }}
+        spec:
+          to:
+            kind: Service
             name: legacy-python-api
-            namespace: "{{ acs_lab_ns }}"
-          spec:
-            selector:
-              app: legacy-python-api
-            ports:
-              - port: 8080
-                targetPort: 8080
-        - apiVersion: route.openshift.io/v1
-          kind: Route
-          metadata:
-            name: legacy-python-api
-            namespace: "{{ acs_lab_ns }}"
-          spec:
-            to:
-              kind: Service
-              name: legacy-python-api
-            port:
-              targetPort: 8080
-            tls:
-              termination: edge
+          port:
+            targetPort: 8080
+          tls:
+            termination: edge
+        EOF
+      changed_when: true
 
     - name: "Ex2 - Wait for legacy deployment"
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        api_version: apps/v1
-        kind: Deployment
-        name: legacy-python-api
-        namespace: "{{ acs_lab_ns }}"
-      register: r_legacy
-      until: r_legacy.resources[0].status.readyReplicas | default(0) | int >= 1
-      retries: 30
-      delay: 10
+      ansible.builtin.shell: |
+        {{ oc_cmd }} rollout status deployment/legacy-python-api \
+          -n {{ acs_lab_ns }} --timeout=120s
+      changed_when: false
 
     # ── Exercise 4: Build the Immutable Fortress ───────────────────────────
 
     - name: "Ex4 - Write fortress Containerfile"
-      ansible.builtin.copy:
-        dest: /tmp/acs-legacy-build/Dockerfile
-        content: |
-          FROM quay.io/takinosh/python3.11-slim:latest AS builder
-          WORKDIR /build
-          COPY app.py .
-          RUN chmod 644 app.py
+      ansible.builtin.shell: |
+        cat > /tmp/acs-legacy-build/Dockerfile << 'EOF'
+        FROM quay.io/takinosh/python3.11-slim:latest AS builder
+        WORKDIR /build
+        COPY app.py .
+        RUN chmod 644 app.py
 
-          FROM quay.io/hummingbird-hatchling/python:latest
-          COPY --from=builder --chmod=644 /build/app.py /app/app.py
-          WORKDIR /app
-          EXPOSE 8080
-          USER 1001
-          ENTRYPOINT ["python3", "/app/app.py"]
+        FROM quay.io/hummingbird-hatchling/python:latest
+        COPY --from=builder --chmod=644 /build/app.py /app/app.py
+        WORKDIR /app
+        EXPOSE 8080
+        USER 1001
+        ENTRYPOINT ["python3", "/app/app.py"]
+        EOF
+      changed_when: true
 
     - name: "Ex4 - Create fortress BuildConfig"
       ansible.builtin.shell: |
-        oc delete bc/fortress-python-api \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }} 2>/dev/null || true
-        oc new-build --strategy=docker --binary=true \
+        {{ oc_cmd }} delete bc/fortress-python-api -n {{ acs_lab_ns }} 2>/dev/null || true
+        {{ oc_cmd }} new-build --strategy=docker --binary=true \
           --name=fortress-python-api \
           --to-docker --to="{{ fortress_image }}" \
-          -n {{ acs_lab_ns }} \
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
-        oc set build-secret --push bc/fortress-python-api quay-pull-secret \
-          -n {{ acs_lab_ns }} --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+          -n {{ acs_lab_ns }}
+        {{ oc_cmd }} set build-secret --push bc/fortress-python-api quay-pull-secret \
+          -n {{ acs_lab_ns }} 2>/dev/null || true
       changed_when: true
 
     - name: "Ex4 - Build and push fortress image"
       ansible.builtin.shell: |
-        oc start-build fortress-python-api \
+        {{ oc_cmd }} start-build fortress-python-api \
           --from-dir=/tmp/acs-legacy-build \
           --follow --wait \
-          -n {{ acs_lab_ns }} \
-          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+          -n {{ acs_lab_ns }}
       changed_when: true
       timeout: 300
 
     - name: "Ex4/Ex6 - Deploy fortress application"
-      kubernetes.core.k8s:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        state: present
-        definition: "{{ item }}"
-      loop:
-        - apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: fortress-python-api
-            namespace: "{{ acs_lab_ns }}"
-            labels:
+      ansible.builtin.shell: |
+        cat << EOF | {{ oc_cmd }} apply -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: fortress-python-api
+          namespace: {{ acs_lab_ns }}
+          labels:
+            app: fortress-python-api
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
               app: fortress-python-api
-              tier: fortress
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
+          template:
+            metadata:
+              labels:
                 app: fortress-python-api
-            template:
-              metadata:
-                labels:
-                  app: fortress-python-api
-                  tier: fortress
-              spec:
-                containers:
-                  - name: api
-                    image: "{{ fortress_image }}"
-                    ports:
-                      - containerPort: 8080
-                    livenessProbe:
-                      httpGet:
-                        path: /healthz
-                        port: 8080
-                      initialDelaySeconds: 5
-                    readinessProbe:
-                      httpGet:
-                        path: /healthz
-                        port: 8080
-                      initialDelaySeconds: 3
-                    securityContext:
-                      allowPrivilegeEscalation: false
-                      runAsNonRoot: true
-                      capabilities:
-                        drop: ["ALL"]
-        - apiVersion: v1
-          kind: Service
-          metadata:
+            spec:
+              containers:
+              - name: api
+                image: {{ fortress_image }}
+                ports:
+                - containerPort: 8080
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8080
+                  initialDelaySeconds: 5
+                readinessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8080
+                  initialDelaySeconds: 3
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+                  capabilities:
+                    drop: ["ALL"]
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: fortress-python-api
+          namespace: {{ acs_lab_ns }}
+        spec:
+          selector:
+            app: fortress-python-api
+          ports:
+          - port: 8080
+            targetPort: 8080
+        ---
+        apiVersion: route.openshift.io/v1
+        kind: Route
+        metadata:
+          name: fortress-python-api
+          namespace: {{ acs_lab_ns }}
+        spec:
+          to:
+            kind: Service
             name: fortress-python-api
-            namespace: "{{ acs_lab_ns }}"
-          spec:
-            selector:
-              app: fortress-python-api
-            ports:
-              - port: 8080
-                targetPort: 8080
-        - apiVersion: route.openshift.io/v1
-          kind: Route
-          metadata:
-            name: fortress-python-api
-            namespace: "{{ acs_lab_ns }}"
-          spec:
-            to:
-              kind: Service
-              name: fortress-python-api
-            port:
-              targetPort: 8080
-            tls:
-              termination: edge
+          port:
+            targetPort: 8080
+          tls:
+            termination: edge
+        EOF
+      changed_when: true
 
     - name: "Ex6 - Wait for fortress deployment"
-      kubernetes.core.k8s_info:
-        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
-        validate_certs: false
-        api_version: apps/v1
-        kind: Deployment
-        name: fortress-python-api
-        namespace: "{{ acs_lab_ns }}"
-      register: r_fortress
-      until: r_fortress.resources[0].status.readyReplicas | default(0) | int >= 1
-      retries: 30
-      delay: 10
+      ansible.builtin.shell: |
+        {{ oc_cmd }} rollout status deployment/fortress-python-api \
+          -n {{ acs_lab_ns }} --timeout=120s
+      changed_when: false
 
     # ── Exercise 7: Create ACS Enforcement Policies ────────────────────────
 
     - name: "Ex7 - Download and run acs-create-policies.sh"
       ansible.builtin.shell: |
-        curl -sL {{ assets_base }}/acs-create-policies.sh > /tmp/acs-create-policies.sh
+        curl -sL https://raw.githubusercontent.com/rhpds/hummingbird-showroom/main/content/modules/ROOT/assets/attachments/acs-create-policies.sh \
+          > /tmp/acs-create-policies.sh
         export ROX_ENDPOINT="{{ acs_route }}:443"
         export ROX_API_TOKEN="{{ acs_token }}"
+        export ACS_ROUTE="{{ acs_route }}"
         export LAB_NAMESPACE="{{ acs_lab_ns }}"
         export POLICY_SUFFIX="{{ student_user }}"
         bash /tmp/acs-create-policies.sh
