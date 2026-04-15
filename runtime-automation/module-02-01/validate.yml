@@ -97,9 +97,9 @@
           ✅ sample-quarkus Route exists
           ✅ /hello endpoint responds 200
         error_msg: |
-          {{ '✅' if _secret_ok else '❌' }} registry-credentials secret in {{ build_ns }}
-          {{ '✅' if _build_ok else '❌' }} Shipwright Build CR sample-quarkus-app
-          {{ '✅' if _buildrun_ok else '❌' }} BuildRun sample-quarkus-app-run-1 succeeded
-          {{ '✅' if _deploy_ok else '❌' }} sample-quarkus Deployment ready (readyReplicas >= 1)
-          {{ '✅' if _route_ok else '❌' }} sample-quarkus Route exists
-          {{ '✅' if _hello_ok else '❌' }} /hello endpoint returns 200
+          {{ '✅ registry-credentials secret exists' if _secret_ok else '❌ Step incomplete: registry-credentials secret not found in ' + build_ns }}
+          {{ '✅ Shipwright Build CR sample-quarkus-app exists' if _build_ok else '❌ Step incomplete: Shipwright Build CR sample-quarkus-app not found' }}
+          {{ '✅ BuildRun sample-quarkus-app-run-1 succeeded' if _buildrun_ok else '❌ Step incomplete: BuildRun sample-quarkus-app-run-1 not completed or not found' }}
+          {{ '✅ sample-quarkus Deployment ready' if _deploy_ok else '❌ Step incomplete: sample-quarkus Deployment not ready' }}
+          {{ '✅ sample-quarkus Route exists' if _route_ok else '❌ Step incomplete: sample-quarkus Route not found' }}
+          {{ '✅ /hello endpoint responds 200' if _hello_ok else '❌ Step incomplete: /hello endpoint did not return 200' }}
