@@ -1,0 +1,105 @@
+---
+# VALIDATE — Sub-Module 2.1: Building with Hummingbird on OpenShift
+# Extravars: k8s_kubeconfig, student_user, quay_hostname, quay_user
+
+- name: "Sub-Module 2.1 Validation"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    build_ns: "{{ student_user }}-hummingbird-builds"
+
+  tasks:
+
+    - name: "Check registry-credentials secret exists"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: v1
+        kind: Secret
+        name: registry-credentials
+        namespace: "{{ build_ns }}"
+      register: r_secret
+
+    - name: "Check Shipwright Build CR (sample-quarkus-app) exists"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: Build
+        name: sample-quarkus-app
+        namespace: "{{ build_ns }}"
+      register: r_build
+
+    - name: "Check BuildRun (sample-quarkus-app-run-1) succeeded"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: BuildRun
+        name: sample-quarkus-app-run-1
+        namespace: "{{ build_ns }}"
+      register: r_buildrun
+
+    - name: "Check sample-quarkus Deployment ready"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: apps/v1
+        kind: Deployment
+        name: sample-quarkus
+        namespace: "{{ build_ns }}"
+      register: r_deploy
+
+    - name: "Get sample-quarkus Route"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: sample-quarkus
+        namespace: "{{ build_ns }}"
+      register: r_route
+
+    - name: "Test /hello endpoint responds"
+      ansible.builtin.uri:
+        url: "http://{{ r_route.resources[0].spec.host | default('') }}/hello"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+      register: r_hello
+      ignore_errors: true
+      when: r_route.resources | length > 0
+
+    - name: Build results
+      ansible.builtin.set_fact:
+        _secret_ok: "{{ r_secret.resources | length > 0 }}"
+        _build_ok: "{{ r_build.resources | length > 0 }}"
+        _buildrun_ok: >-
+          {{ r_buildrun.resources | length > 0 and
+             (r_buildrun.resources[0].status.conditions | default([]) |
+              selectattr('type', 'equalto', 'Succeeded') |
+              selectattr('status', 'equalto', 'True') | list | length > 0) }}
+        _deploy_ok: >-
+          {{ r_deploy.resources | length > 0 and
+             r_deploy.resources[0].status.readyReplicas | default(0) | int >= 1 }}
+        _route_ok: "{{ r_route.resources | length > 0 }}"
+        _hello_ok: "{{ r_hello.status | default(0) == 200 }}"
+
+    - name: Validate all tasks
+      validation_check:
+        check: "{{ _secret_ok and _build_ok and _buildrun_ok and _deploy_ok and _route_ok and _hello_ok }}"
+        pass_msg: |
+          ✅ registry-credentials secret exists
+          ✅ Shipwright Build CR sample-quarkus-app exists
+          ✅ BuildRun sample-quarkus-app-run-1 succeeded
+          ✅ sample-quarkus Deployment ready
+          ✅ sample-quarkus Route exists
+          ✅ /hello endpoint responds 200
+        error_msg: |
+          {{ '✅' if _secret_ok else '❌' }} registry-credentials secret in {{ build_ns }}
+          {{ '✅' if _build_ok else '❌' }} Shipwright Build CR sample-quarkus-app
+          {{ '✅' if _buildrun_ok else '❌' }} BuildRun sample-quarkus-app-run-1 succeeded
+          {{ '✅' if _deploy_ok else '❌' }} sample-quarkus Deployment ready (readyReplicas >= 1)
+          {{ '✅' if _route_ok else '❌' }} sample-quarkus Route exists
+          {{ '✅' if _hello_ok else '❌' }} /hello endpoint returns 200

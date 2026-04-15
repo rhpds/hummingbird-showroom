@@ -1,0 +1,229 @@
+---
+# SOLVE — Sub-Module 2.1: Building with Hummingbird on OpenShift
+# Covers: registry credentials, Shipwright Build/BuildRun, Deployment, Route
+# Extravars: k8s_kubeconfig, student_user, quay_hostname, quay_user, password
+
+- name: "Sub-Module 2.1 Solve"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    build_ns: "{{ student_user }}-hummingbird-builds"
+    quay_host: "{{ quay_hostname }}"
+    quarkus_image: "{{ quay_hostname }}/{{ quay_user }}/sample-quarkus:latest"
+    repo_url: https://github.com/tosin2013/sample-quarkus-hummingbird.git
+
+  tasks:
+
+    # ── Registry credentials secret ────────────────────────────────────────
+
+    - name: "Create Quay registry credentials secret"
+      ansible.builtin.shell: |
+        oc create secret docker-registry registry-credentials \
+          --docker-server={{ quay_host }} \
+          --docker-username={{ quay_user }} \
+          --docker-password={{ password }} \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }} \
+          --dry-run=client -o yaml | \
+        oc apply --kubeconfig={{ k8s_kubeconfig | default(omit) }} -f -
+      changed_when: true
+      no_log: true
+
+    - name: "Link registry-credentials to pipeline SA"
+      ansible.builtin.shell: |
+        oc secrets link pipeline registry-credentials \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+      changed_when: true
+      ignore_errors: true
+
+    # ── Shipwright Build CR ────────────────────────────────────────────────
+
+    - name: "Create Shipwright Build CR (sample-quarkus-app)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: Build
+          metadata:
+            name: sample-quarkus-app
+            namespace: "{{ build_ns }}"
+          spec:
+            source:
+              type: Git
+              git:
+                url: "{{ repo_url }}"
+                revision: main
+            strategy:
+              name: buildah
+              kind: ClusterBuildStrategy
+            paramValues:
+              - name: dockerfile
+                value: Containerfile
+            output:
+              image: "{{ quarkus_image }}"
+              credentials:
+                name: registry-credentials
+
+    # ── Trigger BuildRun ───────────────────────────────────────────────────
+
+    - name: "Delete existing BuildRun if present"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: absent
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: BuildRun
+          metadata:
+            name: sample-quarkus-app-run-1
+            namespace: "{{ build_ns }}"
+
+    - name: "Trigger BuildRun (sample-quarkus-app-run-1)"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: shipwright.io/v1beta1
+          kind: BuildRun
+          metadata:
+            name: sample-quarkus-app-run-1
+            namespace: "{{ build_ns }}"
+          spec:
+            build:
+              name: sample-quarkus-app
+
+    - name: "Wait for BuildRun to complete"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: shipwright.io/v1beta1
+        kind: BuildRun
+        name: sample-quarkus-app-run-1
+        namespace: "{{ build_ns }}"
+      register: r_buildrun
+      until: >-
+        r_buildrun.resources | length > 0 and
+        (r_buildrun.resources[0].status.conditions | default([]) |
+         selectattr('type', 'equalto', 'Succeeded') |
+         selectattr('status', 'ne', 'Unknown') | list | length > 0)
+      retries: 60
+      delay: 15
+
+    # ── Deploy application ─────────────────────────────────────────────────
+
+    - name: "Link registry-credentials to default SA for pull"
+      ansible.builtin.shell: |
+        oc secrets link default registry-credentials --for=pull \
+          -n {{ build_ns }} \
+          --kubeconfig={{ k8s_kubeconfig | default(omit) }}
+      changed_when: true
+      ignore_errors: true
+
+    - name: "Create sample-quarkus Deployment"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: sample-quarkus
+            namespace: "{{ build_ns }}"
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: sample-quarkus
+            template:
+              metadata:
+                labels:
+                  app: sample-quarkus
+              spec:
+                containers:
+                  - name: app
+                    image: "{{ quarkus_image }}"
+                    ports:
+                      - containerPort: 8080
+                    livenessProbe:
+                      httpGet:
+                        path: /q/health
+                        port: 8080
+                      initialDelaySeconds: 10
+                    readinessProbe:
+                      httpGet:
+                        path: /q/health
+                        port: 8080
+                      initialDelaySeconds: 5
+
+    - name: "Create sample-quarkus Service"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: sample-quarkus
+            namespace: "{{ build_ns }}"
+          spec:
+            selector:
+              app: sample-quarkus
+            ports:
+              - port: 8080
+                targetPort: 8080
+
+    - name: "Expose sample-quarkus Route"
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        state: present
+        definition:
+          apiVersion: route.openshift.io/v1
+          kind: Route
+          metadata:
+            name: sample-quarkus
+            namespace: "{{ build_ns }}"
+          spec:
+            to:
+              kind: Service
+              name: sample-quarkus
+            port:
+              targetPort: 8080
+
+    - name: "Wait for sample-quarkus Deployment to be ready"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: apps/v1
+        kind: Deployment
+        name: sample-quarkus
+        namespace: "{{ build_ns }}"
+      register: r_deploy
+      until: >-
+        r_deploy.resources | length > 0 and
+        r_deploy.resources[0].status.readyReplicas | default(0) | int >= 1
+      retries: 30
+      delay: 10
+
+    - name: "Test /hello endpoint"
+      ansible.builtin.uri:
+        url: "http://{{ r_route.resources[0].spec.host }}/hello"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+      register: r_hello
+      ignore_errors: true
+      vars:
+        r_route: >-
+          {{ lookup('kubernetes.core.k8s',
+             kubeconfig=k8s_kubeconfig | default(omit),
+             api_version='route.openshift.io/v1',
+             kind='Route', resource_name='sample-quarkus',
+             namespace=build_ns) }}

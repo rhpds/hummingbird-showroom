@@ -1,0 +1,206 @@
+---
+# VALIDATE — Sub-Module 2.2: The Immutable Fortress — Zero-CVE with ACS Enforcement
+# Checks: legacy + fortress deployments, routes respond, ACS policies exist
+# Extravars: k8s_kubeconfig, student_user, quay_hostname, quay_user, password
+
+- name: "Sub-Module 2.2 Validation"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    acs_lab_ns: "{{ student_user }}-hummingbird-acs-lab"
+
+  tasks:
+
+    # ── Discover ACS ───────────────────────────────────────────────────────
+
+    - name: "Discover ACS namespace"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: v1
+        kind: Namespace
+      register: r_all_ns
+
+    - name: "Set ACS namespace"
+      ansible.builtin.set_fact:
+        acs_ns: >-
+          {{ r_all_ns.resources | map(attribute='metadata.name') |
+             select('match', '^(stackrox|rhacs-operator|rhacs)$') | list | first | default('') }}
+
+    - name: "Get ACS Central route"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: central
+        namespace: "{{ acs_ns }}"
+      register: r_acs_route
+      when: acs_ns != ''
+
+    - name: "Get ACS admin password"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: v1
+        kind: Secret
+        name: central-htpasswd
+        namespace: "{{ acs_ns }}"
+      register: r_acs_secret
+      no_log: true
+      when: acs_ns != ''
+
+    - name: "Set ACS credentials"
+      ansible.builtin.set_fact:
+        acs_route: "{{ r_acs_route.resources[0].spec.host | default('') }}"
+        acs_password: "{{ r_acs_secret.resources[0].data.password | default('') | b64decode }}"
+        acs_available: "{{ acs_ns != '' and r_acs_route.resources | length > 0 }}"
+      no_log: true
+      when: acs_ns != ''
+
+    - name: "Set ACS unavailable"
+      ansible.builtin.set_fact:
+        acs_available: false
+        acs_route: ""
+        acs_password: ""
+      when: acs_ns == ''
+
+    # ── Check deployments ──────────────────────────────────────────────────
+
+    - name: "Check lab namespace exists"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: v1
+        kind: Namespace
+        name: "{{ acs_lab_ns }}"
+      register: r_ns
+
+    - name: "Check legacy-python-api Deployment ready"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: apps/v1
+        kind: Deployment
+        name: legacy-python-api
+        namespace: "{{ acs_lab_ns }}"
+      register: r_legacy
+
+    - name: "Check fortress-python-api Deployment ready"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: apps/v1
+        kind: Deployment
+        name: fortress-python-api
+        namespace: "{{ acs_lab_ns }}"
+      register: r_fortress
+
+    - name: "Get legacy route"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: legacy-python-api
+        namespace: "{{ acs_lab_ns }}"
+      register: r_legacy_route
+
+    - name: "Get fortress route"
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k8s_kubeconfig | default(omit) }}"
+        validate_certs: false
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: fortress-python-api
+        namespace: "{{ acs_lab_ns }}"
+      register: r_fortress_route
+
+    - name: "Test legacy /api/v1/greeting responds"
+      ansible.builtin.uri:
+        url: "https://{{ r_legacy_route.resources[0].spec.host | default('') }}/api/v1/greeting"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+      register: r_legacy_http
+      ignore_errors: true
+      when: r_legacy_route.resources | length > 0
+
+    - name: "Test fortress /api/v1/greeting responds"
+      ansible.builtin.uri:
+        url: "https://{{ r_fortress_route.resources[0].spec.host | default('') }}/api/v1/greeting"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+      register: r_fortress_http
+      ignore_errors: true
+      when: r_fortress_route.resources | length > 0
+
+    # ── Check ACS policies ─────────────────────────────────────────────────
+
+    - name: "Check ACS policies exist via ACS API"
+      ansible.builtin.uri:
+        url: "https://{{ acs_route }}/v1/policies?query=name%3AZero+Fixable+CVEs+Required+-+{{ student_user }}"
+        method: GET
+        headers:
+          Authorization: "Basic {{ ('admin:' + acs_password) | b64encode }}"
+        validate_certs: false
+        status_code: [200]
+      register: r_policy_cve
+      ignore_errors: true
+      no_log: true
+      when: acs_available | bool
+
+    - name: "Check image scan policy exists via ACS API"
+      ansible.builtin.uri:
+        url: "https://{{ acs_route }}/v1/policies?query=name%3AImage+Scan+Required+-+{{ student_user }}"
+        method: GET
+        headers:
+          Authorization: "Basic {{ ('admin:' + acs_password) | b64encode }}"
+        validate_certs: false
+        status_code: [200]
+      register: r_policy_scan
+      ignore_errors: true
+      no_log: true
+      when: acs_available | bool
+
+    # ── Build results ──────────────────────────────────────────────────────
+
+    - name: Build results
+      ansible.builtin.set_fact:
+        _ns_ok: "{{ r_ns.resources | length > 0 }}"
+        _legacy_ok: >-
+          {{ r_legacy.resources | length > 0 and
+             r_legacy.resources[0].status.readyReplicas | default(0) | int >= 1 }}
+        _fortress_ok: >-
+          {{ r_fortress.resources | length > 0 and
+             r_fortress.resources[0].status.readyReplicas | default(0) | int >= 1 }}
+        _legacy_http_ok: "{{ r_legacy_http.status | default(0) == 200 }}"
+        _fortress_http_ok: "{{ r_fortress_http.status | default(0) == 200 }}"
+        _policy_cve_ok: >-
+          {{ not (acs_available | bool) or
+             (r_policy_cve.json.policies | default([]) | length > 0) }}
+        _policy_scan_ok: >-
+          {{ not (acs_available | bool) or
+             (r_policy_scan.json.policies | default([]) | length > 0) }}
+
+    - name: Validate all tasks
+      validation_check:
+        check: "{{ _ns_ok and _legacy_ok and _fortress_ok and _legacy_http_ok and _fortress_http_ok and _policy_cve_ok and _policy_scan_ok }}"
+        pass_msg: |
+          ✅ Lab namespace {{ acs_lab_ns }} exists
+          ✅ legacy-python-api Deployment ready
+          ✅ fortress-python-api Deployment ready
+          ✅ Legacy /api/v1/greeting responds 200
+          ✅ Fortress /api/v1/greeting responds 200
+          {{ '✅' if _policy_cve_ok else '⚠️ ' }} ACS policy "Zero Fixable CVEs Required - {{ student_user }}"
+          {{ '✅' if _policy_scan_ok else '⚠️ ' }} ACS policy "Image Scan Required - {{ student_user }}"
+        error_msg: |
+          {{ '✅' if _ns_ok else '❌' }} Lab namespace {{ acs_lab_ns }}
+          {{ '✅' if _legacy_ok else '❌' }} legacy-python-api Deployment ready
+          {{ '✅' if _fortress_ok else '❌' }} fortress-python-api Deployment ready
+          {{ '✅' if _legacy_http_ok else '❌' }} Legacy /api/v1/greeting returns 200
+          {{ '✅' if _fortress_http_ok else '❌' }} Fortress /api/v1/greeting returns 200
+          {{ '✅' if _policy_cve_ok else '❌' }} ACS policy "Zero Fixable CVEs Required - {{ student_user }}"
+          {{ '✅' if _policy_scan_ok else '❌' }} ACS policy "Image Scan Required - {{ student_user }}"
