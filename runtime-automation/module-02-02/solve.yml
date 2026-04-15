@@ -18,8 +18,12 @@
 
     - name: "Ex1 - Discover ACS namespace"
       ansible.builtin.shell: |
-        oc get namespaces --no-headers | \
-          grep -E "^(stackrox|rhacs-operator|rhacs) " | awk '{print $1}' | head -1
+        for ns in stackrox rhacs rhacs-operator; do
+          if oc get namespace ${ns} 2>/dev/null | grep -q Active; then
+            echo ${ns}
+            break
+          fi
+        done
       register: r_acs_ns
       changed_when: false
 
