@@ -107,7 +107,7 @@ find . -type f -name "*.json" \
         # Update escaped registry patterns in regex (e.g., "quay\\.io/hummingbird")
         OLD_PATTERN_ESCAPED=$(echo "$OLD_REGISTRY" | sed 's/\./\\\\./g')
         NEW_PATTERN_ESCAPED=$(echo "$NEW_REGISTRY" | sed 's/\./\\\\./g')
-        sed -i "s/$OLD_PATTERN_ESCAPED/$NEW_PATTERN_ESCAPED/g" "$file"
+        sed -i "s#$OLD_PATTERN_ESCAPED#$NEW_PATTERN_ESCAPED#g" "$file"
     fi
 done
 
@@ -119,6 +119,40 @@ if [[ -f "README.adoc" ]]; then
         echo "  - README.adoc"
         sed -i "s/$OLD_ESCAPED/$NEW_ESCAPED/g" README.adoc
     fi
+fi
+
+# 7. Update cosign signing key URL (specific to Red Hat registry migration)
+echo ""
+echo "7. Checking for cosign key URL updates..."
+if [[ "$NEW_REGISTRY" == *"registry.access.redhat.com/hi"* ]]; then
+    OLD_KEY_URL="https://catalog.hummingbird-project.io/cosign.pub"
+    NEW_KEY_URL="https://security.access.redhat.com/data/63405576.txt"
+
+    echo "  Migrating to Red Hat registry - updating cosign public key URL..."
+    echo "  Old key: $OLD_KEY_URL"
+    echo "  New key: $NEW_KEY_URL"
+
+    # Escape URLs for sed
+    OLD_KEY_ESCAPED=$(echo "$OLD_KEY_URL" | sed 's/\//\\\//g' | sed 's/\./\\./g')
+    NEW_KEY_ESCAPED=$(echo "$NEW_KEY_URL" | sed 's/\//\\\//g' | sed 's/\./\\./g')
+
+    # Update module content
+    if [[ -f "content/modules/ROOT/pages/module-01-04-signing.adoc" ]]; then
+        if grep -q "$OLD_KEY_URL" "content/modules/ROOT/pages/module-01-04-signing.adoc"; then
+            echo "  - content/modules/ROOT/pages/module-01-04-signing.adoc"
+            sed -i "s|$OLD_KEY_URL|$NEW_KEY_URL|g" "content/modules/ROOT/pages/module-01-04-signing.adoc"
+        fi
+    fi
+
+    # Update validate script
+    if [[ -f "scripts/validate-module-01-04.sh" ]]; then
+        if grep -q "$OLD_KEY_URL" "scripts/validate-module-01-04.sh"; then
+            echo "  - scripts/validate-module-01-04.sh"
+            sed -i "s|$OLD_KEY_URL|$NEW_KEY_URL|g" "scripts/validate-module-01-04.sh"
+        fi
+    fi
+else
+    echo "  Skipping cosign key update (only applies to Red Hat registry migration)"
 fi
 
 echo ""
