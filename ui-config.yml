@@ -21,4 +21,4 @@ tabs:
 - name: Caddy Web Server
   url: 'https://webserver-user-${GUID}-rhel.${DOMAIN}'
 - name: Hummingbird Images
-  url: 'https://web-app-8bd096.gitlab.io/'
+  url: 'https://images.redhat.com'

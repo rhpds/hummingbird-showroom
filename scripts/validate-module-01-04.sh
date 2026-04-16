@@ -6,7 +6,7 @@ set -e
 # Status to stdout, errors to stderr, internal commands suppressed
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 
 echo "=== Validating Module 01-04: Image Signing & Attestation ==="
 
@@ -269,7 +269,7 @@ echo "✅ Downloaded attestation is valid JSON"
 echo ""
 echo "Verifying Red Hat signed image (openjdk:21-runtime)..."
 RH_VERIFY=$(cosign verify --insecure-ignore-tlog \
-  --key https://catalog.hummingbird-project.io/cosign.pub \
+  --key https://security.access.redhat.com/data/63405576.txt \
   ${HUMMINGBIRD_REGISTRY}/openjdk:21-runtime 2>&1) || {
     echo "⚠️  WARNING: Red Hat image verification failed"
     echo "   This may indicate registry connectivity issues"

@@ -83,19 +83,19 @@ spec:
       case $DETECTED in
         nodejs)
           BUILDER="registry.access.redhat.com/ubi9/nodejs-20:latest"
-          RUNTIME="quay.io/hummingbird-hatchling/nodejs:20"
+          RUNTIME="registry.access.redhat.com/hi/nodejs:20"
           ;;
         python)
           BUILDER="registry.access.redhat.com/ubi9/python-311:latest"
-          RUNTIME="quay.io/hummingbird-hatchling/python:3.11"
+          RUNTIME="registry.access.redhat.com/hi/python:3.11"
           ;;
         java)
-          BUILDER="quay.io/hummingbird-hatchling/openjdk:21-builder"
-          RUNTIME="quay.io/hummingbird-hatchling/openjdk:21-runtime"
+          BUILDER="registry.access.redhat.com/hi/openjdk:21-builder"
+          RUNTIME="registry.access.redhat.com/hi/openjdk:21-runtime"
           ;;
         go)
           BUILDER="registry.access.redhat.com/ubi9/go-toolset:latest"
-          RUNTIME="quay.io/hummingbird-hatchling/core-runtime:2"
+          RUNTIME="registry.access.redhat.com/hi/core-runtime:2"
           ;;
       esac
 
@@ -346,9 +346,9 @@ oc logs $BUILDRUN_POD -n hummingbird-builds-{user} -c step-build-and-push | head
 ----
 [INFO] Building java application
 [INFO] Building image ...
-[1/2] STEP 1/8: FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
+[1/2] STEP 1/8: FROM registry.access.redhat.com/hi/openjdk:21-builder AS builder
 ...
-[2/2] STEP 6/11: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+[2/2] STEP 6/11: FROM registry.access.redhat.com/hi/openjdk:21-runtime
 ...
 ----
 
@@ -505,7 +505,7 @@ spec:
   repositoryDigestMirrors:
   - mirrors:
     - registry.internal.example.com/hummingbird
-    source: quay.io/hummingbird-hatchling
+    source: registry.access.redhat.com/hi
   - mirrors:
     - registry.internal.example.com/ubi9
     source: registry.access.redhat.com/ubi9
@@ -513,7 +513,7 @@ spec:
 
 .*What this does:*
 
-* Redirects pulls from `quay.io/hummingbird-hatchling` to `registry.internal.example.com/hummingbird`
+* Redirects pulls from `registry.access.redhat.com/hi` to `registry.internal.example.com/hummingbird`
 * Redirects pulls from `registry.access.redhat.com/ubi9` to `registry.internal.example.com/ubi9`
 * All cluster nodes (and all pods) automatically use the mirrors
 * Shipwright builds automatically use mirrored images

@@ -75,7 +75,7 @@ cd ~/hummingbird-lab/nodejs-express
 
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 
 # Stage 1: Build with full UBI Node.js (npm, build tools)
 FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
@@ -319,7 +319,7 @@ cd ~/hummingbird-lab/python-gunicorn
 
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 
 # Stage 1: Build with full UBI Python (pip, compilers, headers)
 FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
@@ -440,7 +440,7 @@ cd ~/hummingbird-lab/python-fastapi
 
 cat > Containerfile << 'EOF'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 
 # Stage 1: Build wheels
 FROM ${BUILDER_REGISTRY}/python-311:latest AS builder
@@ -717,7 +717,7 @@ Every Containerfile in this exercise follows the same structure:
 
 ----
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 
 # Stage 1: Full UBI builder image
 FROM ${BUILDER_REGISTRY}/<language-toolchain>:latest AS builder

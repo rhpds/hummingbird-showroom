@@ -381,7 +381,7 @@ Learn how to restructure Hummingbird image layers for optimal pull deduplication
 
 * **Multi-language images**: Build Python, Java, or Go applications with Hummingbird
 * **Air-gap deployment**: Mirror Hummingbird images to internal registries with skopeo
-* **Custom base images**: Explore all available Hummingbird runtimes at `quay.io/hummingbird-hatchling`
+* **Custom base images**: Explore all available Hummingbird runtimes at `registry.access.redhat.com/hi`
 
 === Additional Resources
 

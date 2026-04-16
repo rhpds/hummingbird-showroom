@@ -8,8 +8,8 @@ set -e
 # Note: Container startup timing requires readiness checks for reliable automation
 
 # Container registries
-# HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+# HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 UBI_REGISTRY="registry.access.redhat.com"
 
 

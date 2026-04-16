@@ -1194,7 +1194,7 @@ curl -s -X POST \
   -d "{
     \"message\": \"Add Containerfile\",
     \"content\": \"$(echo -n 'ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 
 FROM ${BUILDER_REGISTRY}/nodejs-20:latest AS builder
 WORKDIR /opt/app-root/src

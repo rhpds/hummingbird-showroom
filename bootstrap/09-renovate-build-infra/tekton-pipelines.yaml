@@ -50,7 +50,7 @@ spec:
       default: "registry.access.redhat.com/ubi9"
     - name: runtime-registry
       type: string
-      default: "quay.io/hummingbird-hatchling"
+      default: "registry.access.redhat.com/hi"
     - name: promote-image
       type: string
       default: ""

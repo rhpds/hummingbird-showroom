@@ -7,7 +7,7 @@ set -e
 # Creates: my-website, my-flasksite:ubi, my-flasksite:hi
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 UBI_REGISTRY="registry.access.redhat.com"
 
 echo "=== Module 01-01 Solve Script ==="

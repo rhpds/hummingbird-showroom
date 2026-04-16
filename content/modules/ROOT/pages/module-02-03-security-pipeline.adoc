@@ -44,7 +44,7 @@ spec:
     default: "Containerfile"
   - name: RUNTIME_IMAGE
     description: "Hummingbird runtime base image"
-    default: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+    default: "registry.access.redhat.com/hi/nodejs-20:latest"
 
   securityContext:
     runAsUser: 0
@@ -175,7 +175,7 @@ spec:
     kind: ClusterBuildStrategy
   paramValues:
   - name: RUNTIME_IMAGE
-    value: "quay.io/hummingbird-hatchling/nodejs-20:latest"
+    value: "registry.access.redhat.com/hi/nodejs-20:latest"
   output:
     image: {quay_hostname}/{quay_user}/secure-nodejs:latest
     credentials:

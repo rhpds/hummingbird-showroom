@@ -7,7 +7,7 @@ set -e
 # Creates: caddy:ssl, curl:local-ca, fips:no, fips:yes images
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 
 echo "=== Module 01-05 Solve Script ==="
 

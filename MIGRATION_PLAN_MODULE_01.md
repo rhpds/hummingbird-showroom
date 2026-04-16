@@ -1,14 +1,14 @@
 # Module 01 Registry Migration
 
-Update Module 01 developer environment content from `quay.io/hummingbird*` to `registry.access.redhat.com/hi`
+Update Module 01 developer environment content from `registry.access.redhat.com/hi*` to `registry.access.redhat.com/hi`
 
 ## Quick Start
 
 Run the update script twice to replace both old registry prefixes:
 
 ```bash
-./scripts/update-registry.sh "quay.io/hummingbird-hatchling" "registry.access.redhat.com/hi"
-./scripts/update-registry.sh "quay.io/hummingbird" "registry.access.redhat.com/hi"
+./scripts/update-registry.sh "registry.access.redhat.com/hi" "registry.access.redhat.com/hi"
+./scripts/update-registry.sh "registry.access.redhat.com/hi" "registry.access.redhat.com/hi"
 ```
 
 All files are updated automatically - no manual edits required.
@@ -24,7 +24,7 @@ All files are updated automatically - no manual edits required.
 
 **Will be updated from:**
 ```yaml
-hummingbird-registry: 'quay.io/hummingbird'
+hummingbird-registry: 'registry.access.redhat.com/hi'
 ```
 
 **To:**
@@ -43,7 +43,7 @@ grep "hummingbird-registry:" content/antora.yml
 
 **Will be updated from:**
 ```yaml
-url: 'https://web-app-8bd096.gitlab.io/'
+url: 'https://images.redhat.com'
 ```
 
 **To:**
@@ -61,7 +61,7 @@ grep -A 1 "Hummingbird Images" ui-config.yml
 
 ## Documentation Files
 
-All files have hardcoded `quay.io/hummingbird*` references in:
+All files have hardcoded `registry.access.redhat.com/hi*` references in:
 - Expected output blocks
 - Containerfile examples
 - Command examples
@@ -78,7 +78,7 @@ All files have hardcoded `quay.io/hummingbird*` references in:
 
 **Verification:**
 ```bash
-grep -r "quay.io/hummingbird" content/modules/ROOT/pages/module-01-*.adoc content/modules/ROOT/pages/appendix-a-rhel-setup.adoc
+grep -r "registry.access.redhat.com/hi" content/modules/ROOT/pages/module-01-*.adoc content/modules/ROOT/pages/appendix-a-rhel-setup.adoc
 # Expected: no matches
 ```
 
@@ -94,7 +94,7 @@ All solve and validate scripts have hardcoded registry references or define HUMM
 
 **Verification:**
 ```bash
-grep -r "quay.io/hummingbird" scripts/solve-module-01-*.sh scripts/validate-module-01-*.sh
+grep -r "registry.access.redhat.com/hi" scripts/solve-module-01-*.sh scripts/validate-module-01-*.sh
 # Expected: no matches
 ```
 
@@ -109,11 +109,11 @@ grep -r "quay.io/hummingbird" scripts/solve-module-01-*.sh scripts/validate-modu
 ## Example Files
 
 ### content/modules/ROOT/examples/setup/quarkus/Containerfile
-Contains FROM statements referencing `quay.io/hummingbird/openjdk` images.
+Contains FROM statements referencing `registry.access.redhat.com/hi/openjdk` images.
 
 **Verification:**
 ```bash
-grep "FROM.*quay.io/hummingbird" content/modules/ROOT/examples/setup/quarkus/Containerfile
+grep "FROM.*registry.access.redhat.com/hi" content/modules/ROOT/examples/setup/quarkus/Containerfile
 # Expected: no matches
 
 podman build -f content/modules/ROOT/examples/setup/quarkus/Containerfile
@@ -133,7 +133,7 @@ When migrating to the Red Hat registry, the cosign public key URL must also be u
 - `scripts/validate-module-01-04.sh`
 
 **Key Change:**
-- Old: `https://catalog.hummingbird-project.io/cosign.pub`
+- Old: `https://security.access.redhat.com/data/63405576.txt`
 - New: `https://security.access.redhat.com/data/63405576.txt`
 
 **Verification:**

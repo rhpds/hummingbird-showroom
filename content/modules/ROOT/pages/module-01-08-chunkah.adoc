@@ -191,7 +191,7 @@ mkdir -p ~/hummingbird-lab/chunkah-demo/src/main/resources
 cat > ~/hummingbird-lab/chunkah-demo/Containerfile << 'CFILE'
 # Stage 1: Build the Quarkus application
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
 
 USER root
@@ -356,7 +356,7 @@ By default chunkah groups files by RPM package. For application code that isn't 
 ----
 cat > ~/hummingbird-lab/chunkah-demo/Containerfile.xattr << 'CFILE'
 ARG BUILDER_REGISTRY=registry.access.redhat.com/ubi9
-ARG RUNTIME_REGISTRY=quay.io/hummingbird-hatchling
+ARG RUNTIME_REGISTRY=registry.access.redhat.com/hi
 FROM ${BUILDER_REGISTRY}/openjdk-21:latest AS builder
 
 USER root

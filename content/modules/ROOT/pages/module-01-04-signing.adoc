@@ -33,11 +33,11 @@ Let's check that `openjdk` image we've been using to create our Quarkus app.
 ----
 cosign verify --insecure-ignore-tlog \
   --output-file hi-openjdk.sig \
-  --key https://catalog.hummingbird-project.io/cosign.pub \
+  --key https://security.access.redhat.com/data/63405576.txt \
   {hummingbird-registry}/openjdk:21-runtime
 ----
 ----
-Verification for quay.io/hummingbird/openjdk:21-runtime --
+Verification for registry.access.redhat.com/hi/openjdk:21-runtime --
 The following checks were performed on each of these signatures:
   - The cosign claims were validated
   - The signatures were verified against the specified public key

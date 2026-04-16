@@ -6,7 +6,7 @@ set -e
 # Status to stdout, errors to stderr, internal commands suppressed
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 
 echo "=== Validating Module 01-03: Vulnerability Scanning & SBOMs ==="
 

@@ -3,7 +3,7 @@
 # ============================================
 # Stage 1: Build stage using builder variant # <1>
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-builder AS builder
+FROM registry.access.redhat.com/hi/openjdk:21-builder AS builder
 
 # Install unzip needed by the Maven wrapper to extract the Maven distribution
 USER root
@@ -25,7 +25,7 @@ RUN ./mvnw package -DskipTests -B
 # ============================================
 # Stage 2: Runtime stage # <1>
 # ============================================
-FROM quay.io/hummingbird/openjdk:21-runtime
+FROM registry.access.redhat.com/hi/openjdk:21-runtime
 
 WORKDIR /app
 

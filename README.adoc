@@ -187,7 +187,7 @@ This edition of the workshop has been developed using:
 * Podman 5.7.1
 * OpenShift Container Platform 4.21
 * Builds for Red Hat OpenShift (Shipwright) 1.1.0
-* Hummingbird runtime images from `quay.io/hummingbird-hatchling`
+* Hummingbird runtime images from `registry.access.redhat.com/hi`
 * udica 0.2.8+
 * chunkah 0.2.0
 * Renovate Bot (self-hosted via Tekton)

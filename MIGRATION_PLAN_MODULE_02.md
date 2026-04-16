@@ -1,6 +1,6 @@
 # Module 02 Registry Migration
 
-Update Module 02 platform engineering content from `quay.io/hummingbird*` to `registry.access.redhat.com/hi`
+Update Module 02 platform engineering content from `registry.access.redhat.com/hi*` to `registry.access.redhat.com/hi`
 
 **Note:** Core configuration (`content/antora.yml`, `ui-config.yml`) is updated in Module 01 plan.
 
@@ -8,7 +8,7 @@ Update Module 02 platform engineering content from `quay.io/hummingbird*` to `re
 
 ## Documentation Files
 
-All files have hardcoded `quay.io/hummingbird*` references in:
+All files have hardcoded `registry.access.redhat.com/hi*` references in:
 - Expected output blocks
 - Pipeline/BuildStrategy YAML examples
 - Renovate config examples
@@ -27,13 +27,13 @@ All files have hardcoded `quay.io/hummingbird*` references in:
 
 **Action:**
 ```bash
-./scripts/update-registry.sh "quay.io/hummingbird-hatchling" "registry.access.redhat.com/hi"
-./scripts/update-registry.sh "quay.io/hummingbird" "registry.access.redhat.com/hi"
+./scripts/update-registry.sh "registry.access.redhat.com/hi" "registry.access.redhat.com/hi"
+./scripts/update-registry.sh "registry.access.redhat.com/hi" "registry.access.redhat.com/hi"
 ```
 
 **Verification:**
 ```bash
-grep -r "quay.io/hummingbird" content/modules/ROOT/pages/module-02-*.adoc content/modules/ROOT/pages/appendix-b-openshift-setup.adoc
+grep -r "registry.access.redhat.com/hi" content/modules/ROOT/pages/module-02-*.adoc content/modules/ROOT/pages/appendix-b-openshift-setup.adoc
 # Expected: no matches
 ```
 
@@ -42,14 +42,14 @@ grep -r "quay.io/hummingbird" content/modules/ROOT/pages/module-02-*.adoc conten
 ## Runtime Automation
 
 ### runtime-automation/module-02-02/solve.yml
-**Line 240:** Containerfile written via heredoc in Ansible task, contains `FROM quay.io/hummingbird-hatchling/python:latest`
+**Line 240:** Containerfile written via heredoc in Ansible task, contains `FROM registry.access.redhat.com/hi/python:latest`
 
 **Action:**
 Same as documentation (already covered by update-registry.sh commands above)
 
 **Verification:**
 ```bash
-grep "quay.io/hummingbird" runtime-automation/module-02-02/solve.yml
+grep "registry.access.redhat.com/hi" runtime-automation/module-02-02/solve.yml
 # Expected: no matches
 ```
 
@@ -63,7 +63,7 @@ grep "quay.io/hummingbird" runtime-automation/module-02-02/solve.yml
 **Action:**
 Same as documentation (already covered by update-registry.sh commands above)
 
-**Note:** The script handles both plain strings (`quay.io/hummingbird-hatchling`) and escaped regex patterns (`quay\\.io/hummingbird-hatchling`)
+**Note:** The script handles both plain strings (`registry.access.redhat.com/hi`) and escaped regex patterns (`quay\\.io/hummingbird-hatchling`)
 
 **Verification:**
 ```bash

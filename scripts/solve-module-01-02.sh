@@ -7,7 +7,7 @@ set -e
 # Creates: hummingbird-demo:v1
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 
 echo "=== Module 01-02 Solve Script ==="
 
