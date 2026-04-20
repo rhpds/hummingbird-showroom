@@ -41,3 +41,4 @@ yarn.lock
 module-02-08-trusted-libraries.adoc
 workshop-users-access.txt
 bootstrap-setup-all.pid
+scripts/reset-lab.sh

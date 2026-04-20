@@ -1,5 +1,14 @@
 #! /bin/bash
 # dnf install -y container-tools java-21-openjdk-devel python3-pip vim-enhanced cloud-init git-all
+
+retry() {
+  local max=5 delay=15 attempt=1
+  until "$@"; do
+    (( attempt++ > max )) && return 1
+    sleep $(( delay * attempt ))
+  done
+}
+
 dnf install -y nano emacs-nw
 
 # GitHub repository references
@@ -11,7 +20,7 @@ GITHUB_BASE_URL="https://raw.githubusercontent.com/${GITHUB_ORG}/${GITHUB_REPO}/
 # Clone repository to get template and script files
 TEMP_REPO="/tmp/hummingbird-setup-$$"
 echo "=== Cloning repository for setup files ==="
-git clone --depth 1 --branch ${GITHUB_BRANCH} \
+retry git clone --depth 1 --branch ${GITHUB_BRANCH} \
   https://github.com/${GITHUB_ORG}/${GITHUB_REPO}.git \
   ${TEMP_REPO}
 
@@ -27,8 +36,8 @@ SCRIPT_FILES="${TEMP_REPO}/scripts"
 
 # Download Flask packages locally
 mkdir -p /var/pypi-cache
-pip download  --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
-pip download  --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/
+retry pip download --python-version=3.14 --only-binary=:all: flask -d /var/pypi-cache/
+retry pip download --python-version=3.12 --only-binary=:all: flask -d /var/pypi-cache/
 
 cp ${SETUP_FILES}/systemd/pypiserver.container /etc/containers/systemd/
 systemctl daemon-reload
@@ -36,7 +45,8 @@ systemctl start pypiserver
 
 # Install cosign from GitHub releases
 COSIGN_VERSION=v2.6.3
-curl -LO https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
+retry curl --connect-timeout 30 --max-time 120 -LO \
+  https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
 sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
 rm cosign-linux-amd64
 
@@ -45,22 +55,31 @@ rm cosign-linux-amd64
 
 # Install syft
 SYFT_VERSION=v1.42.4
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin ${SYFT_VERSION}
+retry curl --connect-timeout 30 --max-time 120 -sSfL -o /tmp/install-syft.sh \
+  https://raw.githubusercontent.com/anchore/syft/main/install.sh
+retry bash /tmp/install-syft.sh -b /usr/local/bin ${SYFT_VERSION}
+rm /tmp/install-syft.sh
 
 # Verify installation
 /usr/local/bin/syft version
 
 # Install grype
 GRYPE_VERSION=v0.111.0
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin ${GRYPE_VERSION}
+retry curl --connect-timeout 30 --max-time 120 -sSfL -o /tmp/install-grype.sh \
+  https://raw.githubusercontent.com/anchore/grype/main/install.sh
+retry bash /tmp/install-grype.sh -b /usr/local/bin ${GRYPE_VERSION}
+rm /tmp/install-grype.sh
 
 # Verify installation
 /usr/local/bin/grype version
 /usr/local/bin/grype db update
 
+retry curl --connect-timeout 30 --max-time 120 -Ls -o /tmp/jbang-install.sh https://sh.jbang.dev
+chmod +x /tmp/jbang-install.sh
+
 cat > /tmp/quarkus.sh <<'EOF'
-curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
-curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force quarkus@quarkusio
+/tmp/jbang-install.sh trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
+/tmp/jbang-install.sh app install --fresh --force quarkus@quarkusio
 export PATH="$HOME/.jbang/bin:$PATH"
 if ! grep -q '.jbang/bin' ~/.bashrc 2>/dev/null; then
     echo 'export PATH="$HOME/.jbang/bin:$PATH"' >> ~/.bashrc
@@ -68,16 +87,20 @@ fi
 
 EOF
 chmod +x /tmp/quarkus.sh
-su -l rhel -c /tmp/quarkus.sh
-rm /tmp/quarkus.sh
+retry su -l rhel -c /tmp/quarkus.sh
+rm /tmp/jbang-install.sh /tmp/quarkus.sh
 
 mkdir -p /home/rhel/webserver /home/rhel/flask /home/rhel/scanning /home/rhel/fips
 cp ${SCRIPT_FILES}/test-fips.py /home/rhel/fips/
 
 echo "=== Step 5: Scaffolding Quarkus project ==="
-su -l rhel -c "quarkus create app com.example:sample-app \
+quarkus_create() {
+  rm -rf /home/rhel/sample-app
+  su -l rhel -c "quarkus create app com.example:sample-app \
     --extension='rest,rest-jackson' \
     --no-code"
+}
+retry quarkus_create
 
 echo "=== Updating .dockerignore ==="
 cp ${SETUP_FILES}/quarkus/.dockerignore /home/rhel/sample-app/
