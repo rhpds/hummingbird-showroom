@@ -7,7 +7,7 @@ set -e
 # Creates: hummingbird-demo:v1 (if missing), SBOM, cosign keys, signed image
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 DOCKER_REGISTRY="docker.io"
 
 # Quay registry (injected by showroom platform)

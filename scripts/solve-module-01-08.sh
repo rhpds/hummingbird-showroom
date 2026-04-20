@@ -7,7 +7,7 @@ set -e
 # Creates: hummingbird-demo:v1 (if missing), chunkah-demo images, shell helpers
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird-hatchling"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 BUILDER_REGISTRY="registry.access.redhat.com/ubi9"
 
 echo "=== Module 01-08 Solve Script ==="

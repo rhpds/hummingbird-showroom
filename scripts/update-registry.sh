@@ -91,6 +91,26 @@ echo "5. Updating YAML files..."
 update_files "*.yml" "YAML files"
 update_files "*.yaml" "YAML files"
 
+# 5a. Update JSON files
+echo ""
+echo "5a. Updating JSON files..."
+find . -type f -name "*.json" \
+    -not -path "./.git/*" \
+    -not -path "./node_modules/*" \
+    -not -path "./package-lock.json" | while read -r file; do
+    if grep -q "$OLD_REGISTRY" "$file" 2>/dev/null; then
+        echo "  - $file"
+
+        # Update plain registry references (e.g., "quay.io/hummingbird")
+        sed -i "s/$OLD_ESCAPED/$NEW_ESCAPED/g" "$file"
+
+        # Update escaped registry patterns in regex (e.g., "quay\\.io/hummingbird")
+        OLD_PATTERN_ESCAPED=$(echo "$OLD_REGISTRY" | sed 's/\./\\\\./g')
+        NEW_PATTERN_ESCAPED=$(echo "$NEW_REGISTRY" | sed 's/\./\\\\./g')
+        sed -i "s#$OLD_PATTERN_ESCAPED#$NEW_PATTERN_ESCAPED#g" "$file"
+    fi
+done
+
 # 6. Update README
 echo ""
 echo "6. Updating README..."
@@ -101,6 +121,40 @@ if [[ -f "README.adoc" ]]; then
     fi
 fi
 
+# 7. Update cosign signing key URL (specific to Red Hat registry migration)
+echo ""
+echo "7. Checking for cosign key URL updates..."
+if [[ "$NEW_REGISTRY" == *"registry.access.redhat.com/hi"* ]]; then
+    OLD_KEY_URL="https://catalog.hummingbird-project.io/cosign.pub"
+    NEW_KEY_URL="https://security.access.redhat.com/data/63405576.txt"
+
+    echo "  Migrating to Red Hat registry - updating cosign public key URL..."
+    echo "  Old key: $OLD_KEY_URL"
+    echo "  New key: $NEW_KEY_URL"
+
+    # Escape URLs for sed
+    OLD_KEY_ESCAPED=$(echo "$OLD_KEY_URL" | sed 's/\//\\\//g' | sed 's/\./\\./g')
+    NEW_KEY_ESCAPED=$(echo "$NEW_KEY_URL" | sed 's/\//\\\//g' | sed 's/\./\\./g')
+
+    # Update module content
+    if [[ -f "content/modules/ROOT/pages/module-01-04-signing.adoc" ]]; then
+        if grep -q "$OLD_KEY_URL" "content/modules/ROOT/pages/module-01-04-signing.adoc"; then
+            echo "  - content/modules/ROOT/pages/module-01-04-signing.adoc"
+            sed -i "s|$OLD_KEY_URL|$NEW_KEY_URL|g" "content/modules/ROOT/pages/module-01-04-signing.adoc"
+        fi
+    fi
+
+    # Update validate script
+    if [[ -f "scripts/validate-module-01-04.sh" ]]; then
+        if grep -q "$OLD_KEY_URL" "scripts/validate-module-01-04.sh"; then
+            echo "  - scripts/validate-module-01-04.sh"
+            sed -i "s|$OLD_KEY_URL|$NEW_KEY_URL|g" "scripts/validate-module-01-04.sh"
+        fi
+    fi
+else
+    echo "  Skipping cosign key update (only applies to Red Hat registry migration)"
+fi
+
 echo ""
 echo "=========================================="
 echo "Update complete!"
@@ -108,6 +162,19 @@ echo "=========================================="
 echo ""
 echo "Summary of changes:"
 git diff --stat 2>/dev/null || echo "(Git not available or no changes detected)"
+echo ""
+
+# Verify JSON files were updated
+echo "Checking JSON files..."
+if [[ -f "renovate.json" ]]; then
+    RENOVATE_REFS=$(grep -c "$OLD_REGISTRY" renovate.json 2>/dev/null || true)
+    if [[ $RENOVATE_REFS -gt 0 ]]; then
+        echo "⚠ WARNING: renovate.json still contains $RENOVATE_REFS reference(s) to $OLD_REGISTRY"
+    else
+        echo "✓ renovate.json fully updated"
+    fi
+fi
+
 echo ""
 echo "Next steps:"
 echo "1. Review changes: git diff"

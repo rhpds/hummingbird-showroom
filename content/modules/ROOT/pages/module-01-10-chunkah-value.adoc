@@ -40,8 +40,8 @@ Ensure you have access to the Hummingbird registry:
 
 [source,bash,role=execute]
 ----
-podman pull quay.io/hummingbird-hatchling/nodejs:20
-podman pull quay.io/hummingbird-hatchling/python:3.11
+podman pull registry.access.redhat.com/hi/nodejs:20
+podman pull registry.access.redhat.com/hi/python:3.11
 ----
 
 [NOTE]
@@ -58,7 +58,7 @@ This is the simplest demonstration. Pull a raw Hummingbird base image -- no appl
 
 [source,bash,role=execute]
 ----
-IMG="quay.io/hummingbird-hatchling/nodejs:20"
+IMG="registry.access.redhat.com/hi/nodejs:20"
 
 echo "======================================================"
 echo " BEFORE chunkah"
@@ -141,7 +141,7 @@ This is the core argument for chunkah. When Hummingbird ships a security rebuild
 mkdir -p /tmp/chunkah-cve-demo
 
 cat > /tmp/chunkah-cve-demo/Containerfile << 'EOF'
-ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs:20
+ARG RUNTIME=registry.access.redhat.com/hi/nodejs:20
 FROM $RUNTIME
 
 WORKDIR /app
@@ -168,7 +168,7 @@ EOF
 buildah build \
   --squash \
   --format oci \
-  --build-arg RUNTIME=quay.io/hummingbird-hatchling/nodejs:20 \
+  --build-arg RUNTIME=registry.access.redhat.com/hi/nodejs:20 \
   --tag localhost/cve-demo:v1-standard \
   --file /tmp/chunkah-cve-demo/Containerfile \
   /tmp/chunkah-cve-demo
@@ -280,7 +280,7 @@ EOF
 ----
 cat > /tmp/chunkah-nodeapp/Containerfile.chunkah-demo << 'CFILE'
 ARG BUILDER=registry.access.redhat.com/ubi9/nodejs-20:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/nodejs:20
+ARG RUNTIME=registry.access.redhat.com/hi/nodejs:20
 
 # Stage 1: Build dependencies and app code
 FROM $BUILDER AS builder
@@ -299,7 +299,7 @@ COPY --from=builder --chown=1001:1001 /app/node_modules ./node_modules/
 COPY --from=builder --chown=1001:1001 /app/src ./src/
 
 LABEL org.opencontainers.image.title="hummingbird-chunkah-demo"
-LABEL com.example.base="quay.io/hummingbird-hatchling/nodejs"
+LABEL com.example.base="registry.access.redhat.com/hi/nodejs"
 
 USER 1001
 EXPOSE 3000
@@ -461,7 +461,7 @@ EOF
 
 cat > /tmp/chunkah-python/Containerfile.python-chunkah << 'CFILE'
 ARG BUILDER=registry.access.redhat.com/ubi9/python-311:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/python:3.11
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.11
 
 # Stage 1: Build dependencies
 FROM $BUILDER AS builder

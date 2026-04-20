@@ -7,7 +7,7 @@ set -e
 # Creates: hummingbird-demo:v1 (if missing), device_hummingbird.cil policy, iterate-policy.sh
 
 # Container registries
-HUMMINGBIRD_REGISTRY="quay.io/hummingbird"
+HUMMINGBIRD_REGISTRY="registry.access.redhat.com/hi"
 
 echo "=== Module 01-07 Solve Script ==="
 

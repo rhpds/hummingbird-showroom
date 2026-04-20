@@ -169,7 +169,7 @@ build.shipwright.io/sample-quarkus-app created
 
 * **Source**: Git repository containing a Quarkus REST application with a multi-stage Containerfile
 * **Strategy**: Pre-installed `buildah` ClusterBuildStrategy
-* **Containerfile**: Multi-stage build using `quay.io/hummingbird-hatchling/openjdk:21-builder` (Stage 1) and `quay.io/hummingbird-hatchling/openjdk:21-runtime` (Stage 2)
+* **Containerfile**: Multi-stage build using `registry.access.redhat.com/hi/openjdk:21-builder` (Stage 1) and `registry.access.redhat.com/hi/openjdk:21-runtime` (Stage 2)
 * **Output**: Push to `{quay_hostname}/{quay_user}/sample-quarkus:latest`
 * **Credentials**: Use `registry-credentials` secret for registry push
 
@@ -286,14 +286,14 @@ oc logs $BUILDRUN_POD -n hummingbird-builds-{user} --all-containers
 .*Expected log excerpts:*
 ----
 [INFO] Building image ...
-STEP 1/11: FROM quay.io/hummingbird-hatchling/openjdk:21-builder AS builder
+STEP 1/11: FROM registry.access.redhat.com/hi/openjdk:21-builder AS builder
 ...
 STEP 4/11: RUN ./mvnw package -DskipTests -Dmaven.repo.local=/build/.m2
 ...
 [INFO] [io.quarkus.deployment.QuarkusAugmentor] Quarkus augmentation completed in ...ms
 [INFO] BUILD SUCCESS
 ...
-STEP 6/11: FROM quay.io/hummingbird-hatchling/openjdk:21-runtime
+STEP 6/11: FROM registry.access.redhat.com/hi/openjdk:21-runtime
 ...
 STEP 10/11: USER 65532
 STEP 11/11: ENTRYPOINT ["java", "-jar", "quarkus-run.jar"]
@@ -502,7 +502,7 @@ Look at your container image and check the results of the Quay Security Scanner 
 ====
 **Hummingbird Runtime Advantages:**
 
-The image uses `quay.io/hummingbird-hatchling/openjdk:21-runtime` -- a distroless image containing only the JRE and essential libraries. Compared to a full `registry.access.redhat.com/ubi9/openjdk-21` image:
+The image uses `registry.access.redhat.com/hi/openjdk:21-runtime` -- a distroless image containing only the JRE and essential libraries. Compared to a full `registry.access.redhat.com/ubi9/openjdk-21` image:
 
 * **Dramatically fewer packages** -- no shell, no package manager, no build tools
 * **Near-zero CVE baseline** -- fewer packages means fewer vulnerabilities

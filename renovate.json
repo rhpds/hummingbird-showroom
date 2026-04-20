@@ -14,7 +14,7 @@
       "customType": "regex",
       "fileMatch": ["(^|/)Containerfile$", "(^|/)Dockerfile$"],
       "matchStrings": [
-        "FROM\\s+(?<depName>quay\\.io/hummingbird-hatchling/[^:@\\s]+):(?<currentValue>[^\\s@]+)"
+        "FROM\\s+(?<depName>registry\\.access\\.redhat\\.com/hi/[^:@\\s]+):(?<currentValue>[^\\s@]+)"
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"
@@ -63,7 +63,7 @@
   "packageRules": [
     {
       "description": "Group all Hummingbird image updates into one PR",
-      "matchPackagePatterns": ["quay.io/hummingbird-hatchling/.*"],
+      "matchPackagePatterns": ["registry.access.redhat.com/hi/.*"],
       "groupName": "Hummingbird runtime images",
       "automerge": false,
       "labels": ["renovate", "hummingbird", "security"]

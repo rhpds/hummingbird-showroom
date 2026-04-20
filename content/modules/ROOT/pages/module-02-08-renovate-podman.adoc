@@ -164,7 +164,7 @@ cat > renovate.json << 'RENOVATE_EOF'
   "packageRules": [
     {
       "description": "Group all Hummingbird image updates into one PR",
-      "matchPackagePatterns": ["quay.io/hummingbird-hatchling/.*"],
+      "matchPackagePatterns": ["registry.access.redhat.com/hi/.*"],
       "groupName": "Hummingbird runtime images",
       "automerge": false,
       "labels": ["renovate", "hummingbird", "security"]
@@ -953,7 +953,7 @@ spec:
           - name: builder-registry
             value: "registry.access.redhat.com/ubi9"
           - name: runtime-registry
-            value: "quay.io/hummingbird-hatchling"
+            value: "registry.access.redhat.com/hi"
           - name: promote-image
             value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)-promoted"
         workspaces:
@@ -1012,7 +1012,7 @@ spec:
           - name: builder-registry
             value: "registry.access.redhat.com/ubi9"
           - name: runtime-registry
-            value: "quay.io/hummingbird-hatchling"
+            value: "registry.access.redhat.com/hi"
           - name: promote-image
             value: "${QUAY_ROUTE}/workshopuser/\$(tt.params.app-name)-promoted"
         workspaces:
@@ -1283,7 +1283,7 @@ Before deploying to a cluster, you can simulate the entire Renovate -> build -> 
 ----
 CURRENT_TAG=$(grep 'hummingbird-hatchling' Containerfile | head -1 | grep -oP ':\K[^\s]+')
 LATEST_DIGEST=$(skopeo inspect \
-  docker://quay.io/hummingbird-hatchling/nodejs-20:latest \
+  docker://registry.access.redhat.com/hi/nodejs-20:latest \
   | jq -r '.Digest')
 
 echo "Containerfile tag:  $CURRENT_TAG"

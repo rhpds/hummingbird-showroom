@@ -142,7 +142,7 @@ This directory also contains automation scripts for managing container registry 
 
 ## Overview
 
-The project references container images from a registry (currently `quay.io/hummingbird-hatchling`). These scripts help you:
+The project references container images from a registry (currently `registry.access.redhat.com/hi`). These scripts help you:
 1. Update all registry references consistently
 2. Verify where registry references exist
 3. Migrate to a new registry when needed
@@ -162,7 +162,7 @@ Updates all registry references throughout the project in a single operation.
 ```bash
 # Migrate from current registry to a new one
 ./scripts/update-registry.sh \
-  "quay.io/hummingbird-hatchling" \
+  "registry.access.redhat.com/hi" \
   "registry.example.com/hummingbird"
 ```
 
@@ -203,7 +203,7 @@ The project uses a **single source of truth** approach:
    ```yaml
    asciidoc:
      attributes:
-       hummingbird-registry: 'quay.io/hummingbird-hatchling'
+       hummingbird-registry: 'registry.access.redhat.com/hi'
    ```
 
 2. **AsciiDoc documents** can reference it using:
@@ -223,7 +223,7 @@ When changing registries:
 
 # 2. Update to new registry
 ./scripts/update-registry.sh \
-  "quay.io/hummingbird-hatchling" \
+  "registry.access.redhat.com/hi" \
   "registry.internal.example.com/hummingbird"
 
 # 3. Review changes

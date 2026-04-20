@@ -717,7 +717,7 @@ COPY app.py .
 RUN chmod 644 app.py
 
 # Stage 2: Runtime -- copy only what the app needs into Hummingbird
-FROM quay.io/hummingbird-hatchling/python:latest
+FROM registry.access.redhat.com/hi/python:latest
 COPY --from=builder --chmod=644 /build/app.py /app/app.py
 WORKDIR /app
 EXPOSE 8080
@@ -914,7 +914,7 @@ cosign tree {hummingbird-registry}/python:latest
 
 .*Expected output:*
 ----
-📦 Supply Chain Security Related artifacts for an image: quay.io/hummingbird-hatchling/python:latest
+📦 Supply Chain Security Related artifacts for an image: registry.access.redhat.com/hi/python:latest
 └── 💾 Attestations for an image tag: ...python:sha256-<digest>.att
    └── 🍒 sha256:<attestation-digest>
 └── 🔐 Signatures for an image tag: ...python:sha256-<digest>.sig

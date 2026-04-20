@@ -237,7 +237,7 @@
         COPY app.py .
         RUN chmod 644 app.py
 
-        FROM quay.io/hummingbird-hatchling/python:latest
+        FROM registry.access.redhat.com/hi/python:latest
         COPY --from=builder --chmod=644 /build/app.py /app/app.py
         WORKDIR /app
         EXPOSE 8080

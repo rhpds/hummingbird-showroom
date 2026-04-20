@@ -205,7 +205,7 @@ cd ~/hummingbird-lab/tomcat-rpm
 
 cat > Containerfile.tomcat-rpm << 'EOF'
 ARG BUILDER=registry.access.redhat.com/ubi9/openjdk-21:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/openjdk:21-runtime
+ARG RUNTIME=registry.access.redhat.com/hi/openjdk:21-runtime
 
 # ── Stage 1: Build the application WAR ────────────────────────────────────────
 FROM $BUILDER AS app-builder
@@ -251,7 +251,7 @@ FROM $RUNTIME
 COPY --from=assembler --chown=1001:1001 /opt/tomcat /opt/tomcat
 
 LABEL org.opencontainers.image.title="my-tomcat-app"
-LABEL org.opencontainers.image.base.name="quay.io/hummingbird-hatchling/openjdk:21-runtime"
+LABEL org.opencontainers.image.base.name="registry.access.redhat.com/hi/openjdk:21-runtime"
 
 USER 1001:1001
 EXPOSE 8080
@@ -391,7 +391,7 @@ cat > Containerfile.tomcat-upstream << 'EOF'
 ARG TOMCAT_VERSION=9.0
 ARG TOMCAT_IMAGE=docker.io/library/tomcat:${TOMCAT_VERSION}-jre21
 ARG BUILDER=registry.access.redhat.com/ubi9/openjdk-21:latest
-ARG RUNTIME=quay.io/hummingbird-hatchling/openjdk:21-runtime
+ARG RUNTIME=registry.access.redhat.com/hi/openjdk:21-runtime
 
 # ── Stage 1: Extract Tomcat from official image ──────────────────────────────
 FROM $TOMCAT_IMAGE AS tomcat-source

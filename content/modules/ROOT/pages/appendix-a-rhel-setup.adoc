@@ -152,7 +152,7 @@ insecure = false
 blocked = false
 
 [[registry]]
-location = "quay.io/hummingbird-hatchling"
+location = "registry.access.redhat.com/hi"
 insecure = false
 blocked = false
 EOF
@@ -513,7 +513,7 @@ blocked = false
 
 # Hummingbird-specific namespace
 [[registry]]
-location = "quay.io/hummingbird-hatchling"
+location = "registry.access.redhat.com/hi"
 insecure = false
 blocked = false
 EOF
@@ -541,7 +541,7 @@ podman pull {hummingbird-registry}/openjdk:21-runtime
 
 .*Expected output:*
 ----
-Trying to pull quay.io/hummingbird-hatchling/openjdk:21-runtime...
+Trying to pull registry.access.redhat.com/hi/openjdk:21-runtime...
 Getting image source signatures
 Copying blob sha256:abc123...
 Copying blob sha256:def456...
@@ -559,7 +559,7 @@ podman images | grep hummingbird
 
 .*Expected output:*
 ----
-quay.io/hummingbird-hatchling/openjdk  21-runtime  abc123def456  2 days ago  253 MB
+registry.access.redhat.com/hi/openjdk  21-runtime  abc123def456  2 days ago  253 MB
 ----
 
 ==== Step 12: Test UBI Registry Access

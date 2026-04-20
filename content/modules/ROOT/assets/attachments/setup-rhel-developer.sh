@@ -79,7 +79,7 @@ insecure = false
 blocked = false
 
 [[registry]]
-location = "quay.io/hummingbird-hatchling"
+location = "registry.access.redhat.com/hi"
 insecure = false
 blocked = false
 EOF
