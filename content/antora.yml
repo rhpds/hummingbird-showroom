@@ -2,6 +2,7 @@
 name: modules
 title: "LB2865: Container Hardening: Zero to Hero with Red Hat Hardened Images"
 version: master
+start_page: index.adoc
 nav:
 - modules/ROOT/nav.adoc
 
@@ -10,6 +11,7 @@ asciidoc:
     # page-toclevels: -1               # <- This will remove the TOC that appear in the right sidebar at wider resolutions
     page-pagination: true
     workshop-title: "LB2865: Container Hardening: Zero to Hero with Red Hat Hardened Images"
+    lab_name: "LB2865: Container Hardening: Zero to Hero"
     workshop-duration: '90 minutes'
 
     weblab-duration: '15 minutes'

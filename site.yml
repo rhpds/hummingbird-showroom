@@ -3,6 +3,9 @@ site:
   title: 'LB2865 Container Hardening: Zero to Hero'
   start_page: modules::index.adoc
 
+runtime:
+  fetch: true
+
 content:
   sources:
   - url: .

@@ -497,7 +497,7 @@ As of chunkah v0.2.0:
 === Troubleshooting
 
 **Issue: TaskRun fails with permission errors**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get taskrun chunkah-split-nodejs -o yaml | grep -A5 status
 
@@ -505,7 +505,7 @@ oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user
 ----
 
 **Issue: chunkah image pull fails in cluster**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get pods -n hummingbird-builds-{user}
 
@@ -513,7 +513,7 @@ podman pull quay.io/jlebon/chunkah:v0.2.0
 ----
 
 **Issue: zstd:chunked push fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 podman --version
 

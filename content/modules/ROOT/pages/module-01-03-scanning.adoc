@@ -301,7 +301,7 @@ In xref:module-01-04-signing.adoc[Sub-Module 1.4: Image Signing & Attestation], 
 === Troubleshooting
 
 **Issue: Grype database download fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Manually update database
 grype db update
@@ -311,7 +311,7 @@ grype db status
 ----
 
 **Issue: SBOM generation incomplete**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Try different output formats
 syft hummingbird-demo:v1 -o json=sbom-detailed.json
@@ -321,7 +321,7 @@ podman images | grep hummingbird-demo
 ----
 
 **Issue: Podman socket not available**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Restart podman socket
 systemctl --user restart podman.socket

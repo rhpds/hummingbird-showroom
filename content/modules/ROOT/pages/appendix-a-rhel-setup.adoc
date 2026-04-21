@@ -282,7 +282,7 @@ Complete!
 ====
 If a kernel update is installed, you may need to reboot your system before proceeding. Check with:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo needs-restarting -r
 ----
@@ -587,7 +587,7 @@ Storing signatures
 * **User config**: `~/.config/containers/registries.conf` overrides system config for your user
 
 To view your active configuration:
-[source,bash]
+[source,bash,role=execute]
 ----
 podman info --format json | jq -r '.registries'
 ----
@@ -723,7 +723,7 @@ flatpak install --user -y flathub io.podman_desktop.PodmanDesktop
 ====
 `flatpak` is included in the RHEL 9 AppStream repository. If it is not already installed:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo dnf install -y flatpak
 ----
@@ -789,7 +789,7 @@ If Podman Desktop doesn't detect your Podman socket, check that `systemctl --use
 
 Hummingbird images intentionally omit shells (`/bin/sh`, `/bin/bash`) to minimize attack surface. You cannot `exec` into them interactively. To debug a running Hummingbird container, use the sidecar pattern:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 podman run -it --rm \
   --pid=container:<container-name> \
@@ -808,7 +808,7 @@ This gives you a shell with access to the target container's PID and network nam
 === Troubleshooting
 
 **Issue: Podman socket not starting**
-[source,bash]
+[source,bash,role=execute]
 ----
 systemctl --user restart podman.socket
 systemctl --user status podman.socket
@@ -816,14 +816,14 @@ journalctl --user -u podman.socket -n 50
 ----
 
 **Issue: Registry authentication failures**
-[source,bash]
+[source,bash,role=execute]
 ----
 podman login quay.io
 podman login registry.access.redhat.com
 ----
 
 **Issue: Permission errors with rootless Podman**
-[source,bash]
+[source,bash,role=execute]
 ----
 grep "^$(whoami):" /etc/subuid /etc/subgid
 
@@ -834,7 +834,7 @@ loginctl terminate-user $(whoami)
 **Issue: Podman Desktop not detecting Podman**
 
 Ensure the Podman socket is active and listening:
-[source,bash]
+[source,bash,role=execute]
 ----
 systemctl --user status podman.socket
 ls -la /run/user/$(id -u)/podman/podman.sock
@@ -843,14 +843,14 @@ ls -la /run/user/$(id -u)/podman/podman.sock
 **Issue: Quarkus CLI not found after installation**
 
 Ensure JBang's bin directory is on your PATH:
-[source,bash]
+[source,bash,role=execute]
 ----
 export PATH="$HOME/.jbang/bin:$PATH"
 quarkus --version
 ----
 
 If JBang itself isn't installed, re-run the installation:
-[source,bash]
+[source,bash,role=execute]
 ----
 curl -Ls https://sh.jbang.dev | bash -s - trust add https://repo1.maven.org/maven2/io/quarkus/quarkus-cli/
 curl -Ls https://sh.jbang.dev | bash -s - app install --fresh --force quarkus@quarkusio

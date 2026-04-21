@@ -399,7 +399,7 @@ Move to Module 2 to learn platform-level hardened image deployment with Shipwrig
 === Troubleshooting
 
 **Issue: SELinux denials blocking container**
-[source,bash]
+[source,bash,role=execute]
 ----
 ausearch -m AVC -ts recent | grep denied
 
@@ -409,14 +409,14 @@ podman inspect container | udica --append-rules /var/log/audit/audit.log policy_
 ----
 
 **Issue: Policy won't load**
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo semodule -r hummingbird_demo
 sudo semodule -i hummingbird_demo.cil /usr/share/udica/templates/*.cil
 ----
 
 **Issue: Container still using container_t**
-[source,bash]
+[source,bash,role=execute]
 ----
 podman inspect container | grep -i selinux
 

@@ -1,4 +1,4 @@
-= Sub-Module 1.20: The Aha Moment — Demonstrating chunkah Value (Optional)
+= Sub-Module 1.20: The Aha Moment -- Demonstrating chunkah Value (Optional)
 
 .*Sub-Module Overview*
 [sidebar]
@@ -540,7 +540,7 @@ podman inspect localhost/hummingbird-python-demo:latest \
 You will see the same pattern: RPM-based layers for the Hummingbird Python base, a `python-site-pkgs` layer for pip dependencies, and an `app-src` layer for your application code -- each independently cacheable and updateable.
 
 [[exercise-5-full-stack]]
-== Exercise 5: The Full Value Stack — chunkah + zstd:chunked
+== Exercise 5: The Full Value Stack -- chunkah + zstd:chunked
 
 This wraps everything together, showing how chunkah and `zstd:chunked` compound. Build it, split it, push it with `zstd:chunked`, then see what a node would actually download on an update.
 

@@ -428,7 +428,7 @@ echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
 echo "REGISTRY_USER=${REGISTRY_USER}"
 ----
 
-If either line prints blank or `{quay_hostname}` / `{quay_user}` literally, your shell session has reset. Re-run *Step 2* completely before continuing — otherwise the build will push to an invalid image reference and the deployment will fail with `InvalidImageName`.
+If either line prints blank or `{quay_hostname}` / `{quay_user}` literally, your shell session has reset. Re-run *Step 2* completely before continuing -- otherwise the build will push to an invalid image reference and the deployment will fail with `InvalidImageName`.
 ====
 
 [source,bash,role=execute,subs="attributes"]
@@ -462,11 +462,11 @@ rm -f Dockerfile
 
 Verify the image appears in Quay with its security scan:
 
-image::module-02/legacy-python-quay-tags.png[Quay Repository Tags for legacy-python-api]
+image::module-02/legacy-python-quay-tags.png[Quay Repository Tags for legacy-python-api,link=self,window=blank]
 
 Click on the security scan column to view the CVE details. The `python:3.11-buster` base image carries multiple fixable vulnerabilities:
 
-image::module-02/legacy-python-cve-scan.png[Clair Security Scan showing 10 fixable vulnerabilities in legacy-python-api]
+image::module-02/legacy-python-cve-scan.png[Clair Security Scan showing 10 fixable vulnerabilities in legacy-python-api,link=self,window=blank]
 
 === Step 5: Deploy to OpenShift
 
@@ -649,11 +649,11 @@ Log in to the ACS Central dashboard:
 . Accept the self-signed certificate warning if prompted
 . Select *Login with username/password* and log in with username `admin` and the password shown above
 
-image::module-02/acs-login.png[ACS Central Login Page]
+image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
 
 After logging in, you will see the ACS Dashboard showing cluster-wide security metrics -- policy violations, images at most risk, and deployments at most risk:
 
-image::module-02/acs-dashboard.png[ACS Central Dashboard showing security overview]
+image::module-02/acs-dashboard.png[ACS Central Dashboard showing security overview,link=self,window=blank]
 
 Now navigate to the legacy image vulnerabilities:
 
@@ -661,11 +661,11 @@ Now navigate to the legacy image vulnerabilities:
 . Search for `legacy-python-api` in the Image Name filter
 . You will see **60 CVEs** across the image, including critical and high severity findings:
 
-image::module-02/acs-legacy-cves-all.png[ACS Vulnerability findings showing 60 CVEs in legacy-python-api]
+image::module-02/acs-legacy-cves-all.png[ACS Vulnerability findings showing 60 CVEs in legacy-python-api,link=self,window=blank]
 
 Filter to show only **fixable Critical and Important** CVEs to see the most actionable findings:
 
-image::module-02/acs-legacy-cves-fixable.png[ACS filtered view showing 3 fixable Critical/Important CVEs]
+image::module-02/acs-legacy-cves-fixable.png[ACS filtered view showing 3 fixable Critical/Important CVEs,link=self,window=blank]
 
 [NOTE]
 ====
@@ -765,11 +765,11 @@ rm -f Dockerfile
 
 Verify the fortress image in Quay. Notice the `zero-cve` tag with a **Passed** security scan and a dramatically smaller size (38 MB vs 339 MB):
 
-image::module-02/fortress-quay-tags.png[Quay Repository Tags for fortress-python-api showing Passed security scan]
+image::module-02/fortress-quay-tags.png[Quay Repository Tags for fortress-python-api showing Passed security scan,link=self,window=blank]
 
 Click the security scan to confirm -- **zero vulnerabilities detected**:
 
-image::module-02/fortress-zero-cve-scan.png[Clair Security Scanner showing no vulnerabilities in fortress-python-api]
+image::module-02/fortress-zero-cve-scan.png[Clair Security Scanner showing no vulnerabilities in fortress-python-api,link=self,window=blank]
 
 === Step 3: Compare Image Sizes
 
@@ -933,7 +933,7 @@ This shows three types of supply chain artifacts attached to the image:
 ====
 If `cosign tree` is not available, you can fall back to `skopeo`:
 
-[source,bash,subs="attributes"]
+[source,bash,role=execute,subs="attributes"]
 ----
 skopeo inspect --raw docker://{hummingbird-registry}/python:latest | \
   python3 acs-inspect-provenance.py
@@ -1066,7 +1066,7 @@ Scan results for image: .../fortress-python-api:zero-cve
 
 Verify in the ACS dashboard -- search for `fortress-python-api:zero-cve` under *Vulnerability Management* -> *Results*. You should see **0 CVEs, 0 Images affected**:
 
-image::module-02/acs-fortress-zero-cve.png[ACS Vulnerability Management showing zero CVEs for fortress-python-api:zero-cve]
+image::module-02/acs-fortress-zero-cve.png[ACS Vulnerability Management showing zero CVEs for fortress-python-api:zero-cve,link=self,window=blank]
 
 [source,bash,role=execute]
 ----
@@ -1182,11 +1182,11 @@ If the policies already exist, the script ensures enforcement is enabled (`SCALE
 
 Verify in the ACS dashboard under *Platform Configuration* -> *Policy Management*. Search for your policy name:
 
-image::module-02/acs-policy-zero-cve-list.png[ACS Policy Management showing Zero Fixable CVEs Required policy with Critical severity]
+image::module-02/acs-policy-zero-cve-list.png[ACS Policy Management showing Zero Fixable CVEs Required policy with Critical severity,link=self,window=blank]
 
 Click the policy to see its details -- severity, description, lifecycle stage, and enforcement action:
 
-image::module-02/acs-policy-zero-cve-detail.png[ACS Policy detail view for Zero Fixable CVEs Required showing Critical severity and Deploy lifecycle]
+image::module-02/acs-policy-zero-cve-detail.png[ACS Policy detail view for Zero Fixable CVEs Required showing Critical severity and Deploy lifecycle,link=self,window=blank]
 
 [IMPORTANT]
 ====
@@ -1429,15 +1429,15 @@ Policy: Zero Fixable CVEs Required - <your-user>
 
 You can also view violations visually in the ACS Central UI. Navigate to *Violations* in the left sidebar:
 
-image::module-02/acs-violations-list.png[ACS Violations list showing 108 results including Zero Fixable CVEs Required enforced on legacy-python-api]
+image::module-02/acs-violations-list.png[ACS Violations list showing 108 results including Zero Fixable CVEs Required enforced on legacy-python-api,link=self,window=blank]
 
 Click on your *Zero Fixable CVEs Required* violation to see the individual CVEs that triggered it:
 
-image::module-02/acs-violation-cves.png[Violation detail showing fixable CVEs in mercurial pip and setuptools components]
+image::module-02/acs-violation-cves.png[Violation detail showing fixable CVEs in mercurial pip and setuptools components,link=self,window=blank]
 
 Switch to the *Enforcement* tab to see the enforcement action taken:
 
-image::module-02/acs-violation-enforcement.png[Enforcement tab showing deployment scaled to 0 replicas in response to policy violation]
+image::module-02/acs-violation-enforcement.png[Enforcement tab showing deployment scaled to 0 replicas in response to policy violation,link=self,window=blank]
 
 [IMPORTANT]
 ====
@@ -1559,14 +1559,14 @@ The operational mindset shifts from "how fast can we patch?" to "there is nothin
 === Troubleshooting
 
 **Issue: roxctl cannot reach ACS Central**
-[source,bash]
+[source,bash,role=execute]
 ----
 curl -sk https://$ROX_ENDPOINT/v1/metadata
 oc get route -n stackrox
 ----
 
 **Issue: Admission controller not blocking deployments**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox -o yaml
 
@@ -1574,7 +1574,7 @@ oc logs -n stackrox deploy/admission-control
 ----
 
 **Issue: Policy not triggering on deployment**
-[source,bash,subs="attributes"]
+[source,bash,role=execute,subs="attributes"]
 ----
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \

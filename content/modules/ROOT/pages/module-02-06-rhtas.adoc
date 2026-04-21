@@ -1023,14 +1023,14 @@ Managing private keys is difficult, revoking them in a controlled fashion even m
 === Troubleshooting
 
 **Issue: Securesign components not reaching Ready**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc describe securesign securesign-sample -n trusted-artifact-signer
 oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
 ----
 
 **Issue: Fulcio rejects the OIDC token**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get sa rhtas-signer -n hummingbird-builds-{user} -o yaml
 
@@ -1038,7 +1038,7 @@ oc logs -l app.kubernetes.io/component=fulcio -n trusted-artifact-signer
 ----
 
 **Issue: cosign sign fails with certificate errors**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 cosign initialize --mirror="$TUF_URL" --root="$TUF_URL/root.json"
 
@@ -1046,7 +1046,7 @@ oc get configmap rhtas-config -n hummingbird-builds-{user} -o yaml
 ----
 
 **Issue: Conforma reports violations**
-[source,bash]
+[source,bash,role=execute]
 ----
 ec validate image \
   --image "$IMAGE" \
