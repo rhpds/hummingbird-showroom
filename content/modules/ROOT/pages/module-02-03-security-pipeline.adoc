@@ -484,7 +484,7 @@ curl -sk https://$ROUTE
 ----
 
 .Production app JSON response showing Node.js version details
-image::module-02/production-app-response.png[Production App Response,width=400]
+image::module-02/production-app-response.png[Production App Response,width=400,link=self,window=blank]
 
 [TIP]
 ====

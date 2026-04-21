@@ -258,7 +258,7 @@ Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
 You can also watch the PipelineRun in the OpenShift console under **Pipelines -> PipelineRuns** in the `hummingbird-builds-{user}` namespace:
 
 .OpenShift console: generate-nodejs-policy PipelineRun succeeded with udica policy generation logs
-image::module-02/openshift-pipelinerun-selinux.png[PipelineRun SELinux,width=800]
+image::module-02/openshift-pipelinerun-selinux.png[PipelineRun SELinux,width=800,link=self,window=blank]
 
 === Step 7: View the Generated Policy
 

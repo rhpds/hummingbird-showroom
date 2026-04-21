@@ -472,7 +472,7 @@ sample-app   image-registry.openshift-image-registry.svc:5000/hummingbird-builds
 You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `hummingbird-builds-{user}` project:
 
 .OpenShift console showing the sample-app ImageStream created by the internal registry build
-image::module-02/openshift-imagestream-sample-app.png[OpenShift ImageStreams,width=800]
+image::module-02/openshift-imagestream-sample-app.png[OpenShift ImageStreams,width=800,link=self,window=blank]
 
 [[air-gap-registry-mirrors]]
 == Air-Gapped Registry Mirrors
