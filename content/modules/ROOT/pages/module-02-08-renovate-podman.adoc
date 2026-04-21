@@ -68,7 +68,7 @@ Part 3: Tekton EventListener for Renovate PRs (~8 min)
   -> CEL-filtered triggers for PR opened and PR merged
 
 Part 4: Full Build Pipeline with Buildah + Skopeo (~10 min)
-  -> Clone, build, scan, SBOM, sign, promote — all Podman-native
+  -> Clone, build, scan, SBOM, sign, promote -- all Podman-native
 
 Part 5: Testing the Full Loop Locally with Podman (~5 min)
   -> Simulate the entire pipeline on your workstation
@@ -1350,7 +1350,7 @@ echo "Full loop validated locally"
 ====
 Make sure you have generated a cosign key pair before running the sign/verify steps:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 mkdir -p ~/.config/containers/signing
 cd ~/.config/containers/signing

@@ -399,20 +399,20 @@ Learn how to restructure Hummingbird image layers for optimal pull deduplication
 
 This occurs when re-running a container with `:Z` mounts after a previous container stamped MCS category labels on the directories. Force-reset the labels:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo restorecon -FRv /opt/tomcat-app
 ----
 
 Also ensure the directories are owned by your user (not root) for rootless Podman:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo chown -R $(id -u):$(id -g) /opt/tomcat-app
 ----
 
 **Issue: `--append-rules` produces empty policy**
-[source,bash]
+[source,bash,role=execute]
 ----
 ausearch -m AVC -ts recent | head -20
 
@@ -423,14 +423,14 @@ sudo systemctl restart auditd
 
 `udica` needs root access to query SELinux policy and read the audit log. Save inspect output first, then use `sudo`:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 podman inspect <container> > /tmp/inspect.json
 sudo udica --append-rules /var/log/audit/audit.log policy_name < /tmp/inspect.json
 ----
 
 **Issue: Device access still denied after policy load**
-[source,bash]
+[source,bash,role=execute]
 ----
 ausearch -m AVC -ts recent | grep denied | grep urandom
 
@@ -439,7 +439,7 @@ sudo udica --append-rules /var/log/audit/audit.log policy_v2 < /tmp/inspect.json
 ----
 
 **Issue: `semodule -r` fails (policy not found)**
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo semodule -l | grep your_policy
 

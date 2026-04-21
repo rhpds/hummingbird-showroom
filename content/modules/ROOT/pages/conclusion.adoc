@@ -1,0 +1,46 @@
+= Workshop Conclusion
+
+Congratulations on completing the {workshop-title} workshop! You have worked through the full lifecycle of building, hardening, and deploying container images using Red Hat Hardened Images and the OpenShift platform.
+
+== What You've Learned
+
+=== Module 1: Developer Environment (RHEL)
+
+In the first module you explored container hardening from a developer's workstation using Podman on RHEL:
+
+* Built minimal, distroless container images using Red Hat Hardened Images (Hummingbird)
+* Applied multi-stage build patterns to separate build-time dependencies from runtime
+* Scanned images for vulnerabilities and generated SBOMs for supply chain transparency
+* Signed container images and created attestations for provenance verification
+* Configured custom security profiles including FIPS mode and SELinux policies
+
+=== Module 2: Shipwright and Buildpacks (OpenShift)
+
+In the second module you moved to the OpenShift platform and automated the build and deployment pipeline:
+
+* Used Shipwright and Cloud Native Buildpacks to build images directly on OpenShift
+* Created custom build strategies for multi-language applications
+* Integrated security scanning and signing into CI/CD pipelines with Tekton
+* Enforced zero-CVE policies using Red Hat Advanced Cluster Security (ACS)
+
+== Key Takeaways
+
+* **Smaller images mean fewer vulnerabilities.** Red Hat Hardened Images eliminate unnecessary packages, reducing attack surface and CVE exposure to near zero at ship time.
+* **Supply chain security requires multiple layers.** Signing, attestation, SBOMs, and policy enforcement work together to establish trust from build to deployment.
+* **Automation is essential.** Shipwright and Tekton Pipelines bring container hardening practices into repeatable, auditable CI/CD workflows.
+* **Platform enforcement closes the loop.** ACS policies ensure that only verified, compliant images reach production, regardless of how they were built.
+
+== Next Steps
+
+* Explore additional Hummingbird base images for .NET, Python, Go, and database workloads
+* Integrate RHTAS (Red Hat Trusted Artifact Signer) for keyless signing in your own pipelines
+* Set up ACS policy enforcement across multiple clusters in your organization
+* Adopt chunkah for content-based layer splitting to optimize image pull times at scale
+
+== References
+
+* https://www.redhat.com/en/products/hardened-images[Red Hat Hardened Images (Hummingbird)^]
+* https://shipwright.io/docs[Shipwright Documentation^]
+* https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes[Red Hat Advanced Cluster Security Documentation^]
+* https://docs.redhat.com/en/documentation/red_hat_trusted_artifact_signer[Red Hat Trusted Artifact Signer Documentation^]
+* https://slsa.dev[SLSA Framework for Supply Chain Security^]

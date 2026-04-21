@@ -588,7 +588,7 @@ Integrate SBOM generation, vulnerability scanning, image signing, and production
 === Troubleshooting
 
 **Issue: Language detection fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check detect-and-generate step logs
 BUILDRUN_POD=$(oc get buildrun <buildrun-name> -o jsonpath='{.status.taskRunName}')-pod
@@ -599,7 +599,7 @@ oc logs $BUILDRUN_POD -c step-detect-and-generate
 ----
 
 **Issue: Buildah build fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check build-and-push step logs for errors
 oc logs $BUILDRUN_POD -c step-build-and-push
@@ -611,7 +611,7 @@ oc logs $BUILDRUN_POD -c step-build-and-push
 ----
 
 **Issue: Internal registry not accessible**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Verify registry route exists
 oc get route default-route -n openshift-image-registry

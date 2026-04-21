@@ -217,7 +217,7 @@ Generate a policy for the Node.js application built in Sub-Module 2.3:
 ====
 The `udica-policy-generate` Task runs `podman` inside the step, which requires the `privileged` SCC. The workshop bootstrap pre-configures this automatically. If you are running outside the bootstrapped environment, grant it manually:
 
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
@@ -329,7 +329,7 @@ Once the CIL policy is loaded on cluster nodes (via MachineConfig or manually), 
 ====
 The `seLinuxOptions.type` field requires an SCC that allows custom SELinux types. The default `restricted-v2` SCC rejects it. The workshop bootstrap pre-configures the `privileged` SCC for the `default` service account automatically. If you are running outside the bootstrapped environment, grant it manually:
 
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc adm policy add-scc-to-user privileged -z default -n hummingbird-builds-{user}
 ----
@@ -503,7 +503,7 @@ A working reference implementation of this structure is available at https://git
 
 === load-policy.sh Helper
 
-[source,bash]
+[source,bash,role=execute]
 ----
 #!/bin/bash
 set -euo pipefail
@@ -610,7 +610,7 @@ Prove the zero-CVE posture by deploying a legacy vulnerable image alongside a Hu
 === Troubleshooting
 
 **Issue: TaskRun fails with permission errors**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get taskrun generate-nodejs-policy -o yaml | grep -A5 status
 
@@ -618,7 +618,7 @@ oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user
 ----
 
 **Issue: SELinux type not found on node**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc debug node/<node-name> -- chroot /host semodule -l | grep hummingbird
 
@@ -627,7 +627,7 @@ oc get machineconfigpool worker
 ----
 
 **Issue: MachineConfig not rolling out**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get machineconfigpool worker -o yaml | grep -A10 status
 

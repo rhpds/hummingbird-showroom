@@ -313,12 +313,12 @@ Using both gives you immediate feedback in the pipeline _and_ continuous monitor
 You can also verify the results visually in the Quay console. Navigate to **Repositories** -> **{quay_user}/secure-nodejs**:
 
 .Quay repository showing the secure-nodejs:latest image with a passed security scan
-image::module-02/quay-secure-nodejs-tags.png[Quay Secure Node.js Tags,width=800]
+image::module-02/quay-secure-nodejs-tags.png[Quay Secure Node.js Tags,width=800,link=self,window=blank]
 
 Click the security scan result to view the Clair vulnerability report. A Hummingbird-based image should show zero vulnerabilities:
 
 .Clair security scan: zero CVEs detected in the secure-nodejs Hummingbird image
-image::module-02/quay-secure-nodejs-clair-zero-cve.png[Clair Zero CVE Scan,width=800]
+image::module-02/quay-secure-nodejs-clair-zero-cve.png[Clair Zero CVE Scan,width=800,link=self,window=blank]
 
 [[production-deployment]]
 == Production Deployment
@@ -461,7 +461,7 @@ production-app-ghi789-rst        1/1     Running   0          30s
 ----
 
 .OpenShift console: three production-app replicas running in hummingbird-production
-image::module-02/openshift-production-pods.png[Production Pods,width=800]
+image::module-02/openshift-production-pods.png[Production Pods,width=800,link=self,window=blank]
 
 === Step 9: Get Application Route
 
@@ -634,7 +634,7 @@ Create Tekton Tasks that generate udica policies alongside image builds, deploy 
 === Troubleshooting
 
 **Issue: SBOM generation fails**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 # Check syft step logs
 oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-sbom
@@ -644,7 +644,7 @@ podman pull <image>
 ----
 
 **Issue: Vulnerability scan fails build**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 # View scan results
 oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-scan-vulnerabilities
@@ -656,7 +656,7 @@ grype <image> --only-fixed
 ----
 
 **Issue: Clair scan status shows "queued" or "unsupported"**
-[source,bash,subs="attributes"]
+[source,bash,role=execute,subs="attributes"]
 ----
 # Verify Clair is running
 oc get pods -n {quay-namespace} -l quay-component=clair-app
@@ -668,7 +668,7 @@ oc logs -n {quay-namespace} -l quay-component=clair-app --tail=50
 ----
 
 **Issue: Production deployment CrashLoopBackOff**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check pod logs
 oc logs -l app=production-app -n hummingbird-production

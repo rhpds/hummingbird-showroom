@@ -558,7 +558,7 @@ network traffic on every image update
 +
 Without squashing, your image has layers from each Containerfile instruction. chunkah works best starting from a single flat layer representing the complete final filesystem. Squashing first lets chunkah make all the layer decisions from scratch based on content, not build history.
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 buildah build --squash-all -t my-app:flat .
 # Then run chunkah on the squashed image
@@ -582,7 +582,7 @@ chunkah understands RPM packages automatically but knows nothing about your appl
 +
 chunkah is a build-time optimisation (which layers change). `zstd:chunked` is a pull-time optimisation (how much of a changed layer to download). They stack -- always use both for production images:
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 buildah push --compression-format zstd:chunked --compression-level 3 \
   my-app:latest docker://registry.example.com/apps/my-app:latest
@@ -592,7 +592,7 @@ buildah push --compression-format zstd:chunked --compression-level 3 \
 +
 chunkah is pre-1.0 and moving fast. Use a specific version tag, not `latest`:
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 # Good
 podman run --rm quay.io/jlebon/chunkah:v0.2.0 build ...
@@ -646,7 +646,7 @@ rm -rf ~/hummingbird-lab/chunkah-demo/
 === Troubleshooting
 
 **Issue: chunkah container fails to start**
-[source,bash]
+[source,bash,role=execute]
 ----
 podman pull quay.io/jlebon/chunkah:latest
 
@@ -654,13 +654,13 @@ podman run --rm quay.io/jlebon/chunkah --help
 ----
 
 **Issue: `FROM oci-archive:` not found**
-[source,bash]
+[source,bash,role=execute]
 ----
 buildah build --skip-unused-stages=false ...
 ----
 
 **Issue: `Containerfile.splitter` download fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 curl -LO https://github.com/jlebon/chunkah/releases/download/v0.2.0/Containerfile.splitter
 
@@ -673,7 +673,7 @@ buildah build \
 ----
 
 **Issue: xattr not supported**
-[source,bash]
+[source,bash,role=execute]
 ----
 sudo dnf install -y attr
 

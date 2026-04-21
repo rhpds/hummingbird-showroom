@@ -348,7 +348,7 @@ podman push $QUAY_ORG/hummingbird-demo:v1
 ----
 
 **Issue: Cosign verification fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Ensure you're using the correct public key and digest
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ${QUAY_ORG}/hummingbird-demo@${IMAGE_DIGEST}
@@ -359,7 +359,7 @@ echo "Image digest: ${IMAGE_DIGEST}"
 ----
 
 **Issue: SBOM file not found for attestation**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Verify SBOM was generated in Sub-Module 1.3
 ls -la ~/scanning/hummingbird-demo.spdx

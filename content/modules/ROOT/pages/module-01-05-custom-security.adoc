@@ -359,7 +359,7 @@ Move to Module 2 to learn platform-level hardened image deployment with Shipwrig
 === Troubleshooting
 
 **Issue: Certificate verification still fails**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Verify the CA bundle was copied correctly
 podman run --rm curl:local-ca ls -la /etc/pki/ca-trust/extracted/
@@ -369,7 +369,7 @@ podman history curl:local-ca | grep "trust anchor"
 ----
 
 **Issue: FIPS image allows disallowed algorithms**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Verify you're using the -fips variant
 podman inspect fips:yes | grep -i fips
@@ -379,7 +379,7 @@ podman build --build-arg VARIANT=fips -t fips:yes -f ~/fips/Containerfile.fips ~
 ----
 
 **Issue: Caddy SSL server won't start**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check Caddy logs
 podman logs caddy-ssl

@@ -596,7 +596,7 @@ The WAR in this exercise uses `javax.servlet` to work with the RPM-provided Tomc
 === Troubleshooting
 
 **Issue: `microdnf install tomcat` fails in the builder**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check available Tomcat packages
 podman run --rm --user root registry.access.redhat.com/ubi9/openjdk-21:latest \
@@ -604,7 +604,7 @@ podman run --rm --user root registry.access.redhat.com/ubi9/openjdk-21:latest \
 ----
 
 **Issue: Tomcat fails to start with permission errors**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check the user and directory ownership
 podman run --rm localhost/my-tomcat-app:v1 ls -la /opt/tomcat/logs
@@ -612,7 +612,7 @@ podman run --rm localhost/my-tomcat-app:v1 id
 ----
 
 **Issue: WAR not deploying (404 on `/app/`)**
-[source,bash]
+[source,bash,role=execute]
 ----
 # Check the webapps directory
 podman run --rm localhost/my-tomcat-app:v1 ls /opt/tomcat/webapps/
@@ -622,7 +622,7 @@ podman logs tomcat-test
 ----
 
 **Issue: `ClassNotFoundException` for servlet classes**
-[source,bash]
+[source,bash,role=execute]
 ----
 # This means your WAR's servlet API version doesn't match the Tomcat version.
 # Tomcat 9 (RPM) uses javax.servlet; Tomcat 10 uses jakarta.servlet.

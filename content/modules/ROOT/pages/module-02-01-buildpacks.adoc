@@ -386,12 +386,12 @@ The image labels from the Hummingbird base image (e.g., `io.hummingbird-project.
 Open the Quay console and navigate to **Repositories** -> **workshopuser/sample-quarkus**. You should see the `latest` tag with a successful security scan:
 
 .Quay repository showing the pushed sample-quarkus:latest image
-image::module-02/quay-sample-quarkus-tags.png[Quay Repository Tags,width=800]
+image::module-02/quay-sample-quarkus-tags.png[Quay Repository Tags,width=800,link=self,window=blank]
 
 Click the security scan result to view the Clair vulnerability report. A Hummingbird-based image should show **zero vulnerabilities**:
 
 .Clair security scan: zero CVEs detected in the Hummingbird runtime image
-image::module-02/quay-clair-zero-cve.png[Clair Zero CVE Scan,width=800]
+image::module-02/quay-clair-zero-cve.png[Clair Zero CVE Scan,width=800,link=self,window=blank]
 
 [[deploy-application]]
 == Deploy Built Image
@@ -444,7 +444,7 @@ Application URL: http://sample-quarkus-hummingbird-builds.apps.<cluster-domain>/
 You can also open the URL in your browser by navigating to `http://<route>/hello`:
 
 .Browser showing the Hummingbird Quarkus /hello endpoint response
-image::module-02/quarkus-hello-endpoint.png[Quarkus Hello Endpoint,width=800]
+image::module-02/quarkus-hello-endpoint.png[Quarkus Hello Endpoint,width=800,link=self,window=blank]
 
 Also verify the Quarkus health endpoint:
 
@@ -465,7 +465,7 @@ curl -s http://$ROUTE/q/health | python3 -m json.tool
 ====
 If you get a timeout, the application may still be starting. Check pod status:
 
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get pods -l app=sample-quarkus -n hummingbird-builds-{user}
 oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
@@ -473,7 +473,7 @@ oc logs -l app=sample-quarkus -n hummingbird-builds-{user}
 ====
 
 .OpenShift console: hummingbird-builds pods showing the completed build and running application
-image::module-02/openshift-hummingbird-builds-pods.png[OpenShift Pods,width=800]
+image::module-02/openshift-hummingbird-builds-pods.png[OpenShift Pods,width=800,link=self,window=blank]
 
 [IMPORTANT]
 ====
@@ -590,7 +590,7 @@ Looking for additional depth? The following optional sub-modules extend the work
 === Troubleshooting
 
 **Issue: BuildRun fails with registry push error**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get secret registry-credentials -n hummingbird-builds-{user}
 oc describe sa pipeline -n hummingbird-builds-{user} | grep registry-credentials
@@ -606,7 +606,7 @@ oc secrets link pipeline registry-credentials -n hummingbird-builds-{user}
 ----
 
 **Issue: BuildRun stuck in Pending**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get pods -n openshift-pipelines
 oc get events -n hummingbird-builds-{user} --sort-by=.metadata.creationTimestamp
@@ -617,7 +617,7 @@ oc describe buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
 
 This typically indicates a problem with the NooBaa object storage backend used by Quay:
 
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get backingstore -n openshift-storage
 oc get noobaa -n openshift-storage -o jsonpath='{.items[0].status.phase}'
@@ -632,7 +632,7 @@ oc delete buildrun sample-quarkus-app-run-1 -n hummingbird-builds-{user}
 
 The Maven wrapper script must be executable in the Git repository. If you see this error, ensure the repo has the correct permissions:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 # On the machine where the repo is managed:
 chmod +x mvnw
@@ -645,14 +645,14 @@ git push
 
 The on-cluster Quay registry creates repositories as **private** by default. The `default` ServiceAccount needs pull credentials:
 
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc secrets link default registry-credentials --for=pull -n hummingbird-builds-{user}
 oc delete pod -l app=sample-quarkus -n hummingbird-builds-{user}
 ----
 
 **Issue: Application not responding**
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get pods -l app=sample-quarkus -n hummingbird-builds-{user}
 oc logs -l app=sample-quarkus -n hummingbird-builds-{user}

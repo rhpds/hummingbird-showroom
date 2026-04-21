@@ -267,7 +267,7 @@ done
 ====
 If any operator stays in `Installing` phase for more than 5 minutes, check events in its namespace:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get events -n openshift-builds --sort-by=.metadata.creationTimestamp
 oc get events -n quay --sort-by=.metadata.creationTimestamp
@@ -312,7 +312,7 @@ Before starting the Module 2 labs, review the Shipwright resource hierarchy.
 **BuildStrategy** (Namespace-scoped)::
 Defines how to build images within a single namespace. Use for team-specific or experimental build patterns.
 +
-[source,bash,subs=attributes]
+[source,bash,role=execute,subs=attributes]
 ----
 oc get buildstrategy -n hummingbird-builds-{user}
 ----
@@ -320,7 +320,7 @@ oc get buildstrategy -n hummingbird-builds-{user}
 **ClusterBuildStrategy** (Cluster-scoped)::
 Defines how to build images across the entire cluster. Use for organization-wide standards that all teams can leverage.
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get clusterbuildstrategy
 ----
@@ -1320,7 +1320,7 @@ Your Gitea environment and Renovate build infrastructure are ready. Proceed to x
 === Troubleshooting
 
 **Issue: Operator stuck in Installing**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc logs -n openshift-builds -l name=openshift-builds-operator
 
@@ -1328,7 +1328,7 @@ oc get events -n openshift-builds --sort-by=.metadata.creationTimestamp
 ----
 
 **Issue: CRDs not appearing**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get csv -n openshift-builds
 
@@ -1336,7 +1336,7 @@ oc get pods -n openshift-builds
 ----
 
 **Issue: Permission denied creating ClusterBuildStrategy**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc auth can-i create clusterbuildstrategy
 
@@ -1344,7 +1344,7 @@ oc auth can-i '*' '*' --all-namespaces
 ----
 
 **Issue: Quay pods not starting**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get pods -n quay
 
@@ -1354,7 +1354,7 @@ oc get quayregistry -n quay -o yaml
 ----
 
 **Issue: ACS SecuredCluster stuck in Irreconcilable**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get securedcluster -n stackrox -o yaml
 
@@ -1364,7 +1364,7 @@ oc get secret sensor-tls -n stackrox
 If `sensor-tls` does not exist, the init bundle was not applied. Return to Step 20 to generate and apply it.
 
 **Issue: RHTAS operator not installing**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get csv -n trusted-artifact-signer
 
@@ -1372,7 +1372,7 @@ oc get events -n trusted-artifact-signer --sort-by=.metadata.creationTimestamp
 ----
 
 **Issue: RHTAS clientserver route not available**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get route -n trusted-artifact-signer
 
@@ -1382,7 +1382,7 @@ oc get pods -n trusted-artifact-signer
 The clientserver pod must be running before CLI tools can be downloaded. Wait for the operator to finish initialization.
 
 **Issue: Keycloak realm import failing**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get keycloakrealmimport trusted-artifact-signer -n keycloak -o yaml
 
@@ -1390,7 +1390,7 @@ oc logs -l app=keycloak -n keycloak --tail=50
 ----
 
 **Issue: Gitea operator not starting**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get pods -n gitea
 
@@ -1401,7 +1401,7 @@ oc get events -n gitea --sort-by=.metadata.creationTimestamp
 
 This happens when the ArgoCD Application is missing the `SkipDryRunOnMissingResource=true` sync option. ArgoCD validates all resources (including wave 10 Tekton Tasks/Pipelines) before applying any wave, and rejects resources whose CRDs have not yet been registered by the Pipelines operator (wave 1).
 
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get application hummingbird-workshop -n openshift-gitops \
   -o jsonpath='{.status.operationState.syncResult.resources}' | python3 -m json.tool
@@ -1409,14 +1409,14 @@ oc get application hummingbird-workshop -n openshift-gitops \
 
 Fix: ensure `SkipDryRunOnMissingResource=true` is present in the ArgoCD Application's `spec.syncPolicy.syncOptions`, then re-apply the application:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 # Re-run the bootstrap script to update the ArgoCD Application
 ./bootstrap/setup-all.sh
 ----
 
 **Issue: Gitea instance route not available**
-[source,bash]
+[source,bash,role=execute]
 ----
 oc get route -n gitea
 
