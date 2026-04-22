@@ -6,8 +6,14 @@ Image=docker.io/pypiserver/pypiserver:latest
 ContainerName=pypiserver
 PublishPort=8000:8080
 Volume=/var/pypi-cache:/data/packages:z
+HealthCmd=CMD-SHELL python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+HealthInterval=5s
+HealthRetries=12
+HealthStartPeriod=60s
+Notify=healthy
 
 [Service]
+Type=notify
 Restart=on-failure
 
 [Install]

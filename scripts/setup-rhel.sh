@@ -9,7 +9,7 @@ retry() {
   done
 }
 
-dnf install -y nano emacs-nw
+retry dnf install -y nano emacs-nw
 
 # GitHub repository references
 GITHUB_ORG="${GITHUB_ORG:-rhpds}"
@@ -47,7 +47,7 @@ systemctl start pypiserver
 COSIGN_VERSION=v2.6.3
 retry curl --connect-timeout 30 --max-time 120 -LO \
   https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64
-sudo install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
+install -m 755 cosign-linux-amd64 /usr/local/bin/cosign
 rm cosign-linux-amd64
 
 # Verify installation
@@ -124,7 +124,7 @@ echo "=== Creating UBI comparison image ==="
 cp ${SETUP_FILES}/quarkus/Containerfile.ubi /home/rhel/sample-app/
 
 # Build UBI-only version for comparison
-su -l rhel -c "podman build -f /home/rhel/sample-app/Containerfile.ubi -t hummingbird-demo:ubi /home/rhel/sample-app"
+retry su -l rhel -c "podman build -f /home/rhel/sample-app/Containerfile.ubi -t hummingbird-demo:ubi /home/rhel/sample-app"
 echo "✅ UBI comparison image built successfully"
 
 echo "=== Step 4: Preparing Host Directories for Bind Mounts ==="
@@ -157,30 +157,11 @@ cp ${SETUP_FILES}/flask/Containerfile.ubi /home/rhel/flask/
 
 echo "✅ Exercise files created successfully"
 
-echo "=== Installing validation scripts ==="
-mkdir -p /home/rhel/scripts
-cp ${SCRIPT_FILES}/validate-module-01-01.sh /home/rhel/scripts/validate-mod-01-01.sh
-cp ${SCRIPT_FILES}/validate-module-01-02.sh /home/rhel/scripts/validate-mod-01-02.sh
-cp ${SCRIPT_FILES}/validate-module-01-03.sh /home/rhel/scripts/validate-mod-01-03.sh
-cp ${SCRIPT_FILES}/validate-module-01-04.sh /home/rhel/scripts/validate-mod-01-04.sh
-cp ${SCRIPT_FILES}/validate-module-01-05.sh /home/rhel/scripts/validate-mod-01-05.sh
-chmod +x /home/rhel/scripts/validate-mod-01-*.sh
-
-echo "=== Installing solve scripts ==="
-cp ${SCRIPT_FILES}/solve-module-01-01.sh /home/rhel/scripts/solve-mod-01-01.sh
-cp ${SCRIPT_FILES}/solve-module-01-02.sh /home/rhel/scripts/solve-mod-01-02.sh
-cp ${SCRIPT_FILES}/solve-module-01-03.sh /home/rhel/scripts/solve-mod-01-03.sh
-cp ${SCRIPT_FILES}/solve-module-01-04.sh /home/rhel/scripts/solve-mod-01-04.sh
-cp ${SCRIPT_FILES}/solve-module-01-05.sh /home/rhel/scripts/solve-mod-01-05.sh
-cp ${SCRIPT_FILES}/solve-module-01-06.sh /home/rhel/scripts/solve-mod-01-06.sh
-cp ${SCRIPT_FILES}/solve-module-01-07.sh /home/rhel/scripts/solve-mod-01-07.sh
-cp ${SCRIPT_FILES}/solve-module-01-08.sh /home/rhel/scripts/solve-mod-01-08.sh
-chmod +x /home/rhel/scripts/solve-mod-01-*.sh
-
 # Clean up temporary repository clone
 echo "=== Cleaning up temporary files ==="
 rm -rf ${TEMP_REPO}
 
 chown -R rhel:rhel /home/rhel/
 
-subscription-manager unregister && subscription-manager clean
+subscription-manager unregister || true
+subscription-manager clean || true
