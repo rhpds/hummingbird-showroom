@@ -22,6 +22,31 @@ In this sub-module, you'll get hands-on with Red Hat Hardened Images. You'll exp
 
 There are three main categories of images provided in the collection of hardened images: runtimes, services, and tools. Each of these are built in the same fashion but provide different capabilities.  Runtimes include various languages like `java`, `python`, and `dotnet` and also have `-builder` variants to allow for complex application tasks. Services include network based applications like `caddy`, `memcached`, and `haproxy` for deploying minimal versions of common services. Tools include things like `git`, `curl`, and `jq` for running a known containerized version in an isolated manner like within a CI pipeline.
 
+=== Your RHEL Virtual Machine
+
+You will execute the first module in a Red Hat Enterprise Linux Virtual Machine running on Red Hat OpenShift Container Platform.
+
+. Make sure you are in the *Terminal* tab on your right.
+. Switch to your OpenShift project:
++
+[source,sh,subs=attributes,role=execute]
+----
+oc project {user}-rhel
+----
+
+. Connect to your RHEL Virtual Machine:
++
+[source,sh,subs=attributes,role=execute]
+----
+virtctl ssh rhel@vm/rhel
+----
+. Log into the VM using the `rhel` user's password (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
++
+.*Password*:
+[source,role=execute,subs=attributes]
+----
+{password}
+----
 
 [[services]]
 === Services and tools

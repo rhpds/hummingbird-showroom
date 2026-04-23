@@ -57,34 +57,16 @@ This module focuses on platform-level image building and deployment:
 .*Expected Outcomes*
 You'll have working Shipwright builds deploying Hummingbird-based applications with automated security controls and SELinux policies.
 
-
-////
-== Environment Setup
-
-[IMPORTANT]
-====
-**Before starting the labs**, you need a prepared environment for the module(s) you plan to complete. The fastest option is to use pre-provisioned environments from the **Red Hat Demo Platform (RHDP)** -- no manual installation required.
-
-**For Module 1** (Developer Environment): +
-https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/sandboxes-gpte.rhel9-desktop.prod&utm_source=webapp&utm_medium=share-link[Deploy RHEL 9 Desktop via RHDP^] +
-See xref:appendix-a-rhel-setup.adoc[Appendix A] for RHDP details, automation scripts, or manual setup steps.
-
-**For Module 2** (OpenShift Platform): +
-https://catalog.demo.redhat.com/catalog?item=babylon-catalog-prod/agd-v2.ocp-cluster-aws.prod&utm_source=webapp&utm_medium=share-link[Deploy OpenShift Cluster (AWS) via RHDP^] +
-See xref:appendix-b-openshift-setup.adoc[Appendix B] for RHDP details, automation scripts, or manual setup steps.
-====
-////
-
 == Lab Environment Access
-////
-[NOTE]
-====
-If you are using pre-provisioned lab environments, you will receive specific credentials and connection details. The placeholders below will be replaced with your actual lab information.
-====
-////
-=== Your RHEL Virtual Machine (Module 1)
 
-You will execute the first module in a Red Hat Enterprise Linux Virtual Machine running on Red Hat OpenShift Container Platform.
+You will execute the steps for this lab in the various tabs on the right:
+
+* *Terminal:* for executing command line tasks - for example connecting to your Red Hat Enterprise Linux virtual machine.
+* *Red Hat OpenShift Console*: for any tasks requiring the OpenShift user interface
+* *Red Hat Quay Registry*: to manage your container images
+* *Red Hat Hardened Images*: reference documentation
+
+Go ahead and log into the various tabs:
 
 . In the terminal window on your right log into OpenShift:
 +
@@ -93,66 +75,42 @@ You will execute the first module in a Red Hat Enterprise Linux Virtual Machine 
 oc login -u {user} -p {password} {openshift_api_url} --insecure-skip-tls-verify
 ----
 
-. Switch to your OpenShift project:
+. Log into your OpenShift Console tab using the following credentials:
 +
-[source,sh,subs=attributes,role=execute]
-----
-oc project {user}-rhel
-----
-
-. Connect to your RHEL Virtual Machine:
-+
-[source,sh,subs=attributes,role=execute]
-----
-virtctl ssh rhel@vm/rhel
-----
-. Log into the VM using the `rhel` user's password (type `yes` at the prompt `Are you sure you want to continue connecting (yes/no/[fingerprint])?`):
-+
-.*Password*:
-[source,role=execute,subs=attributes]
-----
-{password}
-----
-
-=== OpenShift Console (Module 2)
-
-Your OpenShift console is available in a tab on the right or if you prefer a separate window at: {openshift_console_url}[window=blank].
-
-*Credentials:*
-
 .*Username*:
 [source,role=execute,subs=attributes]
 ----
 {user}
 ----
-
++
 .*Password*:
 [source,role=execute,subs=attributes]
 ----
 {password}
 ----
++
+[TIP]
+====
+The OpenShift console is also availabe in a separate window if you prefer:: {openshift_console_url}[window=blank].
+====
 
-=== Quay Registry Credentials
-
-For pushing images to registries *Red Hat Quay* is available in a tab on your right or if you prefer a separate window at {quay_url}[window=blank].
-
+. For pushing images to registries *Red Hat Quay* is available in a tab on your right or if you prefer a separate window at {quay_url}[window=blank].
++
 .*Username*:
 [source,role=execute,subs=attributes]
 ----
 {quay_user}
 ----
-
++
 .*Password*:
 [source,role=execute,subs=attributes]
 ----
 {quay_password}
 ----
 
-////
-==== GUID Information
 
-Your unique lab environment identifier: `{guid}`
-////
+=== OpenShift Console (Module 2)
+
 
 == Key Technologies Covered
 
