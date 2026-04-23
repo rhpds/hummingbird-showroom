@@ -10,7 +10,7 @@
 *What gets configured:*
 
 * OpenShift HA cluster access verified (3+ nodes required)
-* `hummingbird-builds-{user}` namespace created
+* `{user}-hummingbird-builds` namespace created
 * OpenShift Pipelines (Tekton) operator installed and verified
 * {shipwright-operator} operator installed
 * OpenShift Data Foundation (ODF) operator installed (provides S3 object storage for Quay via NooBaa)
@@ -164,12 +164,12 @@ Create a dedicated namespace for your build experiments:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc new-project hummingbird-builds-{user}
+oc new-project {user}-hummingbird-builds
 ----
 
 .*Expected output:*
 ----
-Now using project "hummingbird-builds-{user}" on server "https://...".
+Now using project "{user}-hummingbird-builds" on server "https://...".
 ----
 
 [TIP]
@@ -314,7 +314,7 @@ Defines how to build images within a single namespace. Use for team-specific or 
 +
 [source,bash,role=execute,subs=attributes]
 ----
-oc get buildstrategy -n hummingbird-builds-{user}
+oc get buildstrategy -n {user}-hummingbird-builds
 ----
 
 **ClusterBuildStrategy** (Cluster-scoped)::
@@ -556,7 +556,7 @@ oc create secret docker-registry registry-credentials \
   --docker-server="{quay_hostname}" \
   --docker-username={quay_user} \
   --docker-password={quay_password} \
-  -n hummingbird-builds-{user}
+  -n {user}-hummingbird-builds
 ----
 
 .*Expected output:*
@@ -568,7 +568,7 @@ secret/registry-credentials created
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc secrets link pipeline registry-credentials --for=pull,mount -n hummingbird-builds-{user}
+oc secrets link pipeline registry-credentials --for=pull,mount -n {user}-hummingbird-builds
 ----
 
 [NOTE]

@@ -265,7 +265,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: auto-detect-build
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   source:
     type: Git
@@ -296,7 +296,7 @@ apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   name: auto-detect-build-run-1
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   build:
     name: auto-detect-build
@@ -307,7 +307,7 @@ Monitor the build:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun auto-detect-build-run-1 -n hummingbird-builds-{user} -w
+oc get buildrun auto-detect-build-run-1 -n {user}-hummingbird-builds -w
 ----
 
 Press `Ctrl+C` once the build succeeds.
@@ -318,10 +318,10 @@ Check that the language was detected correctly:
 
 [source,bash,role=execute,subs=attributes]
 ----
-BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.taskRunName}')-pod
+BUILDRUN_POD=$(oc get buildrun auto-detect-build-run-1 -n {user}-hummingbird-builds -o jsonpath='{.status.taskRunName}')-pod
 
 # View detect-and-generate step output
-oc logs $BUILDRUN_POD -n hummingbird-builds-{user} -c step-detect-and-generate
+oc logs $BUILDRUN_POD -n {user}-hummingbird-builds -c step-detect-and-generate
 ----
 
 .*Expected output:*
@@ -339,7 +339,7 @@ Confirm the full build pipeline worked by inspecting the build step output:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc logs $BUILDRUN_POD -n hummingbird-builds-{user} -c step-build-and-push | head -20
+oc logs $BUILDRUN_POD -n {user}-hummingbird-builds -c step-build-and-push | head -20
 ----
 
 .*Expected output:*
@@ -401,7 +401,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: internal-registry-build
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   source:
     type: Git
@@ -412,7 +412,7 @@ spec:
     name: hummingbird-multi-lang
     kind: ClusterBuildStrategy
   output:
-    image: image-registry.openshift-image-registry.svc:5000/hummingbird-builds-{user}/sample-app:latest
+    image: image-registry.openshift-image-registry.svc:5000/{user}-hummingbird-builds/sample-app:latest
 EOF
 ----
 
@@ -440,7 +440,7 @@ apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   generateName: internal-registry-build-run-
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   build:
     name: internal-registry-build
@@ -458,18 +458,18 @@ Confirm the image was pushed to the internal registry by checking the ImageStrea
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get imagestream sample-app -n hummingbird-builds-{user}
-oc get imagestream sample-app -n hummingbird-builds-{user} -o jsonpath='{.status.tags[0].items[0].dockerImageReference}'
+oc get imagestream sample-app -n {user}-hummingbird-builds
+oc get imagestream sample-app -n {user}-hummingbird-builds -o jsonpath='{.status.tags[0].items[0].dockerImageReference}'
 echo ""
 ----
 
 .*Expected output:*
 ----
 NAME         IMAGE REPOSITORY                                                                TAGS     UPDATED
-sample-app   image-registry.openshift-image-registry.svc:5000/hummingbird-builds-{user}/sample-app   latest   ...
+sample-app   image-registry.openshift-image-registry.svc:5000/{user}-hummingbird-builds/sample-app   latest   ...
 ----
 
-You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `hummingbird-builds-{user}` project:
+You can also verify this in the OpenShift console under **Builds** -> **ImageStreams** in the `{user}-hummingbird-builds` project:
 
 .OpenShift console showing the sample-app ImageStream created by the internal registry build
 image::module-02/openshift-imagestream-sample-app.png[OpenShift ImageStreams,width=800,link=self,window=blank]

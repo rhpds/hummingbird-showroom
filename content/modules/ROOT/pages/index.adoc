@@ -92,6 +92,8 @@ oc login -u {user} -p {password} {openshift_api_url} --insecure-skip-tls-verify
 [TIP]
 ====
 The OpenShift console is also availabe in a separate window if you prefer:: {openshift_console_url}[window=blank].
+
+Click *Skip tour* if the windows appears.
 ====
 
 . For pushing images to registries *Red Hat Quay* is available in a tab on your right or if you prefer a separate window at {quay_url}[window=blank].

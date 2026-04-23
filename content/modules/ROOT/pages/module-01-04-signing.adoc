@@ -164,6 +164,7 @@ cosign sign --tlog-upload=false \
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
 Pushing signature to: {quay_hostname}/{quay_user}/hummingbird-demo
 ----
@@ -182,6 +183,7 @@ cosign verify --insecure-ignore-tlog=true \
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
 WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.
 
@@ -235,7 +237,6 @@ cosign attest --tlog-upload=false \
 Using payload from: ~/scanning/hummingbird-demo.spdx
 ----
 
-
 === Step 6: Verify SBOM Attestation
 
 Verify the SBOM attestation and check for our package count from the earlier examination of the local SBOM. `cosign` will print the raw JSON, we can use `jq` to find and print our value.
@@ -250,6 +251,7 @@ cosign verify-attestation --insecure-ignore-tlog=true \
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
 WARNING: Skipping tlog verification is an insecure practice that lacks of transparency and auditability verification for the signature.
 
