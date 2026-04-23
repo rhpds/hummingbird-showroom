@@ -61,7 +61,7 @@ The on-cluster Quay registry and `registry-credentials` secret should already be
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get secret registry-credentials -n {user}-hummingbird-builds
+oc get secret quay-registry-credentials -n {user}-hummingbird-builds
 oc describe sa pipeline -n {user}-hummingbird-builds | grep registry-credentials
 ----
 
