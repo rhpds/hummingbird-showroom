@@ -90,7 +90,7 @@ You will execute the first module in a Red Hat Enterprise Linux Virtual Machine 
 +
 [source,sh,subs=attributes,role=execute]
 ----
-oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+oc login -u {user} -p {password} {openshift_api_url} --insecure-skip-tls-verify
 ----
 
 . Switch to your OpenShift project:
