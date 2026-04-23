@@ -57,7 +57,7 @@ Verify you are logged in to the OpenShift cluster. If the Showroom terminal is n
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc login -u {user} -p {password} {openshift_api_server_url} --insecure-skip-tls-verify
+oc login -u {user} -p {password} {openshift_api_url} --insecure-skip-tls-verify
 ----
 
 Confirm the login succeeded:
@@ -67,16 +67,17 @@ Confirm the login succeeded:
 oc whoami
 ----
 
-=== Step 1: Create the Lab Namespace
+=== Step 1: Switch to your Lab Namespace
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc new-project hummingbird-acs-{user}
+oc project {user}-hummingbird-acs-lab
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
-Now using project "hummingbird-acs-<your-user>" on server "https://...".
+Now using project "{user}-hummingbird-acs-lab" on server "{openshift_api_url}".
 ----
 
 === Step 2: Set Registry Variables
@@ -408,10 +409,10 @@ oc create secret docker-registry quay-pull-secret \
   --docker-server=${WORKSHOP_REGISTRY} \
   --docker-username=${REGISTRY_USER} \
   --docker-password=${REGISTRY_PASSWORD} \
-  -n hummingbird-acs-{user} 2>/dev/null || echo "Secret already exists"
+  -n {user}-hummingbird-acs-lab 2>/dev/null || echo "Secret already exists"
 
-oc secrets link default quay-pull-secret --for=pull -n hummingbird-acs-{user}
-oc secrets link builder quay-pull-secret -n hummingbird-acs-{user}
+oc secrets link default quay-pull-secret --for=pull -n {user}-hummingbird-acs-lab
+oc secrets link builder quay-pull-secret -n {user}-hummingbird-acs-lab
 ----
 
 === Step 4: Build and Push the Legacy Image
@@ -441,17 +442,17 @@ if [ -z "${WORKSHOP_REGISTRY}" ] || [ -z "${REGISTRY_USER}" ]; then
 fi
 
 # Remove any pre-existing BuildConfig (which may have a stale/wrong image reference)
-oc delete bc/legacy-python-api -n hummingbird-acs-{user} 2>/dev/null || true
+oc delete bc/legacy-python-api -n {user}-hummingbird-acs-lab 2>/dev/null || true
 
 oc new-build --strategy=docker --binary=true \
   --name=legacy-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable" \
-  -n hummingbird-acs-{user}
+  -n {user}-hummingbird-acs-lab
 
-oc set build-secret --push bc/legacy-python-api quay-pull-secret -n hummingbird-acs-{user} 2>/dev/null || true
+oc set build-secret --push bc/legacy-python-api quay-pull-secret -n {user}-hummingbird-acs-lab 2>/dev/null || true
 
 cp Containerfile.legacy Dockerfile
-oc start-build legacy-python-api --from-dir=. --follow --wait -n hummingbird-acs-{user}
+oc start-build legacy-python-api --from-dir=. --follow --wait -n {user}-hummingbird-acs-lab
 rm -f Dockerfile
 ----
 
@@ -477,7 +478,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
   labels:
     app: legacy-python-api
     tier: legacy
@@ -512,7 +513,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
 spec:
   selector:
     app: legacy-python-api
@@ -524,7 +525,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: legacy-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
 spec:
   to:
     kind: Service
@@ -542,14 +543,14 @@ Wait for the deployment to become ready:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc rollout status deployment/legacy-python-api -n hummingbird-acs-{user} --timeout=120s
+oc rollout status deployment/legacy-python-api -n {user}-hummingbird-acs-lab --timeout=120s
 ----
 
 Get the application route:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-LEGACY_ROUTE=$(oc get route legacy-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
+LEGACY_ROUTE=$(oc get route legacy-python-api -n {user}-hummingbird-acs-lab -o jsonpath='{.spec.host}')
 echo "Legacy API URL: https://${LEGACY_ROUTE}"
 ----
 
@@ -754,12 +755,12 @@ This invokes the Python interpreter directly via the kernel's `execve` syscall, 
 oc new-build --strategy=docker --binary=true \
   --name=fortress-python-api \
   --to-docker --to="${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve" \
-  -n hummingbird-acs-{user} &>/dev/null || true
+  -n {user}-hummingbird-acs-lab &>/dev/null || true
 
-oc set build-secret --push bc/fortress-python-api quay-pull-secret -n hummingbird-acs-{user} 2>/dev/null || true
+oc set build-secret --push bc/fortress-python-api quay-pull-secret -n {user}-hummingbird-acs-lab 2>/dev/null || true
 
 cp Containerfile.fortress Dockerfile
-oc start-build fortress-python-api --from-dir=. --follow --wait -n hummingbird-acs-{user}
+oc start-build fortress-python-api --from-dir=. --follow --wait -n {user}-hummingbird-acs-lab
 rm -f Dockerfile
 ----
 
@@ -959,7 +960,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
   labels:
     app: fortress-python-api
     tier: fortress
@@ -1001,7 +1002,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
 spec:
   selector:
     app: fortress-python-api
@@ -1013,7 +1014,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: fortress-python-api
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
 spec:
   to:
     kind: Service
@@ -1024,14 +1025,14 @@ spec:
     termination: edge
 EOF
 
-oc rollout status deployment/fortress-python-api -n hummingbird-acs-{user} --timeout=120s
+oc rollout status deployment/fortress-python-api -n {user}-hummingbird-acs-lab --timeout=120s
 ----
 
 === Step 2: Verify the Application
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
+ROUTE=$(oc get route fortress-python-api -n {user}-hummingbird-acs-lab -o jsonpath='{.spec.host}')
 curl -sk "https://${ROUTE}/api/v1/greeting"
 ----
 
@@ -1147,7 +1148,7 @@ Run the helper script, passing your namespace and policy suffix via environment 
 ----
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 export ACS_ROUTE ROX_API_TOKEN
-export LAB_NAMESPACE="hummingbird-acs-{user}"
+export LAB_NAMESPACE="{user}-hummingbird-acs-lab"
 export POLICY_SUFFIX="{user}"
 
 bash acs-create-policies.sh
@@ -1265,7 +1266,7 @@ echo ""
 
 oc set image deployment/fortress-python-api \
   api=${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable \
-  -n hummingbird-acs-{user} 2>&1
+  -n {user}-hummingbird-acs-lab 2>&1
 
 echo ""
 echo "Exit code: $?"
@@ -1303,7 +1304,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: legacy-regression-test
-  namespace: hummingbird-acs-{user}
+  namespace: {user}-hummingbird-acs-lab
   labels:
     app: legacy-regression-test
 spec:
@@ -1370,9 +1371,9 @@ Confirm that your Hummingbird deployment is still running and serving traffic:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc get deployment fortress-python-api -n hummingbird-acs-{user}
+oc get deployment fortress-python-api -n {user}-hummingbird-acs-lab
 
-ROUTE=$(oc get route fortress-python-api -n hummingbird-acs-{user} -o jsonpath='{.spec.host}')
+ROUTE=$(oc get route fortress-python-api -n {user}-hummingbird-acs-lab -o jsonpath='{.spec.host}')
 curl -sk "https://${ROUTE}/api/v1/greeting"
 ----
 
@@ -1393,7 +1394,7 @@ Query the policy violations via the ACS REST API:
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:hummingbird-acs-{user}" | \
+  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:{user}-hummingbird-acs-lab" | \
   python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -1486,7 +1487,7 @@ Remove the lab resources when you are finished:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-oc delete project hummingbird-acs-{user}
+oc delete project {user}-hummingbird-acs-lab
 
 ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
 
@@ -1581,7 +1582,7 @@ curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   "https://${ACS_ROUTE}/v1/policies" | \
   python3 -c "import json,sys; [print(p['name'], p['disabled']) for p in json.load(sys.stdin).get('policies',[]) if 'zero fixable' in p['name'].lower()]"
 
-oc get events -n hummingbird-acs-{user} --sort-by=.metadata.creationTimestamp | tail -20
+oc get events -n {user}-hummingbird-acs-lab --sort-by=.metadata.creationTimestamp | tail -20
 ----
 
 **Issue: Hummingbird image fails to start (exec format error)**
