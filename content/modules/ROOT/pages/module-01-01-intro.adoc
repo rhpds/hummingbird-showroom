@@ -243,15 +243,15 @@ In practice those changes give us the following Containerfile
 [source,bash,role=execute,subs=attributes+]
 ----
 cat > ~/flask/Containerfile.hi << 'EOF'
-# Stage 1: Builder base image
-FROM {hummingbird-registry}/python:3.14 #<.>
+# Stage 1: Builder base image #<.>
+FROM {hummingbird-registry}/python:3.14 
 
 # Set the working directory in the container
 WORKDIR /app
 
 # Copy the application files to the target directory
-# COPY always executes as root
-COPY --chown=65532 app.py . #<.>
+# COPY always executes as root #<.>
+COPY --chown=65532 app.py . 
 COPY --chown=65532 index.html static/
 
 # Set environment variables for Python
@@ -263,8 +263,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 USER root
 RUN pip install --index-url http://localhost:8000/simple flask
 
-# Switch to the default non-root user for runtime
-USER ${CONTAINER_DEFAULT_USER} #<.>
+# Switch to the default non-root user for runtim #<.>e
+USER ${CONTAINER_DEFAULT_USER}
 
 # Expose the port Flask will listen on
 EXPOSE 8080
