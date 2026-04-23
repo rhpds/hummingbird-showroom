@@ -6,12 +6,6 @@
 ** xref:module-01-03-scanning.adoc[1.3: Vulnerability Scanning & SBOMs]
 ** xref:module-01-04-signing.adoc[1.4: Image Signing & Attestation]
 ** xref:module-01-05-custom-security.adoc[1.5: Custom Security Configurations]
-** xref:module-01-06-selinux.adoc[1.6: SELinux Hardening with udica (Optional)]
-** xref:module-01-07-selinux-advanced.adoc[1.7: Advanced SELinux Hardening (Optional)]
-** xref:module-01-08-chunkah.adoc[1.8: Content-Based Layer Splitting with chunkah (Optional)]
-** xref:module-01-09-multi-lang-builds.adoc[1.9: Multi-Language Builds with Hummingbird (Optional)]
-** xref:module-01-10-chunkah-value.adoc[1.10: Demonstrating chunkah Value (Optional)]
-** xref:module-01-11-tomcat-hummingbird.adoc[1.11: Layering Tomcat on Hummingbird (Optional)]
 
 * Module 2: Shipwright and Buildpacks (OpenShift)
 ** xref:module-02-01-buildpacks.adoc[2.1: Building with Hummingbird]
