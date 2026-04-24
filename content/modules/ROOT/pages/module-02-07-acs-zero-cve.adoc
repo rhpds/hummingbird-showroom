@@ -151,6 +151,7 @@ User name:
         anonymous bearer token "{user}" with roles [Analyst] (jti: 6cfeaeed-6052-46a1-86d4-998132a186fb, expires: 2026-05-08T09:29:05Z)
 Roles:
         - Analyst
+        - Continuous Integration
 Access:
         r- Access
         r- Alert
@@ -618,27 +619,29 @@ You are carrying the security burden of an entire general-purpose operating syst
 
 === Step 2: Check the Image in ACS Dashboard
 
-Open the RHACS Central dashboard in your browser. First, retrieve the URL and admin credentials:
+Open the RHACS Central dashboard in your browser.
 
+Click the {rhacs_route} link to open the RHACS Central dashboard in a separate window.
+
+Select *openshift-oauth* for the auth provider and click *Log in*.
+
+On the Keycloak login screen use the following credentials, then click *Sign in*:
+
+.Username
 [source,bash,role=execute,subs="attributes"]
 ----
-echo "export ACS_ROUTE={rhacs_route}" >>$HOME/.bashrc
 echo "export ACS_USER={rhacs_username}" >>$HOME/.bashrc
-echo "export ACS_PASSWORD={password}" >>$HOME/.bashrc
-source $HOME/.bashrc
-
-echo "ACS Dashboard: ${ACS_ROUTE}"
-echo "Username:      ${ACS_USER}"
-echo "Password:      ${ACS_PASSWORD}"
 ----
 
-Log in to the ACS Central dashboard:
+.Password
+[source,bash,role=execute,subs="attributes"]
+----
+echo "export ACS_PASSWORD={password}" >>$HOME/.bashrc
+----
 
-. Open the URL printed above in your browser
-. Accept the self-signed certificate warning if prompted
-. Select *Login with username/password* and log in with username and password shown above
+// image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
 
-image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
+Allow the requested permissions.
 
 After logging in, you will see the ACS Dashboard showing cluster-wide security metrics -- policy violations, images at most risk, and deployments at most risk:
 
@@ -832,6 +835,13 @@ export PATH="$HOME/bin:$PATH"
 syft version
 ----
 
+Log into the Quay registry with syft:
+
+[source,bash,role=execute,subs=attributes]
+----
+syft login -u {quay_user} -p {quay_password} {quay_url}
+----
+
 === Step 1: Generate SBOMs for Both Images
 
 Since images were built on-cluster, we scan them directly from the Quay registry. The `SYFT_REGISTRY_INSECURE_SKIP_TLS_VERIFY` variable handles the self-signed certificate:
@@ -841,18 +851,18 @@ Since images were built on-cluster, we scan them directly from the Quay registry
 export SYFT_REGISTRY_INSECURE_SKIP_TLS_VERIFY=true
 
 echo "=== Legacy image SBOM ==="
-syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o table | head -30
+syft scan registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o table | head -30
 echo ""
-LEGACY_COUNT=$(syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+LEGACY_COUNT=$(syft scan registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/legacy-python-api:vulnerable -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
 echo "Total packages in legacy image: $LEGACY_COUNT"
 ----
 
 [source,bash,role=execute]
 ----
 echo "=== Hummingbird image SBOM ==="
-syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o table | head -30
+syft scan registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o table | head -30
 echo ""
-FORTRESS_COUNT=$(syft registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
+FORTRESS_COUNT=$(syft scan registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortress-python-api:zero-cve -o json 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('artifacts',[])))")
 echo "Total packages in Hummingbird image: $FORTRESS_COUNT"
 ----
 
@@ -866,31 +876,15 @@ Hummingbird image: ~15-25 packages (Python runtime only)
 
 Hummingbird images published by Red Hat through the Konflux pipeline include attached SBOM attestations, signatures, and SLSA provenance. First, install the `cosign` CLI, then inspect the upstream image supply chain.
 
-Install cosign from the RHTAS cli-server (if available), otherwise from GitHub:
+Install cosign:
 
 [source,bash,role=execute]
 ----
-mkdir -p $HOME/bin
-
-DOWNLOADS_URL=$(oc get route -n trusted-artifact-signer \
-  -l app.kubernetes.io/name=cli-server \
-  -o jsonpath='{.items[0].spec.host}' 2>/dev/null || \
-  oc get route -n trusted-artifact-signer \
-  -l app=trusted-artifact-signer-clientserver \
-  -o jsonpath='{.items[0].spec.host}' 2>/dev/null)
-
-if [ -n "$DOWNLOADS_URL" ]; then
-  echo "Downloading cosign from RHTAS cli-server..."
-  curl -sSL "https://${DOWNLOADS_URL}/clients/linux/cosign-amd64.gz" | gunzip > $HOME/bin/cosign
-else
-  echo "Downloading cosign from GitHub..."
-  COSIGN_VERSION=v2.4.1
-  curl -sL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
-    -o $HOME/bin/cosign
-fi
+COSIGN_VERSION=v2.4.1
+curl -sL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
+  -o $HOME/bin/cosign
 
 chmod +x $HOME/bin/cosign
-export PATH="$HOME/bin:$PATH"
 cosign version
 ----
 
