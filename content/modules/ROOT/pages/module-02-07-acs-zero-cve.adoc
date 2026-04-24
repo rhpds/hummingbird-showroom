@@ -86,42 +86,29 @@ Look up the on-cluster Quay registry route and configure your registry credentia
 
 [source,bash,role=execute,subs="attributes"]
 ----
-export WORKSHOP_REGISTRY="{quay_hostname}"
-export REGISTRY_USER="{quay_user}"
-export REGISTRY_PASSWORD="{quay_password}"
+echo export WORKSHOP_REGISTRY="{quay_hostname}" >>$HOME/.bashrc
+echo export REGISTRY_USER="{quay_user}" >>$HOME/.bashrc
+echo export REGISTRY_PASSWORD="{quay_password}" >>$HOME/.bashrc
+echo export REGISTRY_AUTH_FILE=$HOME/.config/containers/auth.json >>$HOME/.bashrc
+source $HOME/.bashrc
 
-export REGISTRY_AUTH_FILE=$HOME/.config/containers/auth.json
 mkdir -p $(dirname $REGISTRY_AUTH_FILE)
-
-echo "WORKSHOP_REGISTRY=${WORKSHOP_REGISTRY}"
-echo "REGISTRY_USER=${REGISTRY_USER}"
 
 skopeo login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "${WORKSHOP_REGISTRY}" --tls-verify=false
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
-WORKSHOP_REGISTRY=<quay-hostname>
-REGISTRY_USER=<quay-user>
+WORKSHOP_REGISTRY={quay_hostname}
+REGISTRY_USER={quay_user}
 Login Succeeded!
 ----
 
-=== Step 3: Install the roxctl CLI
-
-The `roxctl` CLI is used to interact with ACS Central from the command line. Download it directly from your ACS installation:
+Verify that `roxctl` is installed:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
-
-curl -sk -u "admin:${ACS_PASSWORD}" \
-  "https://${ACS_ROUTE}/api/cli/download/roxctl-linux" -o /tmp/roxctl
-
-chmod +x /tmp/roxctl
-mkdir -p $HOME/bin
-mv /tmp/roxctl $HOME/bin/roxctl
-export PATH="$HOME/bin:$PATH"
 roxctl version
 ----
 
@@ -141,19 +128,14 @@ Set the ACS Central endpoint and API token so that `roxctl` can communicate with
 
 [source,bash,role=execute,subs="attributes"]
 ----
-export ROX_ENDPOINT=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}'):443
-ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
-
-export ROX_API_TOKEN=$(curl -sk -u "admin:${ACS_PASSWORD}" \
-  "https://${ROX_ENDPOINT}/v1/apitokens/generate" \
-  -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"workshop-token-'$(date +%s)'","role":"Admin"}' \
-  | jq -r '.token')
+echo export ROX_ENDPOINT=https://{acs_hostname}:443 >>$HOME/.bashrc
+echo export ROX_API_TOKEN={acs_token} >>$HOME/.bashrc
+source $HOME/.bashrc
 
 echo "ROX_ENDPOINT=${ROX_ENDPOINT}"
 echo "ROX_API_TOKEN=${ROX_API_TOKEN:0:20}..."
 ----
+
 
 Verify connectivity:
 
@@ -163,11 +145,17 @@ roxctl central whoami --insecure-skip-tls-verify
 ----
 
 .*Expected output:*
+[source,subs=attributes]
 ----
-User:
-  auth-provider: ...
-  Roles: Admin
-  Access: ...
+UserID:
+        auth-token:6cfeaeed-6052-46a1-86d4-998132a186fb
+User name:
+        anonymous bearer token "{user}" with roles [Analyst] (jti: 6cfeaeed-6052-46a1-86d4-998132a186fb, expires: 2026-05-08T09:29:05Z)
+Roles:
+        - Analyst
+Access:
+        r- Access
+        r- Alert
 ----
 
 [WARNING]
