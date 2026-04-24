@@ -94,6 +94,9 @@ source $HOME/.bashrc
 
 mkdir -p $(dirname $REGISTRY_AUTH_FILE)
 
+echo ${WORKSHOP_REGISTRY}
+echo ${REGISTRY_USER}
+
 skopeo login -u "${REGISTRY_USER}" -p "${REGISTRY_PASSWORD}" "${WORKSHOP_REGISTRY}" --tls-verify=false
 ----
 
@@ -117,19 +120,14 @@ roxctl version
 roxctl: 4.x.x
 ----
 
-[NOTE]
-====
-The download endpoint requires authentication. We use the ACS admin password stored in the `central-htpasswd` secret. The binary is placed in `~/bin` which is added to your PATH.
-====
-
 === Step 4: Configure roxctl CLI
 
 Set the ACS Central endpoint and API token so that `roxctl` can communicate with your ACS installation:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-echo export ROX_ENDPOINT=https://{acs_hostname}:443 >>$HOME/.bashrc
-echo export ROX_API_TOKEN={acs_token} >>$HOME/.bashrc
+echo export ROX_ENDPOINT={rhacs_route}:443 >>$HOME/.bashrc
+echo export ROX_API_TOKEN={rhacs_api_token} >>$HOME/.bashrc
 source $HOME/.bashrc
 
 echo "ROX_ENDPOINT=${ROX_ENDPOINT}"
