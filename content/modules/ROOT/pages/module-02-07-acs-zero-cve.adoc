@@ -622,11 +622,13 @@ Open the RHACS Central dashboard in your browser. First, retrieve the URL and ad
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-ACS_PASSWORD=$(oc get secret central-htpasswd -n {acs-namespace} -o jsonpath='{.data.password}' | base64 -d)
+echo "export ACS_ROUTE={rhacs_route}" >>$HOME/.bashrc
+echo "export ACS_USER={rhacs_user}" >>$HOME/.bashrc
+echo "export ACS_PASSWORD={password}" >>$HOME/.bashrc
+source $HOME/.bashrc
 
-echo "ACS Dashboard: https://${ACS_ROUTE}"
-echo "Username:      admin"
+echo "ACS Dashboard: ${ACS_ROUTE}"
+echo "Username:      ${ACS_USER}"
 echo "Password:      ${ACS_PASSWORD}"
 ----
 
@@ -634,7 +636,7 @@ Log in to the ACS Central dashboard:
 
 . Open the URL printed above in your browser
 . Accept the self-signed certificate warning if prompted
-. Select *Login with username/password* and log in with username `admin` and the password shown above
+. Select *Login with username/password* and log in with username and password shown above
 
 image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
 
