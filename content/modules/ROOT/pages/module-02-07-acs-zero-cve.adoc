@@ -623,7 +623,7 @@ Open the RHACS Central dashboard in your browser. First, retrieve the URL and ad
 [source,bash,role=execute,subs="attributes"]
 ----
 echo "export ACS_ROUTE={rhacs_route}" >>$HOME/.bashrc
-echo "export ACS_USER={rhacs_user}" >>$HOME/.bashrc
+echo "export ACS_USER={rhacs_username}" >>$HOME/.bashrc
 echo "export ACS_PASSWORD={password}" >>$HOME/.bashrc
 source $HOME/.bashrc
 
