@@ -15,9 +15,10 @@
 #   7.  Binds workshop-participant ClusterRole (ClusterBuildStrategy, imageregistry, webhooks)
 #   8.  Grants view on infrastructure namespaces (quay, stackrox, keycloak, RHTAS, gitea)
 #   9.  Grants ACS secret reader for central-htpasswd in stackrox
-#   10. Fixes Gitea must-change-password flag
-#   11. (Optional) Deploys a per-user Showroom instance with embedded terminal
-#   12. (Optional) Updates existing Showroom ConfigMap if Showroom already deployed
+#   10. Generates per-user ACS API token (Analyst role, non-admin) for Sub-Module 2.2
+#   11. Pre-creates <user>-hummingbird-acs-lab namespace + admin binding for Sub-Module 2.2
+#   12. Fixes Gitea must-change-password flag
+#   13. (Optional) Deploys a per-user Showroom instance with embedded terminal / updates ConfigMap
 #
 # On completion, writes workshop-users-access.txt with all credentials and URLs.
 #
@@ -213,6 +214,17 @@ rules:
     resourceNames: ["central-htpasswd"]
     verbs: ["get"]
 ACSR
+fi
+
+# ---- One-time: Resolve ACS Central connection for Showroom userdata injection ----
+ACS_CENTRAL_ROUTE=$(oc get route central -n stackrox \
+    -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+ACS_ADMIN_PASS=$(oc get secret central-htpasswd -n stackrox \
+    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+if [ -n "${ACS_CENTRAL_ROUTE}" ]; then
+    info "ACS Central route resolved: ${ACS_CENTRAL_ROUTE}"
+else
+    warn "ACS Central not found. rhacs_route will be placeholder; re-run after ACS is deployed."
 fi
 
 # ---- Output file ----
@@ -423,7 +435,7 @@ VIEW
 
     # 9. ACS secret reader (stackrox/central-htpasswd)
     if oc get namespace stackrox > /dev/null 2>&1; then
-        info "[9/12] Granting ACS secret reader in stackrox"
+        info "[9/13] Granting ACS secret reader in stackrox"
         cat <<ACSR | oc apply -f - 2>/dev/null
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -443,26 +455,88 @@ roleRef:
 ACSR
         info "  ACS central-htpasswd read access granted."
     else
-        info "[9/12] stackrox namespace not found, skipping ACS secret reader."
+        info "[9/13] stackrox namespace not found, skipping ACS secret reader."
     fi
 
-    # 10. Fix Gitea must-change-password flag
+    # 10. Generate per-user ACS API token (Admin role within ACS — not OpenShift cluster-admin)
+    #     Admin ACS role is required for Exercise 7: students create enforcement policies
+    #     via POST/PUT /v1/policies. This grants no OpenShift privileges whatsoever.
+    USER_ACS_TOKEN=""
+    if [ -n "${ACS_CENTRAL_ROUTE}" ] && [ -n "${ACS_ADMIN_PASS}" ]; then
+        info "[10/13] Generating ACS API token for ${USERNAME} (ACS Admin role)"
+        ACS_TOKEN_NAME="workshop-${USERNAME}"
+        # Revoke any existing token with the same name (idempotent re-runs)
+        EXISTING_TOKEN_ID=$(curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+            "https://${ACS_CENTRAL_ROUTE}/v1/apitokens" | \
+            python3 -c "
+import json, sys
+tokens = json.load(sys.stdin).get('tokens', [])
+match = [t for t in tokens if t.get('name') == '${ACS_TOKEN_NAME}' and not t.get('revoked')]
+print(match[0]['id'] if match else '')
+" 2>/dev/null || echo "")
+        if [ -n "${EXISTING_TOKEN_ID}" ]; then
+            curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+                -X PATCH "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/revoke/${EXISTING_TOKEN_ID}" \
+                > /dev/null 2>&1 || true
+            info "  Revoked existing ACS token for ${USERNAME}."
+        fi
+        USER_ACS_TOKEN=$(curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+            "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/generate" \
+            -X POST -H 'Content-Type: application/json' \
+            -d "{\"name\":\"${ACS_TOKEN_NAME}\",\"role\":\"Admin\"}" | \
+            python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" \
+            2>/dev/null || echo "")
+        if [ -n "${USER_ACS_TOKEN}" ]; then
+            info "  ACS Admin token generated for ${USERNAME}."
+        else
+            warn "  ACS token generation failed for ${USERNAME}. rhacs_api_token will be empty."
+        fi
+    else
+        info "[10/13] ACS not available — skipping token generation for ${USERNAME}."
+    fi
+
+    # 11. Pre-create ACS lab namespace for Sub-Module 2.2
+    ACS_LAB_NS="${USERNAME}-hummingbird-acs-lab"
+    info "[11/13] Pre-creating ACS lab namespace: ${ACS_LAB_NS}"
+    oc create namespace "${ACS_LAB_NS}" --dry-run=client -o yaml | \
+        oc label --local -f - workshop=zero-cve-hummingbird workshop-user="${USERNAME}" -o yaml | \
+        oc apply -f - 2>/dev/null
+    cat <<ACSNS | oc apply -f - 2>/dev/null
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${USERNAME}-admin
+  namespace: ${ACS_LAB_NS}
+  labels:
+    workshop: zero-cve-hummingbird
+subjects:
+  - kind: User
+    name: ${USERNAME}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
+ACSNS
+    info "  ACS lab namespace ready: ${ACS_LAB_NS}"
+
+    # 12. Fix Gitea must-change-password flag
     GITEA_POD=$(oc get pods -n gitea -l app=gitea-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     if [ -n "${GITEA_POD}" ]; then
-        info "[10/12] Resetting Gitea must-change-password for ${USERNAME}"
+        info "[12/13] Resetting Gitea must-change-password for ${USERNAME}"
         oc exec -n gitea "${GITEA_POD}" -- \
             /home/gitea/gitea -c /home/gitea/conf/app.ini admin user change-password \
             --username "${USERNAME}" --password "${PASSWORD}" --must-change-password=false 2>/dev/null && \
             info "  Gitea password reset (must-change-password=false)." || \
             warn "  Gitea user ${USERNAME} may not exist yet. Create manually or re-run after Gitea setup."
     else
-        warn "[10/12] Gitea pod not found. Skipping must-change-password fix."
+        warn "[12/13] Gitea pod not found. Skipping must-change-password fix."
     fi
 
-    # 11. Deploy per-user Showroom instance (optional)
+    # 12. Deploy per-user Showroom instance (optional)
     if [ "${DEPLOY_SHOWROOM}" = "true" ] && [ -n "${SHOWROOM_CHART:-}" ]; then
         SHOWROOM_NS="showroom-${USERNAME}"
-        info "[11/12] Deploying Showroom in ${SHOWROOM_NS}"
+        info "[12/13] Deploying Showroom in ${SHOWROOM_NS}"
         oc create namespace "${SHOWROOM_NS}" --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 
         USERDATA_FILE=$(mktemp)
@@ -477,6 +551,8 @@ quay_user: ${USERNAME}
 quay_password: ${PASSWORD}
 quay_console_url: https://${QUAY_ROUTE:-quay-not-found}
 quay_url: https://${QUAY_ROUTE:-quay-not-found}
+rhacs_route: ${ACS_CENTRAL_ROUTE:-acs-not-available}
+rhacs_api_token: ${USER_ACS_TOKEN:-}
 USERDATA
 
         ${HELM_BIN} template "showroom" "${SHOWROOM_CHART}" \
@@ -499,10 +575,10 @@ USERDATA
         rm -f "${USERDATA_FILE}"
     fi
 
-    # 12. Patch existing Showroom ConfigMap if namespace exists but Showroom was not just deployed
+    # 13. Patch existing Showroom ConfigMap if namespace exists but Showroom was not just deployed
     if [ "${DEPLOY_SHOWROOM}" != "true" ] && oc get namespace "showroom-${USERNAME}" > /dev/null 2>&1; then
         if oc get configmap showroom-userdata -n "showroom-${USERNAME}" > /dev/null 2>&1; then
-            info "[12/12] Patching existing Showroom user_data for ${USERNAME}"
+            info "[13/13] Patching existing Showroom user_data for ${USERNAME}"
             oc create configmap showroom-userdata -n "showroom-${USERNAME}" \
                 --from-literal=user_data.yml="$(cat <<UDPATCH
 user: ${USERNAME}
@@ -515,6 +591,8 @@ quay_user: ${USERNAME}
 quay_password: ${PASSWORD}
 quay_console_url: https://${QUAY_ROUTE:-quay-not-found}
 quay_url: https://${QUAY_ROUTE:-quay-not-found}
+rhacs_route: ${ACS_CENTRAL_ROUTE:-acs-not-available}
+rhacs_api_token: ${USER_ACS_TOKEN:-}
 UDPATCH
 )" \
                 --dry-run=client -o yaml | oc apply -f - 2>/dev/null
@@ -575,6 +653,7 @@ GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}' 2>/d
         echo "  Namespaces:"
         echo "    - hummingbird-builds (shared, admin)"
         echo "    - hummingbird-builds-${USERNAME} (per-user, admin)"
+        echo "    - ${USERNAME}-hummingbird-acs-lab (ACS lab, admin)"
         echo "    - renovate-pipelines (admin)"
         echo "    - quay, stackrox, keycloak, trusted-artifact-signer, gitea (view)"
         SHOWROOM_ROUTE=$(oc get route showroom -n "showroom-${USERNAME}" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")

@@ -45,7 +45,7 @@
         validate_certs: false
         api_version: v1
         kind: Secret
-        name: acs-password
+        name: central-htpasswd
         namespace: "{{ acs_ns }}"
       register: r_acs_secret
       no_log: true

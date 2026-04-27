@@ -15,7 +15,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "create", "patch"]
+    resourceNames: ["central-htpasswd", "sensor-tls", "collector-tls", "admission-control-tls"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["routes"]
     verbs: ["get", "list"]
