@@ -27,7 +27,7 @@ This sub-module introduces a fundamentally different posture. Instead of reactiv
 
 ----
 Phase 1: Deploy legacy Python API (python:3.11-buster)
-  -> ACS scan reveals 100+ CVEs from unused OS packages
+  -> ACS scan reveals fixable CVEs from unused Python packaging tools (pip, setuptools, wheel)
 
 Phase 2: Rebuild with Hummingbird distroless multi-stage
   -> ACS scan reveals ZERO fixable CVEs
@@ -599,23 +599,25 @@ roxctl image scan \
   --output=table
 ----
 
-.*Expected output (abbreviated -- your counts will vary):*
+.*Expected output (abbreviated -- your CVEs and counts will vary):*
 ----
-COMPONENT        VERSION   CVE               SEVERITY   FIXED BY
-apt              2.2.4     CVE-2024-XXXXX    CRITICAL   2.2.5
-libsystemd0     247.3-7   CVE-2023-XXXXX    HIGH       ...
-glibc            2.31-13   CVE-2024-XXXXX    HIGH       ...
-openssl          1.1.1n    CVE-2024-XXXXX    HIGH       ...
+COMPONENT    VERSION   CVE              SEVERITY    CVSS   FIXED VERSION
+setuptools   65.5.1    CVE-2024-6345   IMPORTANT   8.8    70.0.0
+setuptools   65.5.1    CVE-2025-47273  IMPORTANT   8.8    78.1.1
+wheel        0.40.0    CVE-2026-24049  IMPORTANT   7.1    0.46.2
+mercurial    4.8.2     CVE-2019-3902   MODERATE    5.9    4.9
+pip          23.1.2    CVE-2023-5752   MODERATE    5.5    23.3
 ...
-
-TOTAL: XX critical, XX high, XX medium, XX low
+WARN: A total of N unique vulnerabilities were found in N components
 ----
 
 [IMPORTANT]
 ====
-**The key insight**: you will typically see **50 to 200+ CVEs** in this scan. Every single one of them comes from Debian Buster OS packages -- `apt`, `dpkg`, `systemd`, `glibc`, `openssl`, `bash`, `coreutils`, and dozens more. Your Python API uses **none of them**. It needs only the Python interpreter and the standard library.
+**The key insight**: you will see **multiple fixable CVEs** in this scan, all from Python packaging tools -- `pip`, `setuptools`, `wheel`, and `mercurial` -- that are bundled in the base image but are **never used** by your application at runtime. Your API contains exactly one Python file and uses zero third-party packages. Every CVE listed is technical debt you carry because the base image includes them.
 
-You are carrying the security burden of an entire general-purpose operating system for an application that requires only a language runtime.
+Beyond Python-level CVEs, the base image also contains a full Debian OS layer (apt, bash, glibc, coreutils, and hundreds of other packages -- visible when scanning with `syft` in Exercise 5). ACS focuses on packages with known CVE entries, but the full package surface is far larger.
+
+You are carrying the security burden of a full OS and packaging toolchain for an application that requires only a language runtime.
 ====
 
 === Step 2: Check the Image in ACS Dashboard
@@ -652,17 +654,17 @@ Now navigate to the legacy image vulnerabilities:
 
 . Click *Vulnerability Management* -> *Results* in the left sidebar
 . Search for `legacy-python-api` in the Image Name filter
-. You will see **60 CVEs** across the image, including critical and high severity findings:
+. You will see the CVEs across the image, including Important and Moderate severity findings:
 
-image::module-02/acs-legacy-cves-all.png[ACS Vulnerability findings showing 60 CVEs in legacy-python-api,link=self,window=blank]
+image::module-02/acs-legacy-cves-all.png[ACS Vulnerability findings for legacy-python-api,link=self,window=blank]
 
 Filter to show only **fixable Critical and Important** CVEs to see the most actionable findings:
 
-image::module-02/acs-legacy-cves-fixable.png[ACS filtered view showing 3 fixable Critical/Important CVEs,link=self,window=blank]
+image::module-02/acs-legacy-cves-fixable.png[ACS filtered view showing fixable Important CVEs,link=self,window=blank]
 
 [NOTE]
 ====
-All of these CVEs come from OS-level packages in the `python:3.11-buster` base image -- not from your application code. This is the security debt you carry by using a full OS-based container image.
+These CVEs come from Python packaging tools (`pip`, `setuptools`, `wheel`, `mercurial`) bundled in the base image -- not from your application code. This is the security debt you carry by using a full OS-based container image. Additional OS-level packages are also present (visible in the `syft` SBOM in Exercise 5) but may not all have active CVE entries in the ACS database at any given time.
 ====
 
 === Step 3: Count the Fixable CVEs
@@ -688,7 +690,7 @@ Fixable vulnerabilities: <N>
 
 [NOTE]
 ====
-The exact numbers depend on when the base image was last updated and the current state of the CVE databases. The key takeaway is that there are **multiple fixable vulnerabilities** -- all from OS-level packages your application never uses.
+The exact numbers depend on when the base image was last updated and the current state of the CVE databases. The key takeaway is that there are **multiple fixable vulnerabilities** -- all from packages bundled in the base image that your application never uses at runtime.
 ====
 
 Remember these numbers. You will compare them against the Hummingbird image shortly.
@@ -807,17 +809,17 @@ except (json.JSONDecodeError, KeyError):
 === Image Size Comparison ===
 
 Legacy (python:3.11-buster):
-  Layers: ~10+
+  Layers: ~10
   Created: <timestamp>
 
 Fortress (Hummingbird distroless):
-  Layers: ~3-5
+  Layers: ~30-40
   Created: <timestamp>
 ----
 
 [NOTE]
 ====
-The Hummingbird image is roughly **9x smaller** because it contains only the Python interpreter, shared libraries it actually links against, and TLS root certificates -- nothing else. No package manager, no shell, no coreutils, no man pages. The exact sizes depend on the base image versions, but the order-of-magnitude difference is consistent.
+The Hummingbird image has more layers than the legacy custom base because it is built from a full RHEL-based RPM stack (the Project Hummingbird build pipeline). *Layer count is not the same as attack surface.* The Hummingbird image's RPM packages are purpose-built minimal variants with the `.hum1` suffix -- no shell, no package manager, no general-purpose OS utilities. The SBOM comparison in Exercise 5 (56 RPM packages vs 451 Debian packages) captures the real difference in scope.
 ====
 
 [[inspect-sbom]]
@@ -867,10 +869,10 @@ FORTRESS_COUNT=$(syft scan registry:${WORKSHOP_REGISTRY}/${REGISTRY_USER}/fortre
 echo "Total packages in Hummingbird image: $FORTRESS_COUNT"
 ----
 
-.*Expected comparison:*
+.*Expected comparison (counts will vary):*
 ----
-Legacy image:      ~430 packages (Debian Buster + Python)
-Hummingbird image: ~15-25 packages (Python runtime only)
+Legacy image:      ~430-460 packages (Debian Buster + Python toolchain)
+Hummingbird image: ~50-60 packages (RHEL minimal RPMs — Python runtime only)
 ----
 
 === Step 2: Install cosign and Inspect Hummingbird Upstream Provenance
@@ -1268,18 +1270,26 @@ This SHOULD fail if ACS policies are enforced correctly.
 
 error: failed to patch image update to pod template: admission webhook
 "policyeval.stackrox.io" denied the request:
-The attempted operation violated 1 enforced policy, described below:
+The attempted operation violated one or more enforced policies, described below:
 
 Policy: Zero Fixable CVEs Required - <your-user>
 - Description:
-    ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
-      attack surface eradication over reactive patching.
+    ↳ Reject deployments where the image has any fixable CVE.
 - Violations:
     - Fixable CVE-2024-6345 (CVSS 8.8) (severity Important) found in component
       'setuptools' (version 65.5.1) in container 'api', resolved by version 70.0.0
+    - Fixable CVE-2025-47273 (CVSS 8.8) (severity Important) found in component
+      'setuptools' (version 65.5.1) in container 'api', resolved by version 78.1.1
+    - Fixable CVE-2026-24049 (CVSS 7.1) (severity Important) found in component
+      'wheel' (version 0.40.0) in container 'api', resolved by version 0.46.2
+    - Fixable CVE-2019-3902 (CVSS 5.9) (severity Moderate) found in component
+      'mercurial' (version 4.8.2) in container 'api', resolved by version 4.9
     - Fixable CVE-2023-5752 (CVSS 5.5) (severity Moderate) found in component
       'pip' (version 23.1.2) in container 'api', resolved by version 23.3
     ... (additional CVEs listed) ...
+
+In case of emergency, add the annotation
+{"admission.stackrox.io/break-glass": "ticket-1234"} to your deployment
 ----
 
 === Step 2: Attempt to Create a New Deployment
@@ -1322,17 +1332,18 @@ echo "Exit code: $?"
 Error from server (Failed currently enforced policies from RHACS):
 error when creating "STDIN": admission webhook "policyeval.stackrox.io"
 denied the request:
-The attempted operation violated 1 enforced policy, described below:
+The attempted operation violated one or more enforced policies, described below:
 
 Policy: Zero Fixable CVEs Required - <your-user>
 - Description:
-    ↳ Reject deployments where the image has any fixable CVE. Enforces proactive
-      attack surface eradication over reactive patching.
+    ↳ Reject deployments where the image has any fixable CVE.
 - Violations:
     - Fixable CVE-2024-6345 (CVSS 8.8) (severity Important) found in component
       'setuptools' (version 65.5.1) in container 'api', resolved by version 70.0.0
-    - Fixable CVE-2023-5752 (CVSS 5.5) (severity Moderate) found in component
-      'pip' (version 23.1.2) in container 'api', resolved by version 23.3
+    - Fixable CVE-2025-47273 (CVSS 8.8) (severity Important) found in component
+      'setuptools' (version 65.5.1) in container 'api', resolved by version 78.1.1
+    - Fixable CVE-2026-24049 (CVSS 7.1) (severity Important) found in component
+      'wheel' (version 0.40.0) in container 'api', resolved by version 0.46.2
     ... (additional CVEs listed) ...
 
 In case of emergency, add the annotation
@@ -1500,7 +1511,7 @@ Congratulations! You have completed Sub-Module 2.2 -- The Immutable Fortress.
 .*What You Accomplished*
 {empty} +
 pass:[&#10003;] Deployed a legacy Python API built on `python:3.11-buster` +
-pass:[&#10003;] Scanned with ACS and observed 50-200+ CVEs from unused OS packages +
+pass:[&#10003;] Scanned with ACS and observed fixable CVEs from unused Python packaging tools bundled in the base image +
 pass:[&#10003;] Rewrote the application using a Hummingbird distroless multi-stage build +
 pass:[&#10003;] Learned strict JSON exec form for ENTRYPOINT/CMD in shell-less images +
 pass:[&#10003;] Compared SBOM package counts: ~430 (legacy) vs ~20 (Hummingbird) +

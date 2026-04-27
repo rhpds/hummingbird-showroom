@@ -136,6 +136,50 @@ The script is **idempotent** -- safe to re-run to add more users or repair state
 
 ---
 
+### `setup-acs-image-integrations.py`
+
+Creates per-student ACS image integrations so that ACS Central can authenticate against each student's private Quay repository and run image scans.
+
+ACS auto-generates a single Quay integration with no credentials, which causes `roxctl image scan` to fail with `401 Unauthorized` for private repos.  This script creates a named integration for every `user:password` pair supplied, e.g. `"Workshop Quay - lab-user-2"`.
+
+`setup-workshop-users.sh` calls this script automatically after user provisioning (step 10b), so **you normally do not need to run it manually**.  Use it directly only to repair integrations or add users after initial setup.
+
+**Quick start (called automatically by `setup-workshop-users.sh`):**
+```bash
+# Automatic — no manual action required
+NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
+```
+
+**Manual run (repair / add users):**
+```bash
+python3 scripts/setup-acs-image-integrations.py \
+    --acs-route  central-stackrox.apps.cluster.example.com \
+    --acs-token  eyJ... \
+    --quay-endpoint https://quay-registry-quay-quay.apps.cluster.example.com \
+    --users lab-user-1:openshift lab-user-2:openshift lab-user-3:openshift
+```
+
+**Dry-run (shows what would be created, no API calls):**
+```bash
+python3 scripts/setup-acs-image-integrations.py --dry-run \
+    --acs-route  central-stackrox.apps.cluster.example.com \
+    --acs-token  eyJ... \
+    --quay-endpoint https://quay-registry-quay-quay.apps.cluster.example.com \
+    --users lab-user-1:openshift
+```
+
+**Environment variable fallbacks:**
+
+| Variable | CLI arg | Description |
+|---|---|---|
+| `ACS_ROUTE` | `--acs-route` | ACS Central hostname (no `https://`) |
+| `ACS_ADMIN_TOKEN` | `--acs-token` | Bearer token with ACS Admin role |
+| `QUAY_ENDPOINT` | `--quay-endpoint` | Full Quay URL including `https://` |
+
+The script is **idempotent** -- integrations that already exist by name are skipped.
+
+---
+
 # Registry Management Scripts
 
 This directory also contains automation scripts for managing container registry references throughout the project.

@@ -640,6 +640,35 @@ UDPATCH
     info "========== ${USERNAME} complete =========="
 done
 
+# ---- One-time (10b): Configure per-user ACS image integrations for private Quay repos ----
+# ACS auto-generated integrations have no credentials; create one per student so ACS can
+# authenticate and scan each student's private Quay repository.
+if [ -n "${ACS_CENTRAL_ROUTE}" ] && [ -n "${ACS_ADMIN_PASS}" ] && [ -n "${QUAY_ROUTE}" ]; then
+    info "Configuring per-user ACS image integrations for Quay..."
+    ADMIN_TOKEN=$(curl -sk \
+        -u "admin:${ACS_ADMIN_PASS}" \
+        "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/generate" \
+        -H "Content-Type: application/json" \
+        -d '{"name":"setup-script-temp","role":"Admin"}' | \
+        python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    if [ -n "${ADMIN_TOKEN}" ]; then
+        USER_PAIRS=""
+        for u in $(seq 1 "${NUM_USERS}"); do
+            USER_PAIRS="${USER_PAIRS} ${USER_PREFIX}-${u}:${PASSWORD}"
+        done
+        # shellcheck disable=SC2086
+        python3 "$(dirname "$0")/setup-acs-image-integrations.py" \
+            --acs-route    "${ACS_CENTRAL_ROUTE}" \
+            --acs-token    "${ADMIN_TOKEN}" \
+            --quay-endpoint "https://${QUAY_ROUTE}" \
+            --users        ${USER_PAIRS} || warn "ACS image integration setup encountered errors (see above)."
+    else
+        warn "Could not obtain ACS admin token; skipping image integration setup."
+    fi
+else
+    warn "ACS Central or Quay route not resolved; skipping image integration setup (re-run after both are deployed)."
+fi
+
 # Clean up showroom chart temp dir
 if [ -n "${SHOWROOM_CHART_DIR:-}" ] && [ -d "${SHOWROOM_CHART_DIR:-}" ]; then
     rm -rf "${SHOWROOM_CHART_DIR}"
