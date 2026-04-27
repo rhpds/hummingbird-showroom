@@ -823,7 +823,31 @@ stackrox-validating-webhook  1          ...
 If the webhook does not appear, check that `listenOnCreates` is set to `true` in the SecuredCluster spec and that the admission controller pod is running.
 ====
 
-Your ACS installation is ready. Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: The Immutable Fortress].
+Your ACS installation is ready. Proceed to Step 24 below to provision per-user ACS access before running the workshop.
+
+==== Step 24: Provision Per-User ACS Access
+
+Run `setup-workshop-users.sh` to generate per-user ACS API tokens and inject them into each student's Showroom environment. This step must be completed **after** ACS Central is running.
+
+The script (one run covers all users):
+
+* Generates an ACS API token with the **Admin role** (ACS RBAC only — no OpenShift cluster-admin) for each student account (`workshop-{username}`), enabling Exercise 7 policy creation.
+* Injects `rhacs_route` and `rhacs_api_token` into each student's Showroom `user_data.yml` so the module can use them as `{rhacs_route}` and `{rhacs_api_token}` attributes.
+* Pre-creates the `{username}-hummingbird-acs-lab` namespace with an `admin` RoleBinding so students can use `oc project` without cluster-admin.
+* Builds a custom Showroom terminal image with `roxctl` pre-installed and pushes it to the cluster's internal image registry.
+
+[source,bash,role=execute]
+----
+cd /path/to/zero-cve-hummingbird-showroom
+bash scripts/setup-workshop-users.sh
+----
+
+[NOTE]
+====
+If ACS Central was not yet deployed when you first ran `setup-workshop-users.sh`, re-run the script after ACS is ready. The token generation and userdata injection steps are fully idempotent — existing tokens are revoked and replaced on each run.
+====
+
+Proceed to xref:module-02-07-acs-zero-cve.adoc[Sub-Module 2.2: The Immutable Fortress].
 
 [[rhtas-setup]]
 === Red Hat Trusted Artifact Signer (RHTAS) Setup
@@ -840,7 +864,7 @@ Red Hat Trusted Artifact Signer (RHTAS) provides keyless signing infrastructure 
 If you used Option 2 (Kustomize Bootstrap), the RHTAS operator and Keycloak realm were installed automatically. Verify them with the steps below and skip to <<rhtas-cli-tools>>.
 ====
 
-==== Step 24: Install the RHTAS Operator
+==== Step 25: Install the RHTAS Operator
 
 [source,bash,role=execute]
 ----
@@ -894,7 +918,7 @@ NAME                    DISPLAY                              VERSION   REPLACES 
 rhtas-operator.v1.x.x   Red Hat Trusted Artifact Signer      1.x.x                Succeeded
 ----
 
-==== Step 25: Create the Keycloak Realm for RHTAS
+==== Step 26: Create the Keycloak Realm for RHTAS
 
 The RHTAS Fulcio service needs an OIDC issuer for human user signing. Create a `trusted-artifact-signer` realm in Keycloak:
 
@@ -974,7 +998,7 @@ curl -sk "https://${KEYCLOAK_URL}/realms/trusted-artifact-signer/.well-known/ope
 ----
 
 [[rhtas-cli-tools]]
-==== Step 26: Download RHTAS CLI Tools
+==== Step 27: Download RHTAS CLI Tools
 
 After the RHTAS operator is installed, download `cosign`, `rekor-cli`, and `ec` (Enterprise Contract) from the operator's clientserver route:
 

@@ -149,6 +149,29 @@ oc patch configs.imageregistry.operator.openshift.io/cluster \
     info "  Image registry default route enabled." || \
     warn "  Could not patch image registry config. Module 2.2 users may need to enable it manually."
 
+# ---- One-time: Build custom Showroom terminal image with roxctl ----
+# Builds terminal-image/Containerfile on-cluster and pushes to the openshift namespace
+# of the internal registry. Images in openshift/ are pullable by any pod on the cluster.
+REGISTRY_ROUTE=$(oc get route default-route -n openshift-image-registry \
+    -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+TERMINAL_IMAGE=""
+if [ -n "${REGISTRY_ROUTE}" ]; then
+    info "Building custom Showroom terminal image with roxctl (idempotent)..."
+    oc new-build --strategy=docker --binary=true \
+        --name=showroom-terminal-hummingbird \
+        --to="openshift/showroom-terminal-hummingbird:latest" \
+        -n openshift 2>/dev/null || true
+    oc start-build showroom-terminal-hummingbird \
+        --from-dir="${SCRIPT_DIR}/../terminal-image/" \
+        --follow --wait \
+        -n openshift 2>/dev/null && \
+        TERMINAL_IMAGE="image-registry.openshift-image-registry.svc:5000/openshift/showroom-terminal-hummingbird:latest" && \
+        info "  Terminal image built: ${TERMINAL_IMAGE}" || \
+        warn "  Terminal image build failed; Showroom will use the default terminal image (no roxctl)."
+else
+    warn "  Internal registry route not available; skipping custom terminal image build."
+fi
+
 # ---- One-time: Prepare Quay DB user provisioning ----
 QUAY_DB_POD=""
 QUAY_BCRYPT_HASH=""
@@ -564,6 +587,7 @@ USERDATA
             --set content.repoRef="${SHOWROOM_BRANCH}" \
             --set-file content.user_data="${USERDATA_FILE}" \
             --set-string terminal.setup="true" \
+            ${TERMINAL_IMAGE:+--set terminal.image="${TERMINAL_IMAGE}"} \
             --set-string wetty.setup="false" \
             --set-string nookbag_sidecar.setup="true" \
             --set-string terminal.storage.setup="true" \

@@ -45,7 +45,7 @@ Phase 4: Attempt to redeploy the legacy image
 * OpenShift {openshift-version} cluster with ACS (RHACS) operator installed and Central accessible (see xref:appendix-b-openshift-setup.adoc#acs-setup[Appendix B: ACS Setup])
 * `oc` CLI authenticated to the cluster (provided by the Showroom terminal)
 * `skopeo` and `curl` available (provided by the Showroom terminal)
-* `roxctl` CLI (installed to `~/bin` in Exercise 1 Step 3 below)
+* `roxctl` CLI (pre-installed in the Showroom terminal)
 * `syft` and `cosign` (installed to `~/bin` in Exercise 5 below)
 
 [[setup]]
@@ -108,6 +108,8 @@ REGISTRY_USER={quay_user}
 Login Succeeded!
 ----
 
+=== Step 3: Verify roxctl CLI
+
 Verify that `roxctl` is installed:
 
 [source,bash,role=execute,subs="attributes"]
@@ -148,18 +150,17 @@ roxctl central whoami --insecure-skip-tls-verify
 UserID:
         auth-token:6cfeaeed-6052-46a1-86d4-998132a186fb
 User name:
-        anonymous bearer token "{user}" with roles [Analyst] (jti: 6cfeaeed-6052-46a1-86d4-998132a186fb, expires: 2026-05-08T09:29:05Z)
+        anonymous bearer token "{user}" with roles [Admin] (jti: 6cfeaeed-6052-46a1-86d4-998132a186fb, expires: 2026-05-08T09:29:05Z)
 Roles:
-        - Analyst
-        - Continuous Integration
+        - Admin
 Access:
-        r- Access
-        r- Alert
+        rw Access
+        rw Alert
 ----
 
 [WARNING]
 ====
-**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `REGISTRY_AUTH_FILE`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. You will also need to re-export your PATH: `export PATH="$HOME/bin:$PATH"`. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set; if `roxctl: command not found`, re-export the PATH; if `skopeo` fails with `permission denied`, re-export `REGISTRY_AUTH_FILE`.
+**If you open a new terminal** or your session disconnects, all `export` variables (`WORKSHOP_REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD`, `REGISTRY_AUTH_FILE`, `ROX_ENDPOINT`, `ROX_API_TOKEN`) are lost. Re-run **Step 2** and **Step 4** before continuing. A quick way to tell: if `roxctl` complains about `localhost:8443`, it means `ROX_ENDPOINT` is not set; if `skopeo` fails with `permission denied`, re-export `REGISTRY_AUTH_FILE`.
 ====
 
 === Step 5: Download Helper Scripts
@@ -630,7 +631,7 @@ On the Keycloak login screen use the following credentials, then click *Sign in*
 .Username
 [source,bash,role=execute,subs="attributes"]
 ----
-{rhacs_username}
+{user}
 ----
 
 .Password
