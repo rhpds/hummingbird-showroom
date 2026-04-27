@@ -42,6 +42,8 @@
 # =============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 NUM_USERS="${NUM_USERS:-1}"
 USER_PREFIX="${USER_PREFIX:-lab-user}"
 PASSWORD="${PASSWORD:-openshift}"
@@ -563,10 +565,15 @@ ACSNS
         oc create namespace "${SHOWROOM_NS}" --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 
         USERDATA_FILE=$(mktemp)
+        OCP_API_URL=$(oc whoami --show-server)
         cat > "${USERDATA_FILE}" <<USERDATA
 user: ${USERNAME}
+username: ${USERNAME}
 password: ${PASSWORD}
-openshift_api_server_url: $(oc whoami --show-server)
+openshift_api_server_url: ${OCP_API_URL}
+openshift_api_url: ${OCP_API_URL}
+openshift-user: ${USERNAME}
+openshift-password: ${PASSWORD}
 openshift_console_url: https://console-openshift-console.${CLUSTER_DOMAIN}
 guid: ${USERNAME}
 quay_hostname: ${QUAY_ROUTE:-quay-not-found}
@@ -603,11 +610,16 @@ USERDATA
     if [ "${DEPLOY_SHOWROOM}" != "true" ] && oc get namespace "showroom-${USERNAME}" > /dev/null 2>&1; then
         if oc get configmap showroom-userdata -n "showroom-${USERNAME}" > /dev/null 2>&1; then
             info "[13/13] Patching existing Showroom user_data for ${USERNAME}"
+            OCP_API_URL=$(oc whoami --show-server)
             oc create configmap showroom-userdata -n "showroom-${USERNAME}" \
                 --from-literal=user_data.yml="$(cat <<UDPATCH
 user: ${USERNAME}
+username: ${USERNAME}
 password: ${PASSWORD}
-openshift_api_server_url: $(oc whoami --show-server)
+openshift_api_server_url: ${OCP_API_URL}
+openshift_api_url: ${OCP_API_URL}
+openshift-user: ${USERNAME}
+openshift-password: ${PASSWORD}
 openshift_console_url: https://console-openshift-console.${CLUSTER_DOMAIN}
 guid: ${USERNAME}
 quay_hostname: ${QUAY_ROUTE:-quay-not-found}
