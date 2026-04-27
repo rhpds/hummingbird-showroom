@@ -259,7 +259,7 @@ ACCESS_INFO_FILE="${SCRIPT_DIR}/../workshop-users-access.txt"
 # ---- Loop over users ----
 for N in $(seq 1 "${NUM_USERS}"); do
     USERNAME="${USER_PREFIX}-${N}"
-    USER_NS="hummingbird-builds-${USERNAME}"
+    USER_NS="${USERNAME}-hummingbird-builds"
 
     echo ""
     info "========== Setting up ${USERNAME} (${N}/${NUM_USERS}) =========="
@@ -685,10 +685,10 @@ GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}' 2>/d
         echo "  Gitea login:      ${USERNAME} / ${PASSWORD}"
         echo "  Quay login:       ${USERNAME} / ${PASSWORD}"
         echo "  Quay namespace:   https://${QUAY_ROUTE:-quay-not-found}/user/${USERNAME}/"
-        echo "  Build namespace:  hummingbird-builds-${USERNAME}"
+        echo "  Build namespace:  ${USERNAME}-hummingbird-builds"
         echo "  Namespaces:"
         echo "    - hummingbird-builds (shared, admin)"
-        echo "    - hummingbird-builds-${USERNAME} (per-user, admin)"
+        echo "    - ${USERNAME}-hummingbird-builds (per-user, admin)"
         echo "    - ${USERNAME}-hummingbird-acs-lab (ACS lab, admin)"
         echo "    - renovate-pipelines (admin)"
         echo "    - quay, stackrox, keycloak, trusted-artifact-signer, gitea (view)"

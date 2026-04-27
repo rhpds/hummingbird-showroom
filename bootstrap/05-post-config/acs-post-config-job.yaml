@@ -209,10 +209,10 @@ spec:
               else
                   echo "  Quay route: ${QUAY_ROUTE}"
 
-                  # Auto-detect lab users from hummingbird-builds-lab-user-* namespaces
+                  # Auto-detect lab users from lab-user-*-hummingbird-builds namespaces
                   LAB_USERS=$(oc get ns --no-headers 2>/dev/null | \
-                      awk '{print $1}' | grep '^hummingbird-builds-lab-user-' | \
-                      sed 's/hummingbird-builds-//' | sort || true)
+                      awk '{print $1}' | grep '^lab-user-' | grep 'hummingbird-builds$' | \
+                      sed 's/-hummingbird-builds$//' | sort || true)
 
                   if [ -z "$LAB_USERS" ]; then
                       LAB_USERS="lab-user-1"

@@ -163,7 +163,7 @@ apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
   name: secure-nodejs-build
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   source:
     type: Git
@@ -201,7 +201,7 @@ apiVersion: shipwright.io/v1beta1
 kind: BuildRun
 metadata:
   name: secure-build-run-1
-  namespace: hummingbird-builds-{user}
+  namespace: {user}-hummingbird-builds
 spec:
   build:
     name: secure-nodejs-build
@@ -212,7 +212,7 @@ Monitor the build:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -w
+oc get buildrun secure-build-run-1 -n {user}-hummingbird-builds -w
 ----
 
 [[view-security-steps]]
@@ -224,8 +224,8 @@ Once the build completes, view the SBOM generation output:
 
 [source,bash,role=execute,subs=attributes]
 ----
-TASKRUN=$(oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.taskRunName}')
-oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-sbom
+TASKRUN=$(oc get buildrun secure-build-run-1 -n {user}-hummingbird-builds -o jsonpath='{.status.taskRunName}')
+oc logs ${TASKRUN}-pod -n {user}-hummingbird-builds -c step-generate-sbom
 ----
 
 .*Expected output (excerpt):*
@@ -249,7 +249,7 @@ Syft is invoked directly (`/syft`) because the `anchore/syft` image is distroles
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n {user}-hummingbird-builds -c step-scan-vulnerabilities
 ----
 
 .*Expected output for Hummingbird image:*
@@ -508,7 +508,7 @@ echo "    --certificate-oidc-issuer=https://token.actions.githubusercontent.com 
 echo "    {quay_hostname}/{quay_user}/secure-nodejs:latest"
 echo ""
 echo "For this workshop, verify the image digest matches the BuildRun output:"
-BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -n hummingbird-builds-{user} -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
+BUILDRUN_DIGEST=$(oc get buildrun secure-build-run-1 -n {user}-hummingbird-builds -o jsonpath='{.status.output.digest}' 2>/dev/null || echo "N/A")
 echo "  BuildRun digest: $BUILDRUN_DIGEST"
 ----
 
@@ -637,7 +637,7 @@ Create Tekton Tasks that generate udica policies alongside image builds, deploy 
 [source,bash,role=execute,subs=attributes]
 ----
 # Check syft step logs
-oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-sbom
+oc logs ${TASKRUN}-pod -n {user}-hummingbird-builds -c step-generate-sbom
 
 # Verify image is accessible
 podman pull <image>
@@ -647,7 +647,7 @@ podman pull <image>
 [source,bash,role=execute,subs=attributes]
 ----
 # View scan results
-oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-scan-vulnerabilities
+oc logs ${TASKRUN}-pod -n {user}-hummingbird-builds -c step-scan-vulnerabilities
 
 # Review CVEs found
 grype <image> --only-fixed
