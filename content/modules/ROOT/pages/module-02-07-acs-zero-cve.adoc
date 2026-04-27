@@ -1016,6 +1016,8 @@ oc rollout status deployment/fortress-python-api -n {user}-hummingbird-acs-lab -
 [source,bash,role=execute,subs="attributes"]
 ----
 ROUTE=$(oc get route fortress-python-api -n {user}-hummingbird-acs-lab -o jsonpath='{.spec.host}')
+echo "Waiting for router to propagate..."
+sleep 10
 curl -sk "https://${ROUTE}/api/v1/greeting"
 ----
 
@@ -1027,6 +1029,11 @@ curl -sk "https://${ROUTE}/api/v1/greeting"
 Identical functionality. Radically different security posture.
 
 === Step 3: Scan the Hummingbird Image with ACS
+
+[NOTE]
+====
+ACS enriches newly deployed images in the background after they are admitted to the cluster. If `roxctl image scan` returns an error such as *"no matching image registries found"* or *"image enrichment error"*, wait **2-3 minutes** and run the command again -- ACS is still indexing the image from the on-cluster Quay registry. The scan will succeed once enrichment completes. You can also trigger a manual re-scan from the ACS UI under *Vulnerability Management* -> *Images* -> select the image -> *Force Re-scan*.
+====
 
 [source,bash,role=execute,subs="attributes"]
 ----
