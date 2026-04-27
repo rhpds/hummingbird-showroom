@@ -34,7 +34,7 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: chunkah-split-task
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -154,7 +154,7 @@ task.tekton.dev/chunkah-split-task created
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get task chunkah-split-task -n {user}-hummingbird-builds
+oc get task chunkah-split-task -n hummingbird-builds-{user}
 ----
 
 [[create-chunkah-pipeline]]
@@ -171,7 +171,7 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: chunkah-optimization-pipeline
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -219,7 +219,7 @@ pipeline.tekton.dev/chunkah-optimization-pipeline created
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pipeline chunkah-optimization-pipeline -n {user}-hummingbird-builds
+oc get pipeline chunkah-optimization-pipeline -n hummingbird-builds-{user}
 ----
 
 [[run-chunkah-pipeline]]
@@ -236,7 +236,7 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: chunkah-split-nodejs
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   pipelineRef:
     name: chunkah-optimization-pipeline
@@ -259,7 +259,7 @@ oc get pipelinerun chunkah-split-nodejs -w
 
 Wait for STATUS to show `True` (Succeeded), then press `Ctrl+C`.
 
-You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `{user}-hummingbird-builds` namespace.
+You can also watch the PipelineRun in the OpenShift console under **Pipelines → PipelineRuns** in the `hummingbird-builds-{user}` namespace.
 
 === Step 7: View Results
 
@@ -293,7 +293,7 @@ If the pod name above doesn't match, find it with:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n {user}-hummingbird-builds
+oc get pods -l tekton.dev/pipelineRun=chunkah-split-nodejs -n hummingbird-builds-{user}
 ----
 ====
 
@@ -327,7 +327,7 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: hummingbird-build-pipeline
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   params:
     - name: IMAGE_REGISTRY
@@ -501,13 +501,13 @@ As of chunkah v0.2.0:
 ----
 oc get taskrun chunkah-split-nodejs -o yaml | grep -A5 status
 
-oc adm policy add-scc-to-user privileged -z pipeline -n {user}-hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 
 **Issue: chunkah image pull fails in cluster**
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pods -n {user}-hummingbird-builds
+oc get pods -n hummingbird-builds-{user}
 
 podman pull quay.io/jlebon/chunkah:v0.2.0
 ----

@@ -36,7 +36,7 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: udica-policy-generate
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -136,7 +136,7 @@ task.tekton.dev/udica-policy-generate created
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get task udica-policy-generate -n {user}-hummingbird-builds
+oc get task udica-policy-generate -n hummingbird-builds-{user}
 ----
 
 .*Expected output:*
@@ -159,7 +159,7 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: selinux-policy-pipeline
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app.kubernetes.io/part-of: hummingbird-workshop
 spec:
@@ -203,7 +203,7 @@ pipeline.tekton.dev/selinux-policy-pipeline created
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pipeline selinux-policy-pipeline -n {user}-hummingbird-builds
+oc get pipeline selinux-policy-pipeline -n hummingbird-builds-{user}
 ----
 
 [[run-policy-pipeline]]
@@ -219,7 +219,7 @@ The `udica-policy-generate` Task runs `podman` inside the step, which requires t
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc adm policy add-scc-to-user privileged -z pipeline -n {user}-hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 ====
 
@@ -230,7 +230,7 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   name: generate-nodejs-policy
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
 spec:
   pipelineRef:
     name: selinux-policy-pipeline
@@ -250,12 +250,12 @@ EOF
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pipelinerun generate-nodejs-policy -n {user}-hummingbird-builds -w
+oc get pipelinerun generate-nodejs-policy -n hummingbird-builds-{user} -w
 ----
 
 Wait until the STATUS shows `True` (Succeeded), then press `Ctrl+C`.
 
-You can also watch the PipelineRun in the OpenShift console under **Pipelines -> PipelineRuns** in the `{user}-hummingbird-builds` namespace:
+You can also watch the PipelineRun in the OpenShift console under **Pipelines -> PipelineRuns** in the `hummingbird-builds-{user}` namespace:
 
 .OpenShift console: generate-nodejs-policy PipelineRun succeeded with udica policy generation logs
 image::module-02/openshift-pipelinerun-selinux.png[PipelineRun SELinux,width=800,link=self,window=blank]
@@ -266,9 +266,9 @@ The Task results (CIL policy, digest, policy type) are stored in the TaskRun. Re
 
 [source,bash,role=execute,subs=attributes]
 ----
-TASKRUN=$(oc get pipelinerun generate-nodejs-policy -n {user}-hummingbird-builds \
+TASKRUN=$(oc get pipelinerun generate-nodejs-policy -n hummingbird-builds-{user} \
   -o jsonpath='{.status.childReferences[0].name}')
-oc get taskrun $TASKRUN -n {user}-hummingbird-builds \
+oc get taskrun $TASKRUN -n hummingbird-builds-{user} \
   -o jsonpath='{.status.results}' | python3 -m json.tool
 ----
 
@@ -278,7 +278,7 @@ View the detailed logs:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc logs ${TASKRUN}-pod -n {user}-hummingbird-builds -c step-generate-policy
+oc logs ${TASKRUN}-pod -n hummingbird-builds-{user} -c step-generate-policy
 ----
 
 [TIP]
@@ -287,7 +287,7 @@ If the pod name above doesn't match, find it with:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l tekton.dev/pipelineRun=generate-nodejs-policy -n {user}-hummingbird-builds
+oc get pods -l tekton.dev/pipelineRun=generate-nodejs-policy -n hummingbird-builds-{user}
 ----
 ====
 
@@ -331,7 +331,7 @@ The `seLinuxOptions.type` field requires an SCC that allows custom SELinux types
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc adm policy add-scc-to-user privileged -z default -n {user}-hummingbird-builds
+oc adm policy add-scc-to-user privileged -z default -n hummingbird-builds-{user}
 ----
 
 In production, create a custom SCC that allows only `seLinuxOptions` without full privileged access.
@@ -344,7 +344,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nodejs-selinux
-  namespace: {user}-hummingbird-builds
+  namespace: hummingbird-builds-{user}
   labels:
     app: nodejs-selinux
 spec:
@@ -389,7 +389,7 @@ The `seLinuxOptions.type` field tells the container runtime to apply the custom 
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get pods -l app=nodejs-selinux -n {user}-hummingbird-builds
+oc get pods -l app=nodejs-selinux -n hummingbird-builds-{user}
 ----
 
 .*Expected output:*
@@ -415,7 +415,7 @@ Clean up the failing deployment:
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc delete deployment nodejs-selinux -n {user}-hummingbird-builds
+oc delete deployment nodejs-selinux -n hummingbird-builds-{user}
 ----
 ====
 
@@ -614,7 +614,7 @@ Prove the zero-CVE posture by deploying a legacy vulnerable image alongside a Hu
 ----
 oc get taskrun generate-nodejs-policy -o yaml | grep -A5 status
 
-oc adm policy add-scc-to-user privileged -z pipeline -n {user}-hummingbird-builds
+oc adm policy add-scc-to-user privileged -z pipeline -n hummingbird-builds-{user}
 ----
 
 **Issue: SELinux type not found on node**
