@@ -25,11 +25,11 @@
 # Usage:
 #   NUM_USERS=3 ./scripts/setup-workshop-users.sh
 #   NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
-#   NUM_USERS=1 USER_PREFIX=lab-user PASSWORD=openshift ./scripts/setup-workshop-users.sh
+#   NUM_USERS=1 USER_PREFIX=user PASSWORD=openshift ./scripts/setup-workshop-users.sh
 #
 # Environment variables:
 #   NUM_USERS      - Number of users to create (default: 1)
-#   USER_PREFIX    - Username prefix; users are named <prefix>-1, <prefix>-2, etc. (default: lab-user)
+#   USER_PREFIX    - Username prefix; users are named <prefix>-1, <prefix>-2, etc. (default: user)
 #   PASSWORD       - Password for all users (default: openshift)
 #   BUILDS_NS      - Shared builds namespace (default: hummingbird-builds)
 #   QUAY_NAMESPACE - Quay namespace (default: quay)
@@ -45,7 +45,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NUM_USERS="${NUM_USERS:-1}"
-USER_PREFIX="${USER_PREFIX:-lab-user}"
+USER_PREFIX="${USER_PREFIX:-user}"
 PASSWORD="${PASSWORD:-openshift}"
 BUILDS_NS="${BUILDS_NS:-hummingbird-builds}"
 QUAY_NAMESPACE="${QUAY_NAMESPACE:-quay}"

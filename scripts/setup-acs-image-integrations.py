@@ -4,7 +4,7 @@ Create per-student ACS image integrations for a private on-cluster Quay registry
 
 ACS auto-generated image integrations have no credentials, so they cannot scan
 private Quay repositories created by workshop students.  This script creates one
-named integration per student (e.g. "Workshop Quay - lab-user-2") so that ACS
+named integration per student (e.g. "Workshop Quay - user-2") so that ACS
 Central can authenticate and scan each student's images.
 
 The script is idempotent: integrations whose name already exists are skipped.
@@ -15,16 +15,16 @@ Usage
       --acs-route  central-stackrox.apps.cluster.example.com \\
       --acs-token  eyJ... \\
       --quay-endpoint https://quay-registry-quay-quay.apps.cluster.example.com \\
-      --users lab-user-1:openshift lab-user-2:openshift lab-user-3:openshift
+      --users user-1:openshift user-2:openshift user-3:openshift
 
   # or via environment variables:
   export ACS_ROUTE=central-stackrox.apps.cluster.example.com
   export ACS_ADMIN_TOKEN=eyJ...
   export QUAY_ENDPOINT=https://quay-registry-quay-quay.apps.cluster.example.com
-  python3 setup-acs-image-integrations.py --users lab-user-1:openshift
+  python3 setup-acs-image-integrations.py --users user-1:openshift
 
   # dry-run (no API calls, just show what would be created):
-  python3 setup-acs-image-integrations.py --dry-run --users lab-user-1:openshift
+  python3 setup-acs-image-integrations.py --dry-run --users user-1:openshift
 
 Environment variable fallbacks
 -------------------------------
@@ -114,7 +114,7 @@ def parse_args():
         nargs="+",
         required=True,
         metavar="USER:PASSWORD",
-        help="One or more user:password pairs, e.g. lab-user-1:openshift lab-user-2:openshift",
+        help="One or more user:password pairs, e.g. user-1:openshift user-2:openshift",
     )
     p.add_argument(
         "--dry-run",

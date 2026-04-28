@@ -209,14 +209,14 @@ spec:
               else
                   echo "  Quay route: ${QUAY_ROUTE}"
 
-                  # Auto-detect lab users from lab-user-*-hummingbird-builds namespaces
+                  # Auto-detect lab users from user-*-hummingbird-builds namespaces
                   LAB_USERS=$(oc get ns --no-headers 2>/dev/null | \
-                      awk '{print $1}' | grep '^lab-user-' | grep 'hummingbird-builds$' | \
+                      awk '{print $1}' | grep '^user-' | grep 'hummingbird-builds$' | \
                       sed 's/-hummingbird-builds$//' | sort || true)
 
                   if [ -z "$LAB_USERS" ]; then
-                      LAB_USERS="lab-user-1"
-                      echo "  WARNING: No lab user namespaces found — defaulting to lab-user-1."
+                      LAB_USERS="user-1"
+                      echo "  WARNING: No lab user namespaces found — defaulting to user-1."
                   fi
 
                   # Fetch current integrations once for idempotency checks

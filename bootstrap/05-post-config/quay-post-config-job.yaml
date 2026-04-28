@@ -73,7 +73,7 @@ spec:
             - name: NUM_USERS
               value: "3"
             - name: USER_PREFIX
-              value: "lab-user"
+              value: "user"
             - name: USER_PASSWORD
               value: "openshift"
           command:

@@ -307,7 +307,7 @@ echo ""
 if [ "${USERS_CONFIGURED}" = "true" ]; then
     echo "  ---- Workshop Users (${NUM_USERS}) ----"
     echo ""
-    echo "  Unified identity: lab-user-N / openshift (same for OpenShift, Quay, Gitea)"
+    echo "  Unified identity: user-N / openshift (same for OpenShift, Quay, Gitea)"
     echo "  Access details:   cat workshop-users-access.txt"
     echo ""
 elif [ "${NUM_USERS}" -gt 0 ]; then

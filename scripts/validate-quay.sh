@@ -193,13 +193,13 @@ section "4. Per-User Credentials"
 # Auto-detect users if not specified
 if [ -z "$NUM_USERS" ]; then
     NUM_USERS=$(oc get namespace --no-headers 2>/dev/null | \
-        grep -c 'hummingbird-builds-lab-user-' || echo 0)
+        grep -c 'hummingbird-builds-user-' || echo 0)
 fi
 
 echo "  Checking ${NUM_USERS} user namespace(s)..."
 
 for i in $(seq 1 "${NUM_USERS}"); do
-    USER="lab-user-${i}"
+    USER="user-${i}"
     NS="hummingbird-builds-${USER}"
 
     # Namespace
@@ -241,8 +241,8 @@ if $QUICK; then
 elif [ -z "$QUAY_ROUTE" ]; then
     fail "Push test" "Push test: skipped — Quay route not found"
 else
-    # Use lab-user-1 credentials (default password = openshift)
-    TEST_USER="lab-user-1"
+    # Use user-1 credentials (default password = openshift)
+    TEST_USER="user-1"
     TEST_PASS=$(oc get secret registry-credentials -n "hummingbird-builds-${TEST_USER}" \
         -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | \
         base64 -d 2>/dev/null | \
