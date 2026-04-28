@@ -621,7 +621,7 @@ You are carrying the security burden of an entire general-purpose operating syst
 
 Open the RHACS Central dashboard in your browser.
 
-Click the {rhacs_route} link to open the RHACS Central dashboard in a separate window.
+Click the {rhacs_route}[window=blank] link to open the RHACS Central dashboard in a separate window.
 
 Select *openshift-oauth* for the auth provider and click *Log in*.
 
@@ -630,13 +630,13 @@ On the Keycloak login screen use the following credentials, then click *Sign in*
 .Username
 [source,bash,role=execute,subs="attributes"]
 ----
-echo "export ACS_USER={rhacs_username}" >>$HOME/.bashrc
+{rhacs_username}
 ----
 
 .Password
 [source,bash,role=execute,subs="attributes"]
 ----
-echo "export ACS_PASSWORD={password}" >>$HOME/.bashrc
+{password}
 ----
 
 // image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
@@ -839,7 +839,7 @@ Log into the Quay registry with syft:
 
 [source,bash,role=execute,subs=attributes]
 ----
-syft login -u {quay_user} -p {quay_password} {quay_url}
+syft login -u {quay_user} -p {quay_password} {quay_hostname}
 ----
 
 === Step 1: Generate SBOMs for Both Images
@@ -1081,27 +1081,25 @@ A zero-CVE scan is only as valuable as the policy that prevents regression. In t
 
 === Step 1: Verify ACS Admission Controller
 
-Check that the admission controller webhook is active:
+// Check that the admission controller webhook is active:
 
-[source,bash,role=execute]
-----
-oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
-----
+// [source,bash,role=execute]
+// ----
+// oc get ValidatingWebhookConfiguration -l app.kubernetes.io/name=stackrox
+// ----
 
-.*Expected output:*
-----
-NAME       WEBHOOKS   AGE
-stackrox   2          ...
-----
+// .*Expected output:*
+// ----
+// NAME       WEBHOOKS   AGE
+// stackrox   2          ...
+// ----
 
 Verify the admission controller configuration via the ACS API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
-
-curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/clusters" | python3 acs-check-admission.py
+curl -sk -H "Authorization: Bearer {rhacs_api_token}" \
+  "https://{rhacs_route}/v1/clusters" | python3 acs-check-admission.py
 ----
 
 .*Expected output:*
@@ -1128,7 +1126,8 @@ Run the helper script, passing your namespace and policy suffix via environment 
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
+ROX_API_TOKEN={rhacs_api_token}
 export ACS_ROUTE ROX_API_TOKEN
 export LAB_NAMESPACE="{user}-hummingbird-acs-lab"
 export POLICY_SUFFIX="{user}"
