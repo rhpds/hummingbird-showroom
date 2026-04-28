@@ -624,7 +624,7 @@ You are carrying the security burden of a full OS and packaging toolchain for an
 
 Open the RHACS Central dashboard in your browser.
 
-Click the {rhacs_route}[window=blank] link to open the RHACS Central dashboard in a separate window.
+Click the link:https://{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
 
 Select *openshift-oauth* for the auth provider and click *Log in*.
 
