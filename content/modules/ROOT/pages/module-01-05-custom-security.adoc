@@ -387,13 +387,3 @@ podman logs caddy-ssl
 # Verify Caddyfile syntax
 podman run --rm -v ~/webserver:/etc/caddy:ro {hummingbird-registry}/caddy caddy validate --config /etc/caddy/Caddyfile
 ----
-
-== Check your work
-
-++++
-<div class="solve-button-placeholder" data-module="module-01"></div>
-++++
-
-++++
-<div class="validate-button-placeholder" data-module="module-01"></div>
-++++

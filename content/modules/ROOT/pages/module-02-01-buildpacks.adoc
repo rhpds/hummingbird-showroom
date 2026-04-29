@@ -522,16 +522,6 @@ The image uses `registry.access.redhat.com/hi/openjdk:21-runtime` -- a distroles
 NOTE: Standard vulnerability scanners (including Quay/Clair) may not yet fully support Hummingbird's Fedora-based packages. The Hummingbird project provides custom scanning tools (`syft-hummingbird.sh`) for accurate results. See https://gitlab.com/redhat/hummingbird/containers[the Hummingbird repository^] for details.
 ====
 
-== Check your work
-
-++++
-<div class="solve-button-placeholder" data-module="module-02-01"></div>
-++++
-
-++++
-<div class="validate-button-placeholder" data-module="module-02-01"></div>
-++++
-
 [[summary]]
 == Summary
 
