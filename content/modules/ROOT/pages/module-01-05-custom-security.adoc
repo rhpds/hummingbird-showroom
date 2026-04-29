@@ -119,19 +119,19 @@ This multi-stage pattern is the same we used for the `quarkus` application. This
 cat > ~/Containerfile.pem << 'EOF'
 FROM {hummingbird-registry}/curl:latest-builder as builder
 
-# Copy the certificate to the image
-COPY ca.pem /tmp/ #<.>
+# Copy the certificate to the image #<.>
+COPY ca.pem /tmp/
 
-# Temporarily switch to root to add the CA certificate to the trust store
+# Temporarily switch to root to add the CA certificate to the trust store #<.>
 USER root
-RUN trust anchor /tmp/ca.pem <.>
+RUN trust anchor /tmp/ca.pem
 USER ${CONTAINER_DEFAULT_USER}
 
 
 # Runtime stage:
-# Copy the trust store from the builder image to the runtime image
+# Copy the trust store from the builder image to the runtime image #<.>
 FROM {hummingbird-registry}/curl:latest
-COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted <.>
+COPY --from=builder /etc/pki/ca-trust/extracted /etc/pki/ca-trust/extracted
 EOF
 ----
 <.> Copy the custom CA pem to the `build` stage
