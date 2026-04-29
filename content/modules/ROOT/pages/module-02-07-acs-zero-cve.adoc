@@ -252,7 +252,7 @@ set -euo pipefail
 : "${ACS_ROUTE:?ACS_ROUTE is not set}"
 : "${LAB_NAMESPACE:?LAB_NAMESPACE is not set}"
 : "${POLICY_SUFFIX:?POLICY_SUFFIX is not set}"
-API="https://${ACS_ROUTE}/v1/policies"
+API="${ACS_ROUTE}/v1/policies"
 AUTH="Authorization: Bearer ${ROX_API_TOKEN}"
 create_policy() {
   local json_file="$1"
@@ -624,7 +624,7 @@ You are carrying the security burden of a full OS and packaging toolchain for an
 
 Open the RHACS Central dashboard in your browser.
 
-Click the link:https://{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
+Click the link:{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
 
 Select *openshift-oauth* for the auth provider and click *Log in*.
 
@@ -1109,12 +1109,12 @@ Verify the admission controller configuration via the ACS API:
 [source,bash,role=execute,subs="attributes"]
 ----
 curl -sk -H "Authorization: Bearer {rhacs_api_token}" \
-  "https://{rhacs_route}/v1/clusters" | python3 acs-check-admission.py
+  "{rhacs_route}/v1/clusters" | python3 acs-check-admission.py
 ----
 
 .*Expected output:*
 ----
-Cluster:              workshop-cluster
+Cluster:              production
 Admission controller: True
 Scan inline:          True
 Enforce on updates:   True
@@ -1214,14 +1214,14 @@ Policy 2:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
 
 for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-    "https://${ACS_ROUTE}/v1/policies" | \
+    "${ACS_ROUTE}/v1/policies" | \
     python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
   curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-    "https://${ACS_ROUTE}/v1/policies/${POLICY_ID}" | \
+    "${ACS_ROUTE}/v1/policies/${POLICY_ID}" | \
     python3 -c "
 import json, sys
 p = json.load(sys.stdin)
@@ -1391,10 +1391,10 @@ Query the policy violations via the ACS REST API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
 
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/alerts?query=Namespace:{user}-hummingbird-acs-lab" | \
+  "${ACS_ROUTE}/v1/alerts?query=Namespace:{user}-hummingbird-acs-lab" | \
   python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -1457,14 +1457,14 @@ This is the correct security model. Admission control is a **gate**, not a kill 
 ====
 **Production Alert Integration**: Configure ACS to send violation alerts to your SIEM, Slack, or PagerDuty using the API or UI:
 
-[source,bash,role=execute]
+[source,bash,role=execute,subs=attributes]
 ----
 # Example: Create Slack notifier via API
-ACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
 curl -sk -X POST \
   -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   -H "Content-Type: application/json" \
-  "https://${ACS_ROUTE}/v1/notifiers" \
+  "${ACS_ROUTE}/v1/notifiers" \
   -d '{
     "name": "Slack Violations",
     "type": "slack",
@@ -1489,15 +1489,15 @@ Remove the lab resources when you are finished:
 ----
 oc delete project {user}-hummingbird-acs-lab
 
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
 
 for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-    "https://${ACS_ROUTE}/v1/policies" | \
+    "${ACS_ROUTE}/v1/policies" | \
     python3 -c "import json,sys; [print(p['id']) for p in json.load(sys.stdin).get('policies',[]) if p['name']=='${POLICY_NAME}']" 2>/dev/null)
   if [ -n "${POLICY_ID}" ]; then
     curl -sk -X DELETE -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-      "https://${ACS_ROUTE}/v1/policies/${POLICY_ID}"
+      "${ACS_ROUTE}/v1/policies/${POLICY_ID}"
     echo "Deleted policy: ${POLICY_NAME}"
   fi
 done
@@ -1577,9 +1577,9 @@ oc logs -n stackrox deploy/admission-control
 **Issue: Policy not triggering on deployment**
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=$(oc get route central -n {acs-namespace} -o jsonpath='{.spec.host}')
+ACS_ROUTE={rhacs_route}
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
-  "https://${ACS_ROUTE}/v1/policies" | \
+  "${ACS_ROUTE}/v1/policies" | \
   python3 -c "import json,sys; [print(p['name'], p['disabled']) for p in json.load(sys.stdin).get('policies',[]) if 'zero fixable' in p['name'].lower()]"
 
 oc get events -n {user}-hummingbird-acs-lab --sort-by=.metadata.creationTimestamp | tail -20
