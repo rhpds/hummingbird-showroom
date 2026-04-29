@@ -1480,6 +1480,7 @@ This closes the loop: build → verify → enforce → alert.
 For detailed notifier configuration options, see the ACS API documentation.
 ====
 
+////
 [[cleanup]]
 == Cleanup
 
@@ -1502,6 +1503,7 @@ for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - 
   fi
 done
 ----
+////
 
 [[summary]]
 == Summary
