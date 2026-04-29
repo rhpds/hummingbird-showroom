@@ -15,20 +15,21 @@
 #   7.  Binds workshop-participant ClusterRole (ClusterBuildStrategy, imageregistry, webhooks)
 #   8.  Grants view on infrastructure namespaces (quay, stackrox, keycloak, RHTAS, gitea)
 #   9.  Grants ACS secret reader for central-htpasswd in stackrox
-#   10. Fixes Gitea must-change-password flag
-#   11. (Optional) Deploys a per-user Showroom instance with embedded terminal
-#   12. (Optional) Updates existing Showroom ConfigMap if Showroom already deployed
+#   10. Generates per-user ACS API token (Analyst role, non-admin) for Sub-Module 2.2
+#   11. Pre-creates <user>-hummingbird-acs-lab namespace + admin binding for Sub-Module 2.2
+#   12. Fixes Gitea must-change-password flag
+#   13. (Optional) Deploys a per-user Showroom instance with embedded terminal / updates ConfigMap
 #
 # On completion, writes workshop-users-access.txt with all credentials and URLs.
 #
 # Usage:
 #   NUM_USERS=3 ./scripts/setup-workshop-users.sh
 #   NUM_USERS=3 DEPLOY_SHOWROOM=true ./scripts/setup-workshop-users.sh
-#   NUM_USERS=1 USER_PREFIX=lab-user PASSWORD=openshift ./scripts/setup-workshop-users.sh
+#   NUM_USERS=1 USER_PREFIX=user PASSWORD=openshift ./scripts/setup-workshop-users.sh
 #
 # Environment variables:
 #   NUM_USERS      - Number of users to create (default: 1)
-#   USER_PREFIX    - Username prefix; users are named <prefix>-1, <prefix>-2, etc. (default: lab-user)
+#   USER_PREFIX    - Username prefix; users are named <prefix>-1, <prefix>-2, etc. (default: user)
 #   PASSWORD       - Password for all users (default: openshift)
 #   BUILDS_NS      - Shared builds namespace (default: hummingbird-builds)
 #   QUAY_NAMESPACE - Quay namespace (default: quay)
@@ -41,8 +42,10 @@
 # =============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 NUM_USERS="${NUM_USERS:-1}"
-USER_PREFIX="${USER_PREFIX:-lab-user}"
+USER_PREFIX="${USER_PREFIX:-user}"
 PASSWORD="${PASSWORD:-openshift}"
 BUILDS_NS="${BUILDS_NS:-hummingbird-builds}"
 QUAY_NAMESPACE="${QUAY_NAMESPACE:-quay}"
@@ -148,6 +151,29 @@ oc patch configs.imageregistry.operator.openshift.io/cluster \
     info "  Image registry default route enabled." || \
     warn "  Could not patch image registry config. Module 2.2 users may need to enable it manually."
 
+# ---- One-time: Build custom Showroom terminal image with roxctl ----
+# Builds terminal-image/Containerfile on-cluster and pushes to the openshift namespace
+# of the internal registry. Images in openshift/ are pullable by any pod on the cluster.
+REGISTRY_ROUTE=$(oc get route default-route -n openshift-image-registry \
+    -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+TERMINAL_IMAGE=""
+if [ -n "${REGISTRY_ROUTE}" ]; then
+    info "Building custom Showroom terminal image with roxctl (idempotent)..."
+    oc new-build --strategy=docker --binary=true \
+        --name=showroom-terminal-hummingbird \
+        --to="openshift/showroom-terminal-hummingbird:latest" \
+        -n openshift 2>/dev/null || true
+    oc start-build showroom-terminal-hummingbird \
+        --from-dir="${SCRIPT_DIR}/../terminal-image/" \
+        --follow --wait \
+        -n openshift 2>/dev/null && \
+        TERMINAL_IMAGE="image-registry.openshift-image-registry.svc:5000/openshift/showroom-terminal-hummingbird:latest" && \
+        info "  Terminal image built: ${TERMINAL_IMAGE}" || \
+        warn "  Terminal image build failed; Showroom will use the default terminal image (no roxctl)."
+else
+    warn "  Internal registry route not available; skipping custom terminal image build."
+fi
+
 # ---- One-time: Prepare Quay DB user provisioning ----
 QUAY_DB_POD=""
 QUAY_BCRYPT_HASH=""
@@ -215,6 +241,17 @@ rules:
 ACSR
 fi
 
+# ---- One-time: Resolve ACS Central connection for Showroom userdata injection ----
+ACS_CENTRAL_ROUTE=$(oc get route central -n stackrox \
+    -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+ACS_ADMIN_PASS=$(oc get secret central-htpasswd -n stackrox \
+    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+if [ -n "${ACS_CENTRAL_ROUTE}" ]; then
+    info "ACS Central route resolved: ${ACS_CENTRAL_ROUTE}"
+else
+    warn "ACS Central not found. rhacs_route will be placeholder; re-run after ACS is deployed."
+fi
+
 # ---- Output file ----
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCESS_INFO_FILE="${SCRIPT_DIR}/../workshop-users-access.txt"
@@ -222,7 +259,7 @@ ACCESS_INFO_FILE="${SCRIPT_DIR}/../workshop-users-access.txt"
 # ---- Loop over users ----
 for N in $(seq 1 "${NUM_USERS}"); do
     USERNAME="${USER_PREFIX}-${N}"
-    USER_NS="hummingbird-builds-${USERNAME}"
+    USER_NS="${USERNAME}-hummingbird-builds"
 
     echo ""
     info "========== Setting up ${USERNAME} (${N}/${NUM_USERS}) =========="
@@ -423,7 +460,7 @@ VIEW
 
     # 9. ACS secret reader (stackrox/central-htpasswd)
     if oc get namespace stackrox > /dev/null 2>&1; then
-        info "[9/12] Granting ACS secret reader in stackrox"
+        info "[9/13] Granting ACS secret reader in stackrox"
         cat <<ACSR | oc apply -f - 2>/dev/null
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -443,33 +480,100 @@ roleRef:
 ACSR
         info "  ACS central-htpasswd read access granted."
     else
-        info "[9/12] stackrox namespace not found, skipping ACS secret reader."
+        info "[9/13] stackrox namespace not found, skipping ACS secret reader."
     fi
 
-    # 10. Fix Gitea must-change-password flag
+    # 10. Generate per-user ACS API token (Admin role within ACS — not OpenShift cluster-admin)
+    #     Admin ACS role is required for Exercise 7: students create enforcement policies
+    #     via POST/PUT /v1/policies. This grants no OpenShift privileges whatsoever.
+    USER_ACS_TOKEN=""
+    if [ -n "${ACS_CENTRAL_ROUTE}" ] && [ -n "${ACS_ADMIN_PASS}" ]; then
+        info "[10/13] Generating ACS API token for ${USERNAME} (ACS Admin role)"
+        ACS_TOKEN_NAME="workshop-${USERNAME}"
+        # Revoke any existing token with the same name (idempotent re-runs)
+        EXISTING_TOKEN_ID=$(curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+            "https://${ACS_CENTRAL_ROUTE}/v1/apitokens" | \
+            python3 -c "
+import json, sys
+tokens = json.load(sys.stdin).get('tokens', [])
+match = [t for t in tokens if t.get('name') == '${ACS_TOKEN_NAME}' and not t.get('revoked')]
+print(match[0]['id'] if match else '')
+" 2>/dev/null || echo "")
+        if [ -n "${EXISTING_TOKEN_ID}" ]; then
+            curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+                -X PATCH "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/revoke/${EXISTING_TOKEN_ID}" \
+                > /dev/null 2>&1 || true
+            info "  Revoked existing ACS token for ${USERNAME}."
+        fi
+        USER_ACS_TOKEN=$(curl -sk -u "admin:${ACS_ADMIN_PASS}" \
+            "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/generate" \
+            -X POST -H 'Content-Type: application/json' \
+            -d "{\"name\":\"${ACS_TOKEN_NAME}\",\"role\":\"Admin\"}" | \
+            python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" \
+            2>/dev/null || echo "")
+        if [ -n "${USER_ACS_TOKEN}" ]; then
+            info "  ACS Admin token generated for ${USERNAME}."
+        else
+            warn "  ACS token generation failed for ${USERNAME}. rhacs_api_token will be empty."
+        fi
+    else
+        info "[10/13] ACS not available — skipping token generation for ${USERNAME}."
+    fi
+
+    # 11. Pre-create ACS lab namespace for Sub-Module 2.2
+    ACS_LAB_NS="${USERNAME}-hummingbird-acs-lab"
+    info "[11/13] Pre-creating ACS lab namespace: ${ACS_LAB_NS}"
+    oc create namespace "${ACS_LAB_NS}" --dry-run=client -o yaml | \
+        oc label --local -f - workshop=zero-cve-hummingbird workshop-user="${USERNAME}" -o yaml | \
+        oc apply -f - 2>/dev/null
+    cat <<ACSNS | oc apply -f - 2>/dev/null
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${USERNAME}-admin
+  namespace: ${ACS_LAB_NS}
+  labels:
+    workshop: zero-cve-hummingbird
+subjects:
+  - kind: User
+    name: ${USERNAME}
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
+ACSNS
+    info "  ACS lab namespace ready: ${ACS_LAB_NS}"
+
+    # 12. Fix Gitea must-change-password flag
     GITEA_POD=$(oc get pods -n gitea -l app=gitea-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     if [ -n "${GITEA_POD}" ]; then
-        info "[10/12] Resetting Gitea must-change-password for ${USERNAME}"
+        info "[12/13] Resetting Gitea must-change-password for ${USERNAME}"
         oc exec -n gitea "${GITEA_POD}" -- \
             /home/gitea/gitea -c /home/gitea/conf/app.ini admin user change-password \
             --username "${USERNAME}" --password "${PASSWORD}" --must-change-password=false 2>/dev/null && \
             info "  Gitea password reset (must-change-password=false)." || \
             warn "  Gitea user ${USERNAME} may not exist yet. Create manually or re-run after Gitea setup."
     else
-        warn "[10/12] Gitea pod not found. Skipping must-change-password fix."
+        warn "[12/13] Gitea pod not found. Skipping must-change-password fix."
     fi
 
-    # 11. Deploy per-user Showroom instance (optional)
+    # 12. Deploy per-user Showroom instance (optional)
     if [ "${DEPLOY_SHOWROOM}" = "true" ] && [ -n "${SHOWROOM_CHART:-}" ]; then
         SHOWROOM_NS="showroom-${USERNAME}"
-        info "[11/12] Deploying Showroom in ${SHOWROOM_NS}"
+        info "[12/13] Deploying Showroom in ${SHOWROOM_NS}"
         oc create namespace "${SHOWROOM_NS}" --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 
         USERDATA_FILE=$(mktemp)
+        OCP_API_URL=$(oc whoami --show-server)
         cat > "${USERDATA_FILE}" <<USERDATA
 user: ${USERNAME}
+username: ${USERNAME}
 password: ${PASSWORD}
-openshift_api_server_url: $(oc whoami --show-server)
+openshift_api_server_url: ${OCP_API_URL}
+openshift_api_url: ${OCP_API_URL}
+openshift-user: ${USERNAME}
+openshift-password: ${PASSWORD}
 openshift_console_url: https://console-openshift-console.${CLUSTER_DOMAIN}
 guid: ${USERNAME}
 quay_hostname: ${QUAY_ROUTE:-quay-not-found}
@@ -477,6 +581,8 @@ quay_user: ${USERNAME}
 quay_password: ${PASSWORD}
 quay_console_url: https://${QUAY_ROUTE:-quay-not-found}
 quay_url: https://${QUAY_ROUTE:-quay-not-found}
+rhacs_route: ${ACS_CENTRAL_ROUTE:-acs-not-available}
+rhacs_api_token: ${USER_ACS_TOKEN:-}
 USERDATA
 
         ${HELM_BIN} template "showroom" "${SHOWROOM_CHART}" \
@@ -488,6 +594,7 @@ USERDATA
             --set content.repoRef="${SHOWROOM_BRANCH}" \
             --set-file content.user_data="${USERDATA_FILE}" \
             --set-string terminal.setup="true" \
+            ${TERMINAL_IMAGE:+--set terminal.image="${TERMINAL_IMAGE}"} \
             --set-string wetty.setup="false" \
             --set-string nookbag_sidecar.setup="true" \
             --set-string terminal.storage.setup="true" \
@@ -499,15 +606,20 @@ USERDATA
         rm -f "${USERDATA_FILE}"
     fi
 
-    # 12. Patch existing Showroom ConfigMap if namespace exists but Showroom was not just deployed
+    # 13. Patch existing Showroom ConfigMap if namespace exists but Showroom was not just deployed
     if [ "${DEPLOY_SHOWROOM}" != "true" ] && oc get namespace "showroom-${USERNAME}" > /dev/null 2>&1; then
         if oc get configmap showroom-userdata -n "showroom-${USERNAME}" > /dev/null 2>&1; then
-            info "[12/12] Patching existing Showroom user_data for ${USERNAME}"
+            info "[13/13] Patching existing Showroom user_data for ${USERNAME}"
+            OCP_API_URL=$(oc whoami --show-server)
             oc create configmap showroom-userdata -n "showroom-${USERNAME}" \
                 --from-literal=user_data.yml="$(cat <<UDPATCH
 user: ${USERNAME}
+username: ${USERNAME}
 password: ${PASSWORD}
-openshift_api_server_url: $(oc whoami --show-server)
+openshift_api_server_url: ${OCP_API_URL}
+openshift_api_url: ${OCP_API_URL}
+openshift-user: ${USERNAME}
+openshift-password: ${PASSWORD}
 openshift_console_url: https://console-openshift-console.${CLUSTER_DOMAIN}
 guid: ${USERNAME}
 quay_hostname: ${QUAY_ROUTE:-quay-not-found}
@@ -515,6 +627,8 @@ quay_user: ${USERNAME}
 quay_password: ${PASSWORD}
 quay_console_url: https://${QUAY_ROUTE:-quay-not-found}
 quay_url: https://${QUAY_ROUTE:-quay-not-found}
+rhacs_route: ${ACS_CENTRAL_ROUTE:-acs-not-available}
+rhacs_api_token: ${USER_ACS_TOKEN:-}
 UDPATCH
 )" \
                 --dry-run=client -o yaml | oc apply -f - 2>/dev/null
@@ -525,6 +639,35 @@ UDPATCH
 
     info "========== ${USERNAME} complete =========="
 done
+
+# ---- One-time (10b): Configure per-user ACS image integrations for private Quay repos ----
+# ACS auto-generated integrations have no credentials; create one per student so ACS can
+# authenticate and scan each student's private Quay repository.
+if [ -n "${ACS_CENTRAL_ROUTE}" ] && [ -n "${ACS_ADMIN_PASS}" ] && [ -n "${QUAY_ROUTE}" ]; then
+    info "Configuring per-user ACS image integrations for Quay..."
+    ADMIN_TOKEN=$(curl -sk \
+        -u "admin:${ACS_ADMIN_PASS}" \
+        "https://${ACS_CENTRAL_ROUTE}/v1/apitokens/generate" \
+        -H "Content-Type: application/json" \
+        -d '{"name":"setup-script-temp","role":"Admin"}' | \
+        python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    if [ -n "${ADMIN_TOKEN}" ]; then
+        USER_PAIRS=""
+        for u in $(seq 1 "${NUM_USERS}"); do
+            USER_PAIRS="${USER_PAIRS} ${USER_PREFIX}-${u}:${PASSWORD}"
+        done
+        # shellcheck disable=SC2086
+        python3 "$(dirname "$0")/setup-acs-image-integrations.py" \
+            --acs-route    "${ACS_CENTRAL_ROUTE}" \
+            --acs-token    "${ADMIN_TOKEN}" \
+            --quay-endpoint "https://${QUAY_ROUTE}" \
+            --users        ${USER_PAIRS} || warn "ACS image integration setup encountered errors (see above)."
+    else
+        warn "Could not obtain ACS admin token; skipping image integration setup."
+    fi
+else
+    warn "ACS Central or Quay route not resolved; skipping image integration setup (re-run after both are deployed)."
+fi
 
 # Clean up showroom chart temp dir
 if [ -n "${SHOWROOM_CHART_DIR:-}" ] && [ -d "${SHOWROOM_CHART_DIR:-}" ]; then
@@ -571,10 +714,11 @@ GITEA_ROUTE=$(oc get route gitea-server -n gitea -o jsonpath='{.spec.host}' 2>/d
         echo "  Gitea login:      ${USERNAME} / ${PASSWORD}"
         echo "  Quay login:       ${USERNAME} / ${PASSWORD}"
         echo "  Quay namespace:   https://${QUAY_ROUTE:-quay-not-found}/user/${USERNAME}/"
-        echo "  Build namespace:  hummingbird-builds-${USERNAME}"
+        echo "  Build namespace:  ${USERNAME}-hummingbird-builds"
         echo "  Namespaces:"
         echo "    - hummingbird-builds (shared, admin)"
-        echo "    - hummingbird-builds-${USERNAME} (per-user, admin)"
+        echo "    - ${USERNAME}-hummingbird-builds (per-user, admin)"
+        echo "    - ${USERNAME}-hummingbird-acs-lab (ACS lab, admin)"
         echo "    - renovate-pipelines (admin)"
         echo "    - quay, stackrox, keycloak, trusted-artifact-signer, gitea (view)"
         SHOWROOM_ROUTE=$(oc get route showroom -n "showroom-${USERNAME}" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")

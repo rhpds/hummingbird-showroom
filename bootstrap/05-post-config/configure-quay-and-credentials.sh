@@ -89,7 +89,7 @@ else
 fi
 
 # --- Create per-user Quay accounts via DB (if NUM_USERS > 1) ---
-USER_PREFIX="${USER_PREFIX:-lab-user}"
+USER_PREFIX="${USER_PREFIX:-user}"
 USER_PASSWORD="${USER_PASSWORD:-openshift}"
 
 echo "[5/6] Creating per-user Quay accounts..."

@@ -1,0 +1,14 @@
+FROM quay.io/rhpds/openshift-showroom-terminal-ocp:latest
+
+# ARG allows pinning a specific version at build time:
+#   podman build --build-arg ROXCTL_VERSION=4.6.2 .
+# Defaults to "latest" which always tracks ACS Central's current release.
+ARG ROXCTL_VERSION=latest
+
+USER root
+RUN curl -sSL \
+      "https://mirror.openshift.com/pub/rhacs/assets/${ROXCTL_VERSION}/bin/Linux/roxctl" \
+      -o /usr/local/bin/roxctl && \
+    chmod +x /usr/local/bin/roxctl
+
+USER 1001

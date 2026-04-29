@@ -83,11 +83,11 @@ This will:
 
 1. Install the OpenShift GitOps (ArgoCD) operator
 2. Deploy the full workshop stack via ArgoCD sync waves (operators, Quay, ACS, RHTAS, Keycloak, Gitea, Renovate infra)
-3. Create 3 workshop users (`lab-user-1`, `lab-user-2`, `lab-user-3`) across all services (OpenShift, Quay, Gitea, Keycloak)
+3. Create 3 workshop users (`user-1`, `user-2`, `user-3`) across all services (OpenShift, Quay, Gitea, Keycloak)
 4. Deploy a per-user Showroom (interactive workshop guide with embedded terminal)
 5. Write credentials and URLs to `workshop-users-access.txt`
 
-Each user has a **unified identity**: `lab-user-N` / `openshift` for OpenShift, Quay, Gitea, and Keycloak.
+Each user has a **unified identity**: `user-N` / `openshift` for OpenShift, Quay, Gitea, and Keycloak.
 
 === Two-Step Deploy (Infra Only, Then Users)
 

@@ -42,7 +42,7 @@
 
     - name: "Ex1 - Get ACS password"
       ansible.builtin.shell: |
-        {{ oc }} get secret acs-password -n {{ r_acs_ns.stdout | trim }} \
+        {{ oc }} get secret central-htpasswd -n {{ r_acs_ns.stdout | trim }} \
           -o jsonpath='{.data.password}' | base64 -d
       register: r_acs_password
       no_log: true
@@ -56,14 +56,30 @@
 
     - name: "Ex1 - Generate ACS API token"
       ansible.builtin.shell: |
-        curl -sk -u "admin:{{ acs_password }}" \
-          "https://{{ acs_route }}/v1/apitokens/generate" \
+        ACS_URL="https://{{ acs_route }}"
+        AUTH="admin:{{ acs_password }}"
+        TOKEN_NAME="solve-{{ student_user }}"
+        # Revoke any existing token with the same name so re-runs are idempotent
+        EXISTING_ID=$(curl -sk -u "${AUTH}" "${ACS_URL}/v1/apitokens" | \
+          python3 -c "
+import json, sys
+tokens = json.load(sys.stdin).get('tokens', [])
+match = [t for t in tokens if t.get('name') == '${TOKEN_NAME}' and not t.get('revoked')]
+print(match[0]['id'] if match else '')
+" 2>/dev/null || echo "")
+        if [ -n "${EXISTING_ID}" ]; then
+          curl -sk -u "${AUTH}" \
+            -X PATCH "${ACS_URL}/v1/apitokens/revoke/${EXISTING_ID}" > /dev/null 2>&1 || true
+        fi
+        # Generate a fresh Admin token
+        curl -sk -u "${AUTH}" \
+          "${ACS_URL}/v1/apitokens/generate" \
           -X POST -H 'Content-Type: application/json' \
-          -d '{"name":"solve-{{ student_user }}","role":"Admin"}' | \
+          -d "{\"name\":\"${TOKEN_NAME}\",\"role\":\"Admin\"}" | \
           python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))"
       register: r_token
       no_log: true
-      changed_when: false
+      changed_when: true
 
     - name: "Ex1 - Set ACS token"
       ansible.builtin.set_fact:
@@ -344,7 +360,7 @@
 
     - name: "Ex7 - Download and run acs-create-policies.sh"
       ansible.builtin.shell: |
-        curl -sL https://raw.githubusercontent.com/rhpds/hummingbird-showroom/main/content/modules/ROOT/assets/attachments/acs-create-policies.sh \
+        curl -sL https://raw.githubusercontent.com/tosin2013/zero-cve-hummingbird-showroom/main/content/modules/ROOT/assets/attachments/acs-create-policies.sh \
           > /tmp/acs-create-policies.sh
         export ROX_ENDPOINT="{{ acs_route }}:443"
         export ROX_API_TOKEN="{{ acs_token }}"
