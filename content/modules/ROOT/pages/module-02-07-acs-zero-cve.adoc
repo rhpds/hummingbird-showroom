@@ -624,27 +624,21 @@ You are carrying the security burden of a full OS and packaging toolchain for an
 
 Open the RHACS Central dashboard in your browser.
 
-Click the link:{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
+Click the https://{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
 
-Select *openshift-oauth* for the auth provider and click *Log in*.
-
-On the Keycloak login screen use the following credentials, then click *Sign in*:
+Select *Login with username/password* and sign in with the shared workshop admin credentials:
 
 .Username
-[source,bash,role=execute,subs="attributes"]
+[source,bash]
 ----
-{user}
+admin
 ----
 
 .Password
 [source,bash,role=execute,subs="attributes"]
 ----
-{password}
+{acs_password}
 ----
-
-// image::module-02/acs-login.png[ACS Central Login Page,link=self,window=blank]
-
-Allow the requested permissions.
 
 After logging in, you will see the ACS Dashboard showing cluster-wide security metrics -- policy violations, images at most risk, and deployments at most risk:
 
