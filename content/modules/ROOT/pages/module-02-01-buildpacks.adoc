@@ -61,16 +61,17 @@ The on-cluster Quay registry and `registry-credentials` secret should already be
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc get secret registry-credentials -n {user}-hummingbird-builds
+oc get secret quay-registry-credentials -n {user}-hummingbird-builds
 oc describe sa pipeline -n {user}-hummingbird-builds | grep registry-credentials
 ----
 
 .*Expected output:*
 ----
-NAME                   TYPE                             DATA   AGE
-registry-credentials   kubernetes.io/dockerconfigjson   1      ...
+NAME                        TYPE                             DATA   AGE
+quay-registry-credentials   kubernetes.io/dockerconfigjson   1      95m
 
-Mountable secrets:   registry-credentials
+Image pull secrets:  quay-registry-credentials
+Mountable secrets:   quay-registry-credentials
 ----
 
 [NOTE]
@@ -412,7 +413,7 @@ Deploy your Hummingbird-built application. First, link the registry credentials 
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc secrets link default registry-credentials --for=pull -n {user}-hummingbird-builds
+oc secrets link default quay-registry-credentials --for=pull -n {user}-hummingbird-builds
 ----
 
 Now create the deployment, service, and route:
@@ -430,7 +431,7 @@ oc expose service sample-quarkus -n {user}-hummingbird-builds
 
 [NOTE]
 ====
-The `oc secrets link default registry-credentials --for=pull` step is required because Quay creates repositories as **private** by default (`CREATE_PRIVATE_REPO_ON_PUSH: true`). Without linking the pull secret to the `default` ServiceAccount, pods will fail with `ImagePullBackOff`.
+The `oc secrets link default quay-registry-credentials --for=pull` step is required because Quay creates repositories as **private** by default (`CREATE_PRIVATE_REPO_ON_PUSH: true`). Without linking the pull secret to the `default` ServiceAccount, pods will fail with `ImagePullBackOff`.
 ====
 
 === Step 11: Test the Application
@@ -447,7 +448,7 @@ curl -s http://$ROUTE/hello | python3 -m json.tool
 Application URL: http://sample-quarkus-{user}-hummingbird-builds.apps.<cluster-domain>/hello
 {
     "message": "Hello from Hummingbird!",
-    "runtime": "Quarkus + JDK 21.0.10"
+    "runtime": "Quarkus + JDK 21.0.11"
 }
 ----
 
@@ -592,17 +593,17 @@ Looking for additional depth? The following optional sub-modules extend the work
 **Issue: BuildRun fails with registry push error**
 [source,bash,role=execute,subs=attributes]
 ----
-oc get secret registry-credentials -n {user}-hummingbird-builds
-oc describe sa pipeline -n {user}-hummingbird-builds | grep registry-credentials
+oc get secret quay-registry-credentials -n {user}-hummingbird-builds
+oc describe sa pipeline -n {user}-hummingbird-builds | grep quay-registry-credentials
 
 # Recreate secret if needed (use your on-cluster Quay route)
-oc delete secret registry-credentials -n {user}-hummingbird-builds
-oc create secret docker-registry registry-credentials \
+oc delete secret quay-registry-credentials -n {user}-hummingbird-builds
+oc create secret docker-registry quay-registry-credentials \
   --docker-server="{quay_hostname}" \
   --docker-username={quay_user} \
   --docker-password={quay_password} \
   -n {user}-hummingbird-builds
-oc secrets link pipeline registry-credentials -n {user}-hummingbird-builds
+oc secrets link pipeline quay-registry-credentials -n {user}-hummingbird-builds
 ----
 
 **Issue: BuildRun stuck in Pending**
@@ -647,7 +648,7 @@ The on-cluster Quay registry creates repositories as **private** by default. The
 
 [source,bash,role=execute,subs=attributes]
 ----
-oc secrets link default registry-credentials --for=pull -n {user}-hummingbird-builds
+oc secrets link default quay-registry-credentials --for=pull -n {user}-hummingbird-builds
 oc delete pod -l app=sample-quarkus -n {user}-hummingbird-builds
 ----
 

@@ -1451,7 +1451,7 @@ This is the correct security model. Admission control is a **gate**, not a kill 
 ====
 **Production Alert Integration**: Configure ACS to send violation alerts to your SIEM, Slack, or PagerDuty using the API or UI:
 
-[source,bash,role=execute,subs=attributes]
+[source,bash,subs=attributes]
 ----
 # Example: Create Slack notifier via API
 ACS_ROUTE=https://{rhacs_route}
