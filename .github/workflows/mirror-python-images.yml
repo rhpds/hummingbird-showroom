@@ -15,12 +15,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq skopeo
 
-      - name: Mirror python:3.11-buster
+      - name: Mirror python:3.11-trixie
         run: |
           skopeo copy \
             --dest-creds="${{ secrets.QUAY_ROBOT_USER }}:${{ secrets.QUAY_ROBOT_TOKEN }}" \
-            docker://docker.io/library/python:3.11-buster \
-            docker://quay.io/takinosh/python3.11-buster:latest
+            docker://docker.io/library/python:3.11-trixie \
+            docker://quay.io/takinosh/python3.11-trixie:latest
 
       - name: Mirror python:3.11-slim
         run: |
@@ -31,5 +31,5 @@ jobs:
 
       - name: Verify mirrors
         run: |
-          skopeo inspect docker://quay.io/takinosh/python3.11-buster:latest | jq '{Digest, Created}'
+          skopeo inspect docker://quay.io/takinosh/python3.11-trixie:latest | jq '{Digest, Created}'
           skopeo inspect docker://quay.io/takinosh/python3.11-slim:latest | jq '{Digest, Created}'
