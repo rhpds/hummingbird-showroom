@@ -40,6 +40,10 @@ asciidoc:
     hummingbird-registry: 'registry.access.redhat.com/hi'
     ubi-registry: 'registry.access.redhat.com/ubi9'
 
+    # Blog references (CVE troubleshooting)
+    blog-cve-fix-shipwright: 'https://github.com/tosin2013/sample-quarkus-hummingbird/blob/main/docs/blog/cve-fix-quarkus-openshift-hummingbird-shipwright.md'
+    blog-zero-cve-pipeline: 'https://github.com/tosin2013/sample-quarkus-hummingbird/blob/main/docs/blog/zero-cve-quarkus-hummingbird-pipeline.md'
+
     # Red Hat Trusted Libraries (Tech Preview)
     trusted-libraries-index: 'https://packages.redhat.com/trusted-libraries/python/simple'
     trusted-libraries-docs: 'https://developers.redhat.com/blog/2026/02/27/red-hat-trusted-libraries-trust-and-integrity-your-software-supply-chain'

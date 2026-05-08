@@ -404,6 +404,18 @@ Click the security scan result to view the Clair vulnerability report. A Humming
 .Clair security scan: zero CVEs detected in the Hummingbird runtime image
 image::module-02/quay-clair-zero-cve.png[Clair Zero CVE Scan,width=800,link=self,window=blank]
 
+[WARNING]
+====
+*If Quay shows CVEs instead of zero*, the Hummingbird base image itself is rarely the cause. The most common source is transitive Java dependencies bundled inside your application JARs (for example, a networking library pulled in by the framework's Bill of Materials that has not yet been updated to a patched version).
+
+Two blog posts explain exactly why this happens and how to resolve it:
+
+* link:{blog-cve-fix-shipwright}[From CVE alerts to zero vulnerabilities: Quarkus on OpenShift with Hummingbird and Shipwright^] — root-cause analysis and the Maven BOM override technique
+* link:{blog-zero-cve-pipeline}[Zero-CVE Quarkus: automating container security with Hummingbird and GitHub Actions^] — how the automated CI/SBOM pipeline detects and tracks CVEs as GitHub Issues
+
+See the <<cve-override,Optional: Resolving Non-Zero CVEs>> section below for a version-agnostic fix procedure before re-triggering the build.
+====
+
 [[deploy-application]]
 == Deploy Built Image
 
@@ -522,6 +534,131 @@ The image uses `registry.access.redhat.com/hi/openjdk:21-runtime` -- a distroles
 
 NOTE: Standard vulnerability scanners (including Quay/Clair) may not yet fully support Hummingbird's Fedora-based packages. The Hummingbird project provides custom scanning tools (`syft-hummingbird.sh`) for accurate results. See https://gitlab.com/redhat/hummingbird/containers[the Hummingbird repository^] for details.
 ====
+
+[[cve-override]]
+== Optional: Resolving Non-Zero CVEs
+
+If the Quay/Clair scan reports High or Critical CVEs, the Hummingbird base image itself is rarely the cause. The most common source is **transitive Java dependencies** bundled inside your application JARs — libraries pulled in indirectly by the framework's Bill of Materials that have not yet been updated to a patched version.
+
+The steps below work for any library at any version. They do not assume a specific CVE ID or dependency name.
+
+=== Step A: Identify what is actually vulnerable
+
+Scan the built image with Grype, filtering to only findings that have a known fix:
+
+[source,bash,role=execute,subs=attributes]
+----
+grype {quay_hostname}/{quay_user}/sample-quarkus:latest --only-fixed -o json | \
+  jq '.matches[] | {pkg: .artifact.name, version: .artifact.version, fixedIn: .vulnerability.fix.versions[0], severity: .vulnerability.severity}'
+----
+
+.*Example output (package names and versions will vary):*
+----
+{
+  "pkg": "some-library",
+  "version": "A.B.C",
+  "fixedIn": "A.B.D",
+  "severity": "High"
+}
+----
+
+The `fixedIn` field is the target version you need in the final image. Note the `pkg` (artifact name) and `fixedIn` version — you will use them in Step C.
+
+[TIP]
+====
+You can also download the `grype-report` artifact directly from the GitHub Actions CI run on the https://github.com/tosin2013/sample-quarkus-hummingbird/actions[sample-quarkus-hummingbird repository^] if CVEs were flagged there first.
+====
+
+=== Step B: Determine the dependency source
+
+Use Maven's dependency tree to find where the vulnerable package enters the build:
+
+[source,bash,role=execute]
+----
+mvn dependency:tree -Dincludes=<groupId>:<artifactId>
+----
+
+Replace `<groupId>:<artifactId>` with the Maven coordinates of the vulnerable package (for example, `io.netty:netty-codec`).
+
+The output shows whether the package is:
+
+* **Pulled in transitively by the framework BOM** — the most common case; fix with a BOM import override (Step C)
+* **A direct dependency** in your `pom.xml` — fix by bumping the `<version>` directly
+* **Part of the base image** — file an issue with the Hummingbird project; this is rare
+
+=== Step C: Apply the version override
+
+For a framework-managed transitive dependency, import the affected library's own BOM (or add a `<dependencyManagement>` entry) **before** the framework BOM. Maven resolves managed versions using first-match precedence, so the version you declare first wins.
+
+[source,xml]
+----
+<properties>
+  <!-- Set to the "fixedIn" version from Grype output -->
+  <library.version>FIXED-VERSION-FROM-GRYPE</library.version>
+</properties>
+
+<dependencyManagement>
+  <dependencies>
+    <!--
+      If the library publishes its own BOM, import it here — before the framework BOM.
+      This overrides the framework-managed version for all of that library's artifacts.
+    -->
+    <dependency>
+      <groupId>LIBRARY-GROUP-ID</groupId>
+      <artifactId>LIBRARY-BOM-ARTIFACT</artifactId>
+      <version>${library.version}</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+
+    <!-- Framework BOM follows — its transitive version is now overridden above -->
+    <dependency>
+      <groupId>io.quarkus.platform</groupId>
+      <artifactId>quarkus-bom</artifactId>
+      <version>${quarkus.platform.version}</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+----
+
+[NOTE]
+====
+If the library does not publish its own BOM, add an individual `<dependency>` entry with the fixed `<version>` inside `<dependencyManagement>` instead of a BOM import. The first-match rule still applies.
+====
+
+=== Step D: Re-trigger the BuildRun
+
+After committing and pushing the `pom.xml` fix, create a new `BuildRun` to pick up the change:
+
+[source,yaml,role=execute,subs=attributes]
+----
+cat << 'EOF' | oc create -f -
+apiVersion: shipwright.io/v1beta1
+kind: BuildRun
+metadata:
+  name: sample-quarkus-app-run-2
+  namespace: {user}-hummingbird-builds
+spec:
+  build:
+    name: sample-quarkus-app
+EOF
+----
+
+Monitor the new build run:
+
+[source,bash,role=execute,subs=attributes]
+----
+oc get buildrun sample-quarkus-app-run-2 -n {user}-hummingbird-builds -w
+----
+
+Once the build succeeds, return to the Quay console and verify the new image tag shows zero High or Critical CVEs in the Clair scan.
+
+=== Further reading
+
+* link:{blog-cve-fix-shipwright}[From CVE alerts to zero vulnerabilities: Quarkus on OpenShift with Hummingbird and Shipwright^] — a detailed worked example of this exact process, including `mvn dependency:tree` output and the BOM import fix
+* link:{blog-zero-cve-pipeline}[Zero-CVE Quarkus: automating container security with Hummingbird and GitHub Actions^] — how the automated CI/SBOM pipeline in the sample repository detects CVEs and opens GitHub Issues automatically
 
 [[summary]]
 == Summary
