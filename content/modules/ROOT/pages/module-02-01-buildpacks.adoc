@@ -162,8 +162,8 @@ spec:
     value: "Containerfile"
   - name: build-args
     values:
-    - value: "BUILDER_IMAGE=registry.access.redhat.com/hi/openjdk:21-builder"
-    - value: "RUNTIME_IMAGE=registry.access.redhat.com/hi/openjdk:21-runtime"
+    - value: "BUILDER_IMAGE={hummingbird-registry}/openjdk:21-builder"
+    - value: "RUNTIME_IMAGE={hummingbird-registry}/openjdk:21-runtime"
   output:
     image: {quay_hostname}/{quay_user}/sample-quarkus:latest
     credentials:
@@ -180,8 +180,8 @@ build.shipwright.io/sample-quarkus-app created
 
 * **Source**: Git repository containing a Quarkus REST application with a multi-stage Containerfile
 * **Strategy**: Pre-installed `buildah` ClusterBuildStrategy
-* **Containerfile**: Multi-stage build using `registry.access.redhat.com/hi/openjdk:21-builder` (Stage 1) and `registry.access.redhat.com/hi/openjdk:21-runtime` (Stage 2)
-* **build-args**: Override `BUILDER_IMAGE` and `RUNTIME_IMAGE` to pin the Hummingbird images from `registry.access.redhat.com/hi` (the Red Hat Container Registry)
+* **Containerfile**: Multi-stage build using `{hummingbird-registry}/openjdk:21-builder` (Stage 1) and `{hummingbird-registry}/openjdk:21-runtime` (Stage 2)
+* **build-args**: Override `BUILDER_IMAGE` and `RUNTIME_IMAGE` to pin the Hummingbird images from `{hummingbird-registry}` (the Red Hat Hardened Images registry)
 * **Output**: Push to `{quay_hostname}/{quay_user}/sample-quarkus:latest`
 * **Credentials**: Use `registry-credentials` secret for registry push
 
@@ -189,8 +189,8 @@ build.shipwright.io/sample-quarkus-app created
 ====
 **The Containerfile in the repository follows the same multi-stage pattern from Module 1:**
 
-* **Stage 1 (Builder)**: Uses `registry.access.redhat.com/hi/openjdk:21-builder` which includes JDK 21 and build tools. Maven is installed and used to compile the Quarkus application.
-* **Stage 2 (Runtime)**: Uses `registry.access.redhat.com/hi/openjdk:21-runtime` which is distroless -- no shell, no package manager. Only the compiled JAR and runtime dependencies are copied from Stage 1.
+* **Stage 1 (Builder)**: Uses `{hummingbird-registry}/openjdk:21-builder` which includes JDK 21 and build tools. Maven is installed and used to compile the Quarkus application.
+* **Stage 2 (Runtime)**: Uses `{hummingbird-registry}/openjdk:21-runtime` which is distroless -- no shell, no package manager. Only the compiled JAR and runtime dependencies are copied from Stage 1.
 * The final image runs as **non-root** (UID 65532, the Hummingbird default).
 ====
 
@@ -525,7 +525,7 @@ Look at your container image and check the results of the Quay Security Scanner 
 ====
 **Hummingbird Runtime Advantages:**
 
-The image uses `registry.access.redhat.com/hi/openjdk:21-runtime` -- a distroless image containing only the JRE and essential libraries. Compared to a full `registry.access.redhat.com/ubi9/openjdk-21` image:
+The image uses `{hummingbird-registry}/openjdk:21-runtime` -- a distroless image containing only the JRE and essential libraries. Compared to a full `registry.access.redhat.com/ubi9/openjdk-21` image:
 
 * **Dramatically fewer packages** -- no shell, no package manager, no build tools
 * **Near-zero CVE baseline** -- fewer packages means fewer vulnerabilities
@@ -716,10 +716,10 @@ Looking for additional depth? The following optional sub-modules extend the work
 
 === Additional Resources
 
-*Project Hummingbird:*
-* https://hummingbird-project.io/[Project Hummingbird Official Site^]
+*Red Hat Hardened Images:*
+* {hummingbird-catalog}[Red Hat Hardened Images Catalog^]
+* {hummingbird-catalog-docs}[Red Hat Hardened Images Documentation^]
 * https://gitlab.com/redhat/hummingbird/containers[Hummingbird Containers Repository^]
-* https://quay.io/organization/hummingbird-hatchling[Hummingbird Image Registry^]
 
 *Shipwright Builds:*
 * https://shipwright.io/docs/build/buildstrategies/[BuildStrategy Documentation^]
