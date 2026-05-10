@@ -136,7 +136,6 @@ echo "ROX_ENDPOINT=${ROX_ENDPOINT}"
 echo "ROX_API_TOKEN=${ROX_API_TOKEN:0:20}..."
 ----
 
-
 Verify connectivity:
 
 [source,bash,role=execute]
@@ -622,22 +621,27 @@ You are carrying the security burden of a full OS and packaging toolchain for an
 
 === Step 2: Check the Image in ACS Dashboard
 
-Open the RHACS Central dashboard in your browser.
+Switch to the RHACS Central dashboard tab on the right.
 
-Click the {rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
+[TIP]
+====
+Click the {rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window if you would like a separate window.
+====
 
-Select *Login with username/password* and sign in with the shared workshop admin credentials:
+Select *openshift-oauth* for the auth provider and click *Log in*.
+
+On the Keycloak login screen use the following credentials, then click *Sign in*:
 
 .Username
 [source,bash]
 ----
-admin
+{user}
 ----
 
 .Password
 [source,bash,role=execute,subs="attributes"]
 ----
-{acs_password}
+{password}
 ----
 
 After logging in, you will see the ACS Dashboard showing cluster-wide security metrics -- policy violations, images at most risk, and deployments at most risk:
