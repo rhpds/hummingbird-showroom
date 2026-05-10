@@ -583,6 +583,7 @@ quay_console_url: https://${QUAY_ROUTE:-quay-not-found}
 quay_url: https://${QUAY_ROUTE:-quay-not-found}
 rhacs_route: ${ACS_CENTRAL_ROUTE:-acs-not-available}
 rhacs_api_token: ${USER_ACS_TOKEN:-}
+acs_password: ${ACS_ADMIN_PASS:-acs-password-not-set}
 USERDATA
 
         ${HELM_BIN} template "showroom" "${SHOWROOM_CHART}" \

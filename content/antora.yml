@@ -39,6 +39,12 @@ asciidoc:
     #hummingbird-registry: 'registry.access.redhat.com/hi'
     hummingbird-registry: 'registry.access.redhat.com/hi'
     ubi-registry: 'registry.access.redhat.com/ubi9'
+    hummingbird-catalog: 'https://images.redhat.com'
+    hummingbird-catalog-docs: 'https://docs.redhat.com/en/documentation/red_hat_hardened_images/1-latest/html/build_and_deploy_secure_minimal_containers_with_red_hat_hardened_images/index'
+
+    # Blog references (CVE troubleshooting)
+    blog-cve-fix-shipwright: 'https://github.com/tosin2013/sample-quarkus-hummingbird/blob/main/docs/blog/cve-fix-quarkus-openshift-hummingbird-shipwright.md'
+    blog-zero-cve-pipeline: 'https://github.com/tosin2013/sample-quarkus-hummingbird/blob/main/docs/blog/zero-cve-quarkus-hummingbird-pipeline.md'
 
     # Red Hat Trusted Libraries (Tech Preview)
     trusted-libraries-index: 'https://packages.redhat.com/trusted-libraries/python/simple'
@@ -61,6 +67,7 @@ asciidoc:
 
     # ACS (Red Hat Advanced Cluster Security)
     acs-namespace: 'stackrox'
+    acs_password: 'acs-password-injected-by-showroom'
 
     # Placeholders for lab environment (most are injected by showroom)
     # Keys use underscores to match the showroom userdata attribute names

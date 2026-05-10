@@ -144,7 +144,7 @@ print(match[0]['id'] if match else '')
         PYEOF
 
         cat > /tmp/acs-legacy-build/Dockerfile << 'EOF'
-        FROM quay.io/takinosh/python3.11-buster:latest
+        FROM quay.io/takinosh/python3.11-trixie:latest
         WORKDIR /app
         COPY app.py .
         RUN chmod 644 app.py && chown 1001:0 app.py
