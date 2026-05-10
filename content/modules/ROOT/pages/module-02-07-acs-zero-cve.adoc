@@ -633,7 +633,7 @@ Select *openshift-oauth* for the auth provider and click *Log in*.
 On the Keycloak login screen use the following credentials, then click *Sign in*:
 
 .Username
-[source,bash]
+[source,bash,role=execute,subs="attributes"]
 ----
 {user}
 ----
