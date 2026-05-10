@@ -624,7 +624,7 @@ You are carrying the security burden of a full OS and packaging toolchain for an
 
 Open the RHACS Central dashboard in your browser.
 
-Click the https://{rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
+Click the {rhacs_route}[{rhacs_route}^] link to open the RHACS Central dashboard in a separate window.
 
 Select *Login with username/password* and sign in with the shared workshop admin credentials:
 
@@ -1103,7 +1103,7 @@ Verify the admission controller configuration via the ACS API:
 [source,bash,role=execute,subs="attributes"]
 ----
 curl -sk -H "Authorization: Bearer {rhacs_api_token}" \
-  "https://{rhacs_route}/v1/clusters" | python3 acs-check-admission.py
+  "{rhacs_route}/v1/clusters" | python3 acs-check-admission.py
 ----
 
 .*Expected output:*
@@ -1130,7 +1130,7 @@ Run the helper script, passing your namespace and policy suffix via environment 
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 ROX_API_TOKEN={rhacs_api_token}
 export ACS_ROUTE ROX_API_TOKEN
 export LAB_NAMESPACE="{user}-hummingbird-acs-lab"
@@ -1208,7 +1208,7 @@ Policy 2:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 
 for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
@@ -1385,7 +1385,7 @@ Query the policy violations via the ACS REST API:
 
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   "${ACS_ROUTE}/v1/alerts?query=Namespace:{user}-hummingbird-acs-lab" | \
@@ -1454,7 +1454,7 @@ This is the correct security model. Admission control is a **gate**, not a kill 
 [source,bash,subs=attributes]
 ----
 # Example: Create Slack notifier via API
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 curl -sk -X POST \
   -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   -H "Content-Type: application/json" \
@@ -1484,7 +1484,7 @@ Remove the lab resources when you are finished:
 ----
 oc delete project {user}-hummingbird-acs-lab
 
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 
 for POLICY_NAME in "Zero Fixable CVEs Required - {user}" "Image Scan Required - {user}"; do
   POLICY_ID=$(curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
@@ -1573,7 +1573,7 @@ oc logs -n stackrox deploy/admission-control
 **Issue: Policy not triggering on deployment**
 [source,bash,role=execute,subs="attributes"]
 ----
-ACS_ROUTE=https://{rhacs_route}
+ACS_ROUTE={rhacs_route}
 curl -sk -H "Authorization: Bearer ${ROX_API_TOKEN}" \
   "${ACS_ROUTE}/v1/policies" | \
   python3 -c "import json,sys; [print(p['name'], p['disabled']) for p in json.load(sys.stdin).get('policies',[]) if 'zero fixable' in p['name'].lower()]"
