@@ -166,8 +166,7 @@ spec:
     - value: "RUNTIME_IMAGE={hummingbird-registry}/openjdk:21-runtime"
   output:
     image: {quay_hostname}/{quay_user}/sample-quarkus:latest
-    credentials:
-      name: registry-credentials
+    pushSecret: quay-registry-credentials
 EOF
 ----
 
